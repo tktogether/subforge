@@ -237,16 +237,17 @@ func label(n model.Node) string {
 // 客户端整个组直接失效——那比没有组更糟。
 // 组名刻意不用 emoji：这几个客户端对组名的字符集限制比 mihomo 严。
 func defaultGroups(valid map[string]bool) []render.Group {
-	members := make([]string, 0, len(valid)+1)
+	// 只看真实节点名：伪节点不算，否则无节点时也会生成一组只有 DIRECT 的空组。
+	// 那种组在客户端里点不开，比不生成更糟。
+	names := validNodes(valid)
+	if len(names) == 0 {
+		return nil
+	}
+	members := make([]string, 0, len(names)+1)
 	if valid["DIRECT"] {
 		members = append(members, "DIRECT")
 	}
-	for _, name := range validNodes(valid) {
-		members = append(members, name)
-	}
-	if len(members) == 0 {
-		return nil
-	}
+	members = append(members, names...)
 	return []render.Group{
 		{Name: "节点选择", Type: "select", Proxies: members},
 		{Name: "自动测速", Type: "url-test", Proxies: members,

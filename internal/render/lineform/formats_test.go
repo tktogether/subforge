@@ -554,3 +554,47 @@ func TestVmessCipherAuto(t *testing.T) {
 		t.Errorf("aes-128-gcm = %q", got)
 	}
 }
+
+// TestDefaultGroups_NoNodes 无节点时不生成默认组：内置伪节点不算节点，
+// 只算 DIRECT 会产出一组点不开的空组，比不生成更糟。收尾规则仍要兜底 DIRECT。
+func TestDefaultGroups_NoNodes(t *testing.T) {
+	for _, f := range []Format{SurgeFormat(), QuanFormat(), QuanxFormat(), LoonFormat(), SurfboardFormat()} {
+		r := New(f, Options{})
+		body, err := r.Render(render.Request{Nodes: model.NodeList{}})
+		if err != nil {
+			t.Fatalf("%s Render: %v", f.Name, err)
+		}
+		text := string(body)
+		if strings.Contains(text, "[Proxy Group]") || strings.Contains(text, "[policy]") {
+			t.Errorf("%s 无节点时不应生成代理组:\n%s", f.Name, text)
+		}
+		if !strings.Contains(text, "DIRECT") {
+			t.Errorf("%s 无节点时收尾规则应兜底 DIRECT:\n%s", f.Name, text)
+		}
+	}
+}
+
+// TestDefaultGroups_OnlySkippedNodes 全部节点都被降级跳过时，效果与无节点相同：
+// 不能生成引用悬空名字的组。
+func TestDefaultGroups_OnlySkippedNodes(t *testing.T) {
+	// Loon 不支持 hysteria2，用两个 hy2 节点模拟"全部被跳过"。
+	nodes := model.NodeList{
+		nodes("h1", "hysteria2", "a.example.com", "443", map[string]any{
+			"password": "p", "sni": "a.example.com"}),
+		nodes("h2", "hysteria2", "b.example.com", "443", map[string]any{
+			"password": "p", "sni": "b.example.com"}),
+	}
+	f := LoonFormat()
+	r := New(f, Options{})
+	body, err := r.Render(render.Request{Nodes: nodes})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	text := string(body)
+	if strings.Contains(text, "节点选择") {
+		t.Errorf("全被跳过时不应生成默认组:\n%s", text)
+	}
+	if got := r.Warnings(); len(got) != 2 {
+		t.Errorf("应报告 2 条跳过告警，实际 %d: %v", len(got), got)
+	}
+}
