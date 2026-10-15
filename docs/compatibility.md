@@ -34,7 +34,7 @@
 | — | `ss-sub` / `ss-sub-json` / `ssjson` / `ss-sub-b64` | 已落地（SS-android 节点配置） |
 | — | `mellow` / `mellow-ios` | 已落地（差异见下节 M1~M4） |
 | — | `sstable` | 未落地（无参考产物可核实，见下节 M5） |
-| — | `sing-box` | 未落地（进程隔离调用，独立设计项，见 R2） |
+| — | `sing-box` / `singbox` | 已落地（JSON 配置，差异见下节 B1~B6） |
 | — | `clash.json` / `clash.meta.json` / `clashmeta.json` / `clash-json` / `clashmeta-json` / `mihomo.json` | 已落地，与 `clash.meta` 共用构树逻辑，只换编码 |
 
 ## SS-android 节点配置（ss-sub）
@@ -98,11 +98,47 @@ hysteria / hysteria2 / tuic / anytls / socks5 / http 全部可导出。
 | M2 | 节点凭据 | 导出的两条凭据也是空的：`vmess1://@host:port?network=&tls=` 与 `ss://Og@host:port`（`Og` 是 base64 的 `:`，即 method 与 password 两段皆空） | 凭据完整，走标准分享链接编码 | **有意偏离**。空凭据的节点连不上，那是坏产物；本项是 M1 的主要动因 |
 | M3 | vmess 链接 scheme | `vmess1://` | `vmess://`（标准 v2ray 分享链接） | 有意偏离。`vmess1://` 不是通用 scheme，Mellow 认标准 `vmess://`；ss 链接也补回 `#名字` 片段 |
 | M4 | 规则集 | 无参考产物可核实 | `RULE-SET` 丢弃并计入告警 | 保守处置。没有可核实的语法就不猜输出，宁可丢规则并告警，也不产出无法验证的行 |
-| M5 | `sstable` | 有该 target，但无实机产物可参照 | 未实现，报 501 | 与 sing-box 同一处置：先有参考产物再实现，避免凭空猜格式 |
+| M5 | `sstable` | 有该 target，但无实机产物可参照 | 未实现，报 501 | 无实机参考产物可核实字段，宁可报 501 也不猜格式 |
 
 `GEOSITE` 与 surge 系 C 节同因：依赖内核 mmdb 数据，Mellow 没有对应数据源，
 丢弃并告警。`MATCH` 是内核专属收尾语法，映射成 `FINAL`。IP-CIDR / IP-CIDR6
 追加 `no-resolve`，与 QX / Surfboard 一致。
+
+## sing-box 配置形态（sing-box）
+
+产出 sing-box 自己的 JSON 配置，不是"换编码的 Clash"。顶层段落顺序与实机参考
+产物一致：`log` / `dns` / `ntp` / `inbounds` / `outbounds` / `route` /
+`experimental`，出站按 `type` + `tag` 两个字段定位（v1.10+ 写法，取代旧的
+平铺 `server` / `port`）。
+
+前三个出站固定为内置项，tag 名照抄参考产物：
+
+| tag | type | 用途 |
+| --- | --- | --- |
+| `DIRECT` | `direct` | 直连 |
+| `REJECT` | `block` | 丢弃 |
+| `dns-out` | `dns` | DNS 回环出站，被 `route.rules` 与 `dns.rules` 引用 |
+
+规则映射到 `route.rules`：同字段、同出站的相邻行合并进同一个对象的数组
+（`domain_suffix: [...]`），因为 sing-box 的规则对象就是"多字段各带一个数组"，
+逐行拆会产出重复字段；不同字段不合并，domain 类与 `geoip` 的匹配阶段不同，
+合并会改变命中顺序。`MATCH` / `FINAL` 不落规则行，改写 `route.final`。
+
+代理组映射：`select` → `selector`，`url-test` → `urltest`（带 `tolerance` 与
+`interval`，`interval` 用 sing-box 的时长字面量如 `300s`），`fallback` →
+`fallback`（只有 `interval`）。成员里引用了未导出节点的 tag 会被过滤掉，
+成员清空后整组不输出——留一个指向不存在出站的引用会让内核整份配置加载失败。
+
+### 已知差异
+
+| # | 差异点 | subconverter v0.9.0 行为 | SubForge 行为 | 处置 |
+| --- | --- | --- | --- | --- |
+| B1 | 节点覆盖面 | 12 个探针节点只导出 vmess / ss / ssr / trojan 四个，其余协议全部丢弃 | 12 个节点全部导出（vless-reality、vless-ws、hysteria2、hysteria、tuic、anytls、socks5、http 都在），丢不了的逐节点告警 | **有意偏离**，与 M1 同一动因：参考产物覆盖面不够用，sing-box 这些协议都有实现 |
+| B2 | 分类组 | 内置 13 个 emoji 分类组（🎥 NETFLIX、⛔️ 广告拦截、📲 电报信息…），来自它自带的模板 | 不自带任何分类组，完全由模板 `[clash_proxy_group]` 决定；没配就一个都不输出 | **有意偏离**。内置分类组是第三方规则数据（CC-BY-SA / GPL），按 R3 不静态打包；需要时由用户配远程源拉取 |
+| B3 | url-test 参数 | 无 url-test 之外的组参数可对照 | Clash 的 `timeout` 在 sing-box 的 `urltest` 没有对应字段，静默丢弃；`fallback` 只保留 `interval` | 保守处置。参考产物只用到 `url` 与 `interval`，无法核实其余参数 |
+| B4 | 规则集 | 无实机产物可核实 | `RULE-SET` / `SCRIPT` 丢弃并计入 `X-Convert-Skipped` 告警 | 与 M4 同一处置：没有可核实的语法就不猜输出 |
+| B5 | 规则覆盖 | 参考产物单条规则就含 161KB 的 `domain_suffix` 列表，`route` 段占整份体积的 99% | 规则内容全部来自模板或请求参数，不内置任何规则清单 | 与 R3 一致；产物体积因此小得多 |
+| B6 | 实机校验 | 有 | 无 sing-box 二进制可加载校验，只有 JSON 合法性与字段断言（`TestOutboundFields` 逐协议核对） | **缺口**。本机无 Docker 也无 sing-box release，字段映射靠对着内核 schema 逐条核对；拿到二进制后应补一次实机 `sing-box check` |
 
 ## 一行一节点配置形态（surge / quan / quanx / loon / surfboard）
 
