@@ -12,6 +12,7 @@ import (
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/render/clashmeta"
 	"github.com/tktogether/subforge/internal/render/lineform"
+	"github.com/tktogether/subforge/internal/render/mellow"
 	"github.com/tktogether/subforge/internal/render/sharelink"
 	"github.com/tktogether/subforge/internal/render/sssub"
 )
@@ -46,16 +47,32 @@ func Lookup(target string, clashOpts clashmeta.Options) (render.Renderer, error)
 		renderer, _ := render.LineFormRenderer(t)
 		return lineform.New(lineFormFormat(renderer), lineform.Options{}), nil
 	case render.IsTargetAlias(t):
-		// SS-android 的两种入口格式共用一个渲染器；base64 与否由别名决定，
-		// 渲染器名不变——X-Convert-Format 与落盘名才保持一致。
+		// 别名归一到规范渲染器名：X-Convert-Format 与落盘名都从 Name() 派生，
+		// 因此不管用哪个写法请求，产物头与文件名都一致。
+		return aliasRenderer(t)
+	default:
+		return nil, fmt.Errorf("%w %q（目前支持: %s）",
+			ErrUnsupportedFormat, target, strings.Join(Available(), ", "))
+	}
+}
+
+// aliasRenderer 按规范渲染器名构造 TargetAliases 那批 target 的渲染器。
+// TargetAliases 只记名，不构造对象——渲染器的构造集中在这一处，
+// 新增格式时不用去改 Lookup 的 switch。
+func aliasRenderer(t string) (render.Renderer, error) {
+	canonical, _ := render.TargetAliases[t]
+	switch canonical {
+	case "ss-sub":
+		// SS-android 的两种入口格式共用一个渲染器，base64 与否由别名决定。
 		opts := sssub.DefaultOptions()
 		if t == "ss-sub-b64" {
 			opts.Base64 = true
 		}
 		return sssub.New(opts), nil
+	case "mellow":
+		return mellow.New(mellow.DefaultOptions()), nil
 	default:
-		return nil, fmt.Errorf("%w %q（目前支持: %s）",
-			ErrUnsupportedFormat, target, strings.Join(Available(), ", "))
+		return nil, fmt.Errorf("%w %q", ErrUnsupportedFormat, t)
 	}
 }
 
@@ -83,7 +100,7 @@ func lineFormFormat(renderer string) lineform.Format {
 // 真源表展开，这样新增 target 时错误信息不会漏。
 func Available() []string {
 	names := []string{
-		"clash.meta", "surge", "quan", "quanx", "loon", "surfboard",
+		"clash.meta", "surge", "quan", "quanx", "loon", "surfboard", "mellow",
 		"list", "mixed", "ss", "ssd", "shadowsocks", "ssr", "shadowsocksr",
 		"trojan", "v2ray", "ss-sub", "ss-sub-json", "ss-sub-b64", "ssjson",
 	}
@@ -110,6 +127,12 @@ func Available() []string {
 		}
 	}
 	for n := range render.ClashJSONTargets {
+		if !seen[n] {
+			names = append(names, n)
+			seen[n] = true
+		}
+	}
+	for n := range render.TargetAliases {
 		if !seen[n] {
 			names = append(names, n)
 			seen[n] = true

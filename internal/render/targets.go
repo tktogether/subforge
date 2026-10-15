@@ -82,11 +82,14 @@ func IsClashJSONTarget(target string) bool {
 // SS-android 有两种入口格式：默认 `ss-sub` 输出裸 JSON（与 subconverter 一致），
 // `ss-sub-b64` 输出 base64 包裹（客户端订阅入口用的那种）。两者共用一个渲染器，
 // 靠别名选 Base64——渲染器名不变，X-Convert-Format 与文件名才保持一致。
+// Mellow 只有单一输出形态，别名纯粹是写法差异。
 var TargetAliases = map[string]string{
 	"ss-sub":      "ss-sub",
 	"ss-sub-json": "ss-sub",
 	"ss-sub-b64":  "ss-sub",
 	"ssjson":      "ss-sub",
+	"mellow":      "mellow",
+	"mellow-ios":  "mellow",
 }
 
 // LineFormTarget 描述"一行一节点"族的配置形态 target：Renderer 是归一后的
