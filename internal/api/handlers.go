@@ -340,10 +340,16 @@ func filenameFor(p convert.Params, format string) string {
 		return "list.txt"
 	case "mixed":
 		return "mixed.txt"
+	case "sing-box", "singbox":
+		return "sing-box.json"
 	}
 	name := format
 	if name == "" {
 		name = "clash.meta"
+	}
+	if strings.HasSuffix(name, ".json") {
+		// JSON 形态的 target 名字里已带扩展名，不能再换成 .yaml。
+		return name
 	}
 	if dot := strings.LastIndex(name, "."); dot >= 0 {
 		return name[:dot] + ".yaml"

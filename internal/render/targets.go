@@ -66,6 +66,20 @@ var ClashJSONTargets = map[string]bool{
 	"mihomo.json":     true,
 }
 
+// SingboxTargets 是产出 sing-box JSON 配置的 target 写法。
+// 与 ClashJSONTargets 分表：两者的构树逻辑与出站 schema 完全不同，
+// 只是输出编码同为 JSON。
+var SingboxTargets = map[string]bool{
+	"sing-box": true,
+	"singbox":  true,
+}
+
+// IsSingboxTarget 判断 target 是否产出 sing-box JSON 配置。
+func IsSingboxTarget(target string) bool {
+	_, ok := SingboxTargets[strings.ToLower(strings.TrimSpace(target))]
+	return ok
+}
+
 // IsClashYAMLTarget 判断 target 是否产出 Clash YAML 配置。
 func IsClashYAMLTarget(target string) bool {
 	_, ok := ClashYAMLTargets[strings.ToLower(strings.TrimSpace(target))]

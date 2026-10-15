@@ -14,6 +14,7 @@ import (
 	"github.com/tktogether/subforge/internal/render/lineform"
 	"github.com/tktogether/subforge/internal/render/mellow"
 	"github.com/tktogether/subforge/internal/render/sharelink"
+	"github.com/tktogether/subforge/internal/render/singbox"
 	"github.com/tktogether/subforge/internal/render/sssub"
 )
 
@@ -46,6 +47,9 @@ func Lookup(target string, clashOpts clashmeta.Options) (render.Renderer, error)
 	case render.IsLineFormTarget(t):
 		renderer, _ := render.LineFormRenderer(t)
 		return lineform.New(lineFormFormat(renderer), lineform.Options{}), nil
+	case render.IsSingboxTarget(t):
+		// sing-box 是独立内核，出站 schema 与 Clash 不同，自成渲染器。
+		return singbox.New(singbox.DefaultOptions()), nil
 	case render.IsTargetAlias(t):
 		// 别名归一到规范渲染器名：X-Convert-Format 与落盘名都从 Name() 派生，
 		// 因此不管用哪个写法请求，产物头与文件名都一致。
@@ -102,7 +106,8 @@ func Available() []string {
 	names := []string{
 		"clash.meta", "surge", "quan", "quanx", "loon", "surfboard", "mellow",
 		"list", "mixed", "ss", "ssd", "shadowsocks", "ssr", "shadowsocksr",
-		"trojan", "v2ray", "ss-sub", "ss-sub-json", "ss-sub-b64", "ssjson",
+		"trojan", "v2ray", "sing-box", "singbox",
+		"ss-sub", "ss-sub-json", "ss-sub-b64", "ssjson",
 	}
 	seen := make(map[string]bool, len(names))
 	for _, n := range names {

@@ -169,6 +169,35 @@ func TestClashJSONTargets_AllAliasesResolvable(t *testing.T) {
 	}
 }
 
+// TestSingboxTargets_AllResolvable sing-box 是独立内核，target 写法都归一到同一个渲染器名。
+func TestSingboxTargets_AllResolvable(t *testing.T) {
+	for name := range render.SingboxTargets {
+		r, err := Lookup(name, clashmeta.Options{})
+		if err != nil {
+			t.Errorf("target %q 无法取得渲染器: %v", name, err)
+			continue
+		}
+		if r.Name() != "sing-box" {
+			t.Errorf("target %q 的渲染器名 = %q，应为 sing-box", name, r.Name())
+			continue
+		}
+		body, err := r.Render(sampleRequest())
+		if err != nil {
+			t.Fatalf("target %q 渲染失败: %v", name, err)
+			continue
+		}
+		if !json.Valid(body) {
+			t.Errorf("target %q 的产物不是合法 JSON：%s", name, body)
+		}
+		if bytes.HasPrefix(body, []byte("#")) {
+			t.Errorf("target %q 的 JSON 产物不应带注释头", name)
+		}
+		if !strings.Contains(string(body), "\"outbounds\":") {
+			t.Errorf("target %q 的产物缺 outbounds 段：%s", name, body)
+		}
+	}
+}
+
 // TestClashYAMLOutputsYAML 反过守一面对称性：YAML 系的每个写法都必须走 YAML 输出，
 // 且调用方传入的 JSON 标记不能污染输出（序列化格式由 target 决定）。
 func TestClashYAMLOutputsYAML(t *testing.T) {
@@ -236,7 +265,7 @@ func sampleRequest() render.Request {
 
 // TestLookup_Unsupported 拼错的名字必须报未支持格式，不能静默回落成默认配置。
 func TestLookup_Unsupported(t *testing.T) {
-	for _, bad := range []string{"srr", "vles", "surge2-unknown", "SING-BOX"} {
+	for _, bad := range []string{"srr", "vles", "surge2-unknown", "ssr2"} {
 		if _, err := Lookup(bad, clashmeta.Options{}); err == nil {
 			t.Errorf("target %q 应当报未支持", bad)
 		} else if !errors.Is(err, ErrUnsupportedFormat) {
@@ -246,7 +275,7 @@ func TestLookup_Unsupported(t *testing.T) {
 }
 
 // TestAvailable_ContainsEveryTarget 错误信息里列出的 target 必须覆盖真源，
-// 否则用户照抄提示也踩空。四张真源表逐个过——历史上这里只查了 LinkTargets，
+// 否则用户照抄提示也踩空。五张真源表逐个过——历史上这里只查了 LinkTargets，
 // lineform 与 clash JSON 的别名全靠人肉记得加。
 func TestAvailable_ContainsEveryTarget(t *testing.T) {
 	avail := make(map[string]bool, len(Available()))
@@ -274,6 +303,11 @@ func TestAvailable_ContainsEveryTarget(t *testing.T) {
 	for name := range render.ClashJSONTargets {
 		if !avail[name] {
 			t.Errorf("Available() 缺 clash JSON target %q", name)
+		}
+	}
+	for name := range render.SingboxTargets {
+		if !avail[name] {
+			t.Errorf("Available() 缺 sing-box target %q", name)
 		}
 	}
 	for name := range render.TargetAliases {

@@ -151,7 +151,7 @@ func TestConvert_TargetFromUserAgent(t *testing.T) {
 func TestConvert_UnsupportedTarget(t *testing.T) {
 	sub := fixtureURL(t)
 	ts := newTestServer(t, nil)
-	for _, target := range []string{"srr", "vles", "singbox", "quantumult6"} {
+	for _, target := range []string{"srr", "vles", "ssr2", "quantumult6"} {
 		status, _, body := doGet(t, ts.URL+"/sub?url="+url.QueryEscape(sub)+"&target="+target, "", "")
 		if status != http.StatusNotImplemented {
 			t.Errorf("target=%q 状态 = %d，应为 501，body=%s", target, status, body)
