@@ -1,0 +1,30 @@
+# 构建产物
+/dist/
+/bin/
+*.exe
+*.exe~
+*.test
+*.prof
+
+# 本地数据目录（运行时缓存/输出）
+/data/
+
+# 参考二进制（subconverter / mihomo release，用于金测与配置校验）
+/tools/
+
+# 日志
+*.log
+
+# 编辑器与操作系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# 工具目录（ZCode 会话状态与本地忽略规则）
+.zcode/
+.zcodeignore
+
+# Go 构建缓存（本地 -race 调试用）
+.gocache/
