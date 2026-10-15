@@ -32,9 +32,10 @@
 | — | `loon` | 已落地 |
 | — | `surfboard` | 已落地 |
 | — | `ss-sub` / `ss-sub-json` / `ssjson` / `ss-sub-b64` | 已落地（SS-android 节点配置） |
+| — | `mellow` / `mellow-ios` | 已落地（差异见下节 M1~M4） |
+| — | `sstable` | 未落地（无参考产物可核实，见下节 M5） |
 | — | `sing-box` | 未落地（进程隔离调用，独立设计项，见 R2） |
-| — | `mellow` / `sstable` | 未落地（各自有独立的分段格式，待实现） |
-| — | `clash-json` / `clashmeta-json` | 未落地（I7e 待补） |
+| — | `clash.json` / `clash.meta.json` / `clashmeta.json` / `clash-json` / `clashmeta-json` / `mihomo.json` | 已落地，与 `clash.meta` 共用构树逻辑，只换编码 |
 
 ## SS-android 节点配置（ss-sub）
 
@@ -56,6 +57,52 @@ subconverter 一致）；`ss-sub-b64` 输出 base64 包裹，那是 SS-android �
 
 SS-android 没有代理组与分流规则的概念，`Groups` 与 `Rules` 对该形态不生效，
 引擎照常计算但渲染器不消费。
+
+## Mellow 配置形态（mellow）
+
+Mellow 的节点行是**三列一行**：`名字, 协议, 分享链接`。凭据不单独展开，
+直接复用分享链接——`internal/render/mellow` 调 `sharelink.Render` 生成 URI，
+因此 URI 的正确性只有一处实现，mellow 不会漂出去。
+
+段落顺序与 subconverter 实机产物一致：
+
+```
+[Endpoint]      DIRECT / REJECT / Dns-Out 三个内置端点在前，节点在后
+[Routing]       domainStrategy=…
+[Dns]           clientIp=… / hijack=Dns-Out
+[DnsServer]     可选，未配置时不写该段
+[Log]           loglevel=…
+[EndpointGroup] 组
+[RoutingRule]   规则
+```
+
+代理组模式只有三种，从 Clash 组类型映射过去：
+
+| Clash 组类型 | Mellow 模式 | 说明 |
+| --- | --- | --- |
+| `select` | `static` | 手动选择 |
+| `url-test` | `latency, interval=N, timeout=N` | 测速择优 |
+| `fallback` | `fallback` | 故障回退 |
+
+**timeout 单位是秒**，Clash 侧是毫秒，必须换算（10000ms → `timeout=10`），
+不换算会等到一小时才超时。亚秒超时取整到 1 秒——0 秒会被客户端当成不超时。
+
+协议覆盖面与 `sharelink.Supported()` 一致：ss / ssr / vmess / vless / trojan /
+hysteria / hysteria2 / tuic / anytls / socks5 / http 全部可导出。
+
+### 已知差异
+
+| # | 差异点 | subconverter v0.9.0 行为 | SubForge 行为 | 处置 |
+| --- | --- | --- | --- | --- |
+| M1 | 节点覆盖面 | 12 个探针节点只导出 vmess 与 ss 两个，其余协议全部丢弃 | 全部可导出协议都导出，丢不了的逐节点告警 | **有意偏离**。参考产物的节点覆盖面不够用，Mellow 本身支持这些协议 |
+| M2 | 节点凭据 | 导出的两条凭据也是空的：`vmess1://@host:port?network=&tls=` 与 `ss://Og@host:port`（`Og` 是 base64 的 `:`，即 method 与 password 两段皆空） | 凭据完整，走标准分享链接编码 | **有意偏离**。空凭据的节点连不上，那是坏产物；本项是 M1 的主要动因 |
+| M3 | vmess 链接 scheme | `vmess1://` | `vmess://`（标准 v2ray 分享链接） | 有意偏离。`vmess1://` 不是通用 scheme，Mellow 认标准 `vmess://`；ss 链接也补回 `#名字` 片段 |
+| M4 | 规则集 | 无参考产物可核实 | `RULE-SET` 丢弃并计入告警 | 保守处置。没有可核实的语法就不猜输出，宁可丢规则并告警，也不产出无法验证的行 |
+| M5 | `sstable` | 有该 target，但无实机产物可参照 | 未实现，报 501 | 与 sing-box 同一处置：先有参考产物再实现，避免凭空猜格式 |
+
+`GEOSITE` 与 surge 系 C 节同因：依赖内核 mmdb 数据，Mellow 没有对应数据源，
+丢弃并告警。`MATCH` 是内核专属收尾语法，映射成 `FINAL`。IP-CIDR / IP-CIDR6
+追加 `no-resolve`，与 QX / Surfboard 一致。
 
 ## 一行一节点配置形态（surge / quan / quanx / loon / surfboard）
 
@@ -193,6 +240,25 @@ mihomo 写进节点 `type` 字段的值是分享链接的 scheme（`converter.go
 | S1 | 分享链接输入 | **完全不解析**：vmess / vless / ssr / trojan / ss / hysteria2 / tuic 等 12 条链接全部返回 `Invalid subscription`，包括 v2ray 官方测试节点 | 全部识别 | SubForge 更宽。对拍金测时不要用 subconverter 做分享链接的输入基线 |
 | S2 | Clash YAML 输入的协议覆盖 | 静默丢弃 vless、hysteria、hysteria2、tuic、anytls，只保留 vmess / ss / ssr / trojan / socks5 / http | 全部保留 | SubForge 更宽。I8 对拍时按此判断，不要把 subconverter 的丢节点当成自己的转换错误 |
 | S3 | 不支持协议的导出 | 视版本而定，多数实现报整份失败 | 跳过并上报计数与名单，可序列化的节点照常导出 | 有意差异：静默失败与整份失败都不如"降级 + 明示" |
+
+## Clash JSON 配置（`clash.json` 系）
+
+`clash.json` / `clash.meta.json` / `clashmeta.json` / `clash-json` /
+`clashmeta-json` / `mihomo.json` 六个别名共用同一棵构好的配置树，只换最后一步
+编码，配置内容不重复实现——JSON 分支的开关由 registry 按 target 决定，不由
+调用方传入，因此复用同一个 `Options` 结构体不会把 YAML 输出串成 JSON。
+
+两个编码细节：
+
+- **键顺序保持构树顺序**。`encoding/json` 会按字典序排 map 键，golden 就不稳定
+  了，所以自己走一遍 `yaml.Node` 树做 2 空格缩进；顺带绕开 `json.Indent` 把
+  字符串里的 `<` / `>` / `&` 转成 `\u` 转义的问题——域名规则里正好会出现这些字符。
+- **端口保持字符串**。`"port": "443"` 而不是 `443`，与 YAML 产物字节级等价
+  （`TestRender_JSONRoundTrip` 卡死这一点）；改成数字两种格式的描述就不等价了。
+  空列表输出 `[]` 而不是 `null`。
+
+JSON 不支持注释，配置头无处可放，元信息只留在 HTTP 响应头里。
+同一样本下 JSON 比 YAML 大约 30%（6328 字节 vs 4893 字节），主要是每个键都要加引号。
 
 ## 规则集输出（/getruleset）
 
