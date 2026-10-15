@@ -1,0 +1,122 @@
+package render
+
+import "strings"
+
+// LinkTarget 描述 subconverter 那批"只输出分享链接"的 target 语义。
+// Renderer 是归一后的渲染器名（list=裸链接清单，mixed=整体 base64 包裹），
+// Types 是隐含的协议收窄，用内核规范化后的类型名，空表示不收窄。
+type LinkTarget struct {
+	Renderer string
+	Types    []string
+}
+
+// LinkTargets 是 target 名到链接形态语义的映射，唯一的真源。
+// convert 靠它做协议收窄，registry 靠它判断 target 是否合法——拆成两份
+// 就必然出现"HTTP 能转、CLI 报不支持格式"的分裂。
+// 取值来自 subconverter v0.9.0 实机输出（见 docs/compatibility.md）：
+// ss / ssd 同时含 ss 与 ssr 节点，v2ray 只含 vmess。
+var LinkTargets = map[string]LinkTarget{
+	"list":         {Renderer: "list"},
+	"sub":          {Renderer: "list"},
+	"subscription": {Renderer: "list"},
+	"mixed":        {Renderer: "mixed"},
+	"ss":           {Renderer: "mixed", Types: []string{"ss", "ssr"}},
+	"ssd":          {Renderer: "mixed", Types: []string{"ss", "ssr"}},
+	"shadowsocks":  {Renderer: "mixed", Types: []string{"ss", "ssr"}},
+	"ssr":          {Renderer: "mixed", Types: []string{"ssr"}},
+	"shadowsocksr": {Renderer: "mixed", Types: []string{"ssr"}},
+	"trojan":       {Renderer: "mixed", Types: []string{"trojan"}},
+	"v2ray":        {Renderer: "mixed", Types: []string{"vmess"}},
+}
+
+// NormalizeTarget 归一化 target 名；不在表里时 ok=false，调用方按未支持的格式处理。
+// ok=false 时返回的 LinkTarget 是零值，不要使用。
+func NormalizeTarget(target string) (LinkTarget, bool) {
+	lt, ok := LinkTargets[strings.ToLower(strings.TrimSpace(target))]
+	return lt, ok
+}
+
+// IsMixedTarget 判断 target 是否走整体 base64 包裹的混合订阅形态。
+func IsMixedTarget(target string) bool {
+	lt, ok := NormalizeTarget(target)
+	return ok && lt.Renderer == "mixed"
+}
+
+// TargetAliases 收录不属于"分享链接"与"一行一节点"两族、但存在多个写法的 target。
+// SS-android 有两种入口格式：默认 `ss-sub` 输出裸 JSON（与 subconverter 一致），
+// `ss-sub-b64` 输出 base64 包裹（客户端订阅入口用的那种）。两者共用一个渲染器，
+// 靠别名选 Base64——渲染器名不变，X-Convert-Format 与文件名才保持一致。
+var TargetAliases = map[string]string{
+	"ss-sub":      "ss-sub",
+	"ss-sub-json": "ss-sub",
+	"ss-sub-b64":  "ss-sub",
+	"ssjson":      "ss-sub",
+}
+
+// LineFormTarget 描述"一行一节点"族的配置形态 target：Renderer 是归一后的
+// 渲染器名（也就是 Format.Name），Aliases 是同一格式的其它写法。
+// 与 LinkTargets 一样，convert 与 registry 都从这里读，避免两份名单漂移。
+type LineFormTarget struct {
+	Renderer string
+	Aliases  []string
+}
+
+// LineFormTargets 是"一行一节点"族的 target 表，与 LinkTargets 同构。
+// 别名按 subconverter 的常用写法收敛：surge2/3/4 与 suri 落到同一个 Surge 格式
+// （它们只是客户端版本差异，不产生独立语法），quantumult/quantumultx 分别落到
+// QX classic 与 QX。不支持的格式（surge6 的语法差异、sing-box 等）不列在这里，
+// 让 Lookup 明确报"未支持"，而不是静默产出错格式。
+var LineFormTargets = map[string]LineFormTarget{
+	"surge":     {Renderer: "surge", Aliases: []string{"surge2", "surge3", "surge4", "suri"}},
+	"quan":      {Renderer: "quan", Aliases: []string{"quantumult"}},
+	"quanx":     {Renderer: "quanx", Aliases: []string{"quantumultx"}},
+	"loon":      {Renderer: "loon"},
+	"surfboard": {Renderer: "surfboard"},
+}
+
+// lineFormByName 把别名一并展开成 target -> 规范渲染器名。
+// LineFormTargets 只按规范名做键，别名在各自的 Aliases 里；查表必须过这张展开表，
+// 否则 `surge4` 会在"列出来可用"和"Lookup 报未支持"之间出现分裂。
+var lineFormByName = func() map[string]string {
+	m := make(map[string]string, len(LineFormTargets)+8)
+	for target, lt := range LineFormTargets {
+		m[target] = lt.Renderer
+		for _, a := range lt.Aliases {
+			m[a] = lt.Renderer
+		}
+	}
+	return m
+}()
+
+// NormalizeLineFormTarget 归一化配置形态 target，返回规范 target 与其渲染器名。
+// 别名归一到规范名：`surge4` 与 `suri` 都落到 `surge`。不在表里时 ok=false。
+func NormalizeLineFormTarget(target string) (LineFormTarget, bool) {
+	t := strings.ToLower(strings.TrimSpace(target))
+	canonical, ok := lineFormByName[t]
+	if !ok {
+		return LineFormTarget{}, false
+	}
+	lt, ok := LineFormTargets[canonical]
+	if !ok {
+		return LineFormTarget{}, false
+	}
+	return LineFormTarget{Renderer: lt.Renderer, Aliases: lt.Aliases}, true
+}
+
+// LineFormRenderer 返回 target 归一后的规范渲染器名；不在表里时 ok=false。
+func LineFormRenderer(target string) (string, bool) {
+	renderer, ok := lineFormByName[strings.ToLower(strings.TrimSpace(target))]
+	return renderer, ok
+}
+
+// IsLineFormTarget 判断 target 是否属"一行一节点"配置形态（Surge / QX / Loon / Surfboard）。
+func IsLineFormTarget(target string) bool {
+	_, ok := lineFormByName[strings.ToLower(strings.TrimSpace(target))]
+	return ok
+}
+
+// IsTargetAlias 判断 target 是否属于 TargetAliases 收录的那一小批写法。
+func IsTargetAlias(target string) bool {
+	_, ok := TargetAliases[strings.ToLower(strings.TrimSpace(target))]
+	return ok
+}
