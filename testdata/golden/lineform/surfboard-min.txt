@@ -1,0 +1,16 @@
+# SubForge 0.1.0 生成
+# 配置名: subforge-test
+# 生成时间: 2026-10-14T00:00:00Z
+
+[Proxy]
+vmess-ws = vmess, v.example.com, 443, username=u-1234, tls=true, vmess-aead=true, ws=true, ws-path=/ws, ws-headers=Host:v.example.com, sni=v.example.com
+ss-aes = ss, ss.example.com, 8388, encrypt-method=aes-256-gcm, password=password123
+trojan-tls = trojan, tr.example.com, 443, password=p-1234, sni=tr.example.com, skip-cert-verify=true
+
+[Proxy Group]
+节点选择 = select,DIRECT,ss-aes,trojan-tls,vmess-ws
+自动测速 = url-test,DIRECT,ss-aes,trojan-tls,vmess-ws,url=https://www.google.com/generate_204,interval=300,tolerance=50,timeout=5000
+
+[Rule]
+GEOIP,CN,DIRECT
+FINAL,节点选择

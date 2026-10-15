@@ -1,0 +1,17 @@
+//! SubForge 0.1.0 生成
+//! 配置名: subforge-test
+//! 生成时间: 2026-10-14T00:00:00Z
+
+[server_local]
+vmess = v.example.com:443, method=chacha20-ietf-poly1305, password=u-1234, obfs=wss, obfs-host=v.example.com, obfs-uri=/ws, tag=vmess-ws
+shadowsocks = ss.example.com:8388, method=aes-256-gcm, password=password123, tag=ss-aes
+shadowsocks = ssr.example.com:1234, method=aes-256-cfb, password=password123, ssr-protocol=origin, obfs=plain, tag=ssr-plain
+trojan = tr.example.com:443, password=p-1234, over-tls=true, tls-verification=false, tls-host=tr.example.com, tag=trojan-tls
+
+[policy]
+节点选择 = static,DIRECT,ss-aes,ssr-plain,trojan-tls,vmess-ws
+自动测速 = url-latency-benchmark,DIRECT,ss-aes,ssr-plain,trojan-tls,vmess-ws,check-url=https://www.google.com/generate_204,check-interval=300,tolerance=50,timeout=5000
+
+[filter_local]
+GEOIP,CN,DIRECT
+FINAL,节点选择
