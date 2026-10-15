@@ -1,0 +1,346 @@
+{
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns_proxy",
+        "address": "tls://1.1.1.1",
+        "address_resolver": "dns_resolver"
+      },
+      {
+        "tag": "dns_direct",
+        "address": "h3://dns.alidns.com/dns-query",
+        "detour": "DIRECT"
+      },
+      {
+        "tag": "dns_fakeip",
+        "address": "fakeip"
+      },
+      {
+        "tag": "dns_resolver",
+        "address": "223.5.5.5",
+        "detour": "DIRECT"
+      },
+      {
+        "tag": "block",
+        "address": "rcode://success"
+      }
+    ],
+    "rules": [
+      {
+        "outbound": [
+          "any"
+        ],
+        "server": "dns_resolver"
+      },
+      {
+        "geosite": [
+          "category-ads-all"
+        ],
+        "server": "block",
+        "disable_cache": true
+      },
+      {
+        "geosite": [
+          "geolocation-!cn"
+        ],
+        "query_type": [
+          "A",
+          "AAAA"
+        ],
+        "server": "dns_fakeip"
+      },
+      {
+        "geosite": [
+          "geolocation-!cn"
+        ],
+        "server": "dns_proxy"
+      }
+    ],
+    "final": "dns_direct",
+    "independent_cache": true,
+    "fakeip": {
+      "enabled": true,
+      "inet4_range": "198.18.0.0/15"
+    }
+  },
+  "ntp": {
+    "enabled": true,
+    "server": "time.apple.com",
+    "server_port": 123,
+    "interval": "30m",
+    "detour": "DIRECT"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "0.0.0.0",
+      "listen_port": 2080
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "inet4_address": "172.19.0.1/30",
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "mixed",
+      "sniff": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "DIRECT"
+    },
+    {
+      "type": "block",
+      "tag": "REJECT"
+    },
+    {
+      "type": "dns",
+      "tag": "dns-out"
+    },
+    {
+      "type": "vmess",
+      "tag": "vmess-node",
+      "server": "vmess.example.com",
+      "server_port": 443,
+      "uuid": "11111111-2222-3333-4444-555555555555",
+      "alter_id": 0,
+      "security": "auto",
+      "udp": true,
+      "transport": {
+        "type": "ws",
+        "path": "/ws",
+        "headers": {
+          "Host": "vmess.example.com"
+        }
+      },
+      "tls": {
+        "enabled": true,
+        "server_name": "vmess.example.com"
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "vless-reality",
+      "server": "vless.example.com",
+      "server_port": 443,
+      "uuid": "11111111-2222-3333-4444-555555555555",
+      "flow": "xtls-rprx-vision",
+      "udp": true,
+      "reality": {
+        "public_key": "abcPUBLICKEY",
+        "short_id": "0123456789abcdef"
+      },
+      "tls": {
+        "enabled": true,
+        "server_name": "vless.example.com",
+        "utls": "chrome"
+      }
+    },
+    {
+      "type": "trojan",
+      "tag": "trojan-node",
+      "server": "trojan.example.com",
+      "server_port": 443,
+      "password": "password123",
+      "udp": true,
+      "tls": {
+        "enabled": true,
+        "server_name": "trojan.example.com",
+        "insecure": true
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-node",
+      "server": "hy2.example.com",
+      "server_port": 443,
+      "password": "password123",
+      "up": "",
+      "down": "",
+      "udp": true,
+      "tls": {
+        "enabled": true,
+        "server_name": "hy2.example.com"
+      }
+    },
+    {
+      "type": "hysteria",
+      "tag": "hy-node",
+      "server": "hy.example.com",
+      "server_port": 443,
+      "password": "password123",
+      "udp": true,
+      "congestion_controller": "bbr",
+      "alpn": [
+        "h3"
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "hy.example.com"
+      }
+    },
+    {
+      "type": "tuic",
+      "tag": "tuic-node",
+      "server": "tuic.example.com",
+      "server_port": 443,
+      "uuid": "11111111-2222-3333-4444-555555555555",
+      "password": "password123",
+      "udp": true,
+      "congestion_controller": "bbr",
+      "alpn": [
+        "h3"
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "tuic.example.com"
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "anytls-node",
+      "server": "anytls.example.com",
+      "server_port": 443,
+      "username": "user1",
+      "password": "password123",
+      "udp": true,
+      "tls": {
+        "enabled": true,
+        "server_name": "anytls.example.com"
+      }
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "ss-node",
+      "server": "ss.example.com",
+      "server_port": 8388,
+      "method": "aes-256-gcm",
+      "password": "password123",
+      "udp": true
+    },
+    {
+      "type": "shadowsocksr",
+      "tag": "ssr-node",
+      "server": "ssr.example.com",
+      "server_port": 8388,
+      "method": "chacha20",
+      "password": "password123",
+      "protocol": "auth_sha1_v2",
+      "protocol_param": "",
+      "obfs": "tls1.2_ticket_auth",
+      "obfs_param": "",
+      "udp": true
+    },
+    {
+      "type": "socks",
+      "tag": "socks-node",
+      "server": "socks.example.com",
+      "server_port": 1080,
+      "username": "user1",
+      "password": "pass1"
+    },
+    {
+      "type": "http",
+      "tag": "http-node",
+      "server": "http.example.com",
+      "server_port": 8080,
+      "username": "user1",
+      "password": "pass1"
+    },
+    {
+      "type": "selector",
+      "tag": "pick",
+      "outbounds": [
+        "vmess-node",
+        "ss-node"
+      ]
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": [
+        "vmess-node",
+        "ss-node"
+      ],
+      "url": "http://www.gstatic.com/generate_204",
+      "tolerance": 50,
+      "interval": "300s"
+    },
+    {
+      "type": "fallback",
+      "tag": "fb",
+      "outbounds": [
+        "vmess-node",
+        "ss-node"
+      ],
+      "interval": "180s"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "domain_suffix": [
+          "google.com",
+          "gstatic.com"
+        ],
+        "outbound": "pick"
+      },
+      {
+        "domain": [
+          "ai.openai.com"
+        ],
+        "outbound": "DIRECT"
+      },
+      {
+        "domain_keyword": [
+          "openai"
+        ],
+        "outbound": "pick"
+      },
+      {
+        "ip_cidr": [
+          "10.0.0.0/8"
+        ],
+        "outbound": "DIRECT"
+      },
+      {
+        "ip_cidr6": [
+          "::1/128"
+        ],
+        "outbound": "DIRECT"
+      },
+      {
+        "geoip": [
+          "CN"
+        ],
+        "outbound": "DIRECT"
+      },
+      {
+        "geosite": [
+          "geolocation-!cn"
+        ],
+        "outbound": "pick"
+      }
+    ],
+    "auto_detect_interface": true,
+    "final": "pick"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "store_fakeip": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "dashboard"
+    }
+  }
+}
