@@ -1,0 +1,89 @@
+# 此配置由 SubForge 自动生成
+# 配置名: subforge-test
+# SubForge 0.1.0
+# 生成时间: 2026-10-14T00:00:00Z
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+unify-ip: true
+tcp-concurrent: true
+external-controller: 127.0.0.1:9090
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.0/16
+  fake-ip-filter:
+    - +.lan
+    - lanserver.test
+    - '*.local'
+    - '*.localdomain'
+  default-nameserver:
+    - 223.5.5.5
+    - 1.1.1.1
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.cloudflare.com/dns-query
+  fallback:
+    - tls://8.8.8.8:853
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+proxies:
+  - client-fingerprint: chrome
+    name: HK-香港-01
+    port: "443"
+    server: hk1.example.com
+    servername: hk1.example.com
+    tls: true
+    type: vless
+    udp: true
+    ws-opts:
+      headers:
+        Host: hk1.example.com
+      path: /ws
+  - cipher: auto
+    name: JP-日本-01
+    network: tcp
+    port: "8443"
+    server: jp1.example.com
+    tls: true
+    type: vmess
+    udp: true
+    uuid: 11111111-2222-3333-4444-555555555555
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - HK-香港-01
+      - JP-日本-01
+  - name: ♻️ 自动选择
+    type: url-test
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    timeout: 5000
+    lazy: true
+    proxies:
+      - HK-香港-01
+      - JP-日本-01
+  - name: "🎯 全球直连"
+    type: select
+    proxies:
+      - DIRECT
+      - ♻️ 自动选择
+  - name: "🛑 拒绝访问"
+    type: select
+    proxies:
+      - REJECT
+      - REJECT-DROP
+  - name: "🐟 漏网之鱼"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - DIRECT
+rules:
+  - GEOIP,CN,DIRECT
+  - "MATCH,🚀 节点选择"
