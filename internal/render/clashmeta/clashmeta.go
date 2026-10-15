@@ -16,6 +16,9 @@ import (
 
 // Options 是 clash.meta 渲染器的输出配置。
 type Options struct {
+	// JSON 输出 JSON 而非 YAML。构树逻辑完全共用，只换编码步骤——
+	// 两种格式描述的是同一份配置，不该有各自的内容实现。
+	JSON bool
 	// MixedPort HTTP+TCP+UDP 混合监听端口。
 	MixedPort int
 	// AllowLan 是否允许局域网连接。
@@ -115,10 +118,15 @@ func fillDefaults(o Options) Options {
 	return o
 }
 
-// Name 返回目标名。
-func (r *Renderer) Name() string { return "clash.meta" }
+// Name 返回目标名；JSON 输出带上 .json 后缀，X-Convert-Format 与落盘名都从它派生。
+func (r *Renderer) Name() string {
+	if r.opts.JSON {
+		return "clash.meta.json"
+	}
+	return "clash.meta"
+}
 
-// Render 产出 YAML 文本（含注释头）。
+// Render 产出 YAML（含注释头）或 JSON 文本。
 func (r *Renderer) Render(req render.Request) ([]byte, error) {
 	groups := req.Groups
 	if len(groups) == 0 {
@@ -166,6 +174,16 @@ func (r *Renderer) Render(req render.Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if r.opts.JSON {
+		// JSON 不支持注释，配置头无处可放——元信息只留在 HTTP 响应头里。
+		body, err := render.MarshalJSONDoc(root)
+		if err != nil {
+			return nil, fmt.Errorf("编码 JSON: %w", err)
+		}
+		return body, nil
+	}
+
 	body, err := render.MarshalDoc(root)
 	if err != nil {
 		return nil, fmt.Errorf("编码 YAML: %w", err)

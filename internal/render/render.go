@@ -7,6 +7,7 @@ package render
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -190,6 +191,111 @@ func unescapeAstral(body []byte) []byte {
 		}
 		return []byte(string(rune(c)))
 	})
+}
+
+// --- 确定性 JSON 编码 ---
+//
+// 同一棵 yaml.Node 树也要能出 JSON（Clash/mihomo 的 JSON 配置、sing-box）。
+// encoding/json.Marshal 对 map[string]any 按键字典序输出，会破坏键顺序契约；
+// 所以照 YAML 那边一样手工遍历，顺序完全由构树代码决定。
+
+// MarshalJSONDoc 把根节点编码为 2 空格缩进的 JSON 文本。
+// 不用 json.Indent：它走 Encoder 默认设置，会把字符串里的 < > & 转成 \u 转义，
+// 域名规则里恰好会出现这些字符，转完虽仍合法但产物不可读。自己缩进更可控。
+func MarshalJSONDoc(root yaml.Node) ([]byte, error) {
+	body, err := marshalJSONNode(&root, 0)
+	if err != nil {
+		return nil, err
+	}
+	return append(body, '\n'), nil
+}
+
+const jsonIndent = "  "
+
+func marshalJSONNode(n *yaml.Node, level int) ([]byte, error) {
+	ind := strings.Repeat(jsonIndent, level)
+	switch n.Kind {
+	case yaml.MappingNode:
+		if len(n.Content) == 0 {
+			return []byte("{}"), nil
+		}
+		var b strings.Builder
+		b.WriteString("{\n")
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if i > 0 {
+				b.WriteString(",\n")
+			}
+			b.WriteString(strings.Repeat(jsonIndent, level+1))
+			kb, err := json.Marshal(n.Content[i].Value)
+			if err != nil {
+				return nil, err
+			}
+			b.Write(kb)
+			b.WriteString(": ")
+			vb, err := marshalJSONNode(n.Content[i+1], level+1)
+			if err != nil {
+				return nil, err
+			}
+			b.Write(vb)
+		}
+		b.WriteString("\n" + ind + "}")
+		return []byte(b.String()), nil
+	case yaml.SequenceNode:
+		if len(n.Content) == 0 {
+			return []byte("[]"), nil
+		}
+		var b strings.Builder
+		b.WriteString("[\n")
+		for i, c := range n.Content {
+			if i > 0 {
+				b.WriteString(",\n")
+			}
+			b.WriteString(strings.Repeat(jsonIndent, level+1))
+			vb, err := marshalJSONNode(c, level+1)
+			if err != nil {
+				return nil, err
+			}
+			b.Write(vb)
+		}
+		b.WriteString("\n" + ind + "]")
+		return []byte(b.String()), nil
+	case yaml.ScalarNode:
+		return jsonScalarNode(n)
+	default:
+		return []byte("null"), nil
+	}
+}
+
+// jsonScalarNode 按 Tag 决定 JSON 值形态。
+// Tag 不能丢：它记录了标量的原始类型（"443" 是字符串、443 是整数），
+// 丢了对客户端来说端口就变成数字字段，mihomo 读不出代理。
+func jsonScalarNode(n *yaml.Node) ([]byte, error) {
+	tag := n.Tag
+	if tag == "" {
+		tag = "!!str" // StringSequence 不设 Tag，按字符串处理
+	}
+	switch tag {
+	case "!!null":
+		return []byte("null"), nil
+	case "!!bool":
+		switch strings.ToLower(n.Value) {
+		case "true", "on", "yes":
+			return []byte("true"), nil
+		default:
+			return []byte("false"), nil
+		}
+	case "!!int":
+		if _, err := strconv.ParseInt(n.Value, 10, 64); err == nil {
+			return []byte(n.Value), nil
+		}
+	case "!!float":
+		if _, err := strconv.ParseFloat(n.Value, 64); err == nil {
+			return []byte(n.Value), nil
+		}
+	}
+	// 类型不符（YAML 里的 NaN/Infinity 不是合法 JSON 数字）或纯字符串：
+	// 统一按 JSON 字符串输出，交给 json.Marshal 处理转义。
+	return json.Marshal(n.Value)
 }
 
 // commentBlock 生成配置头注释。

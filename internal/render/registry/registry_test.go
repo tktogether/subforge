@@ -2,7 +2,9 @@ package registry
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tktogether/subforge/internal/model"
@@ -140,6 +142,60 @@ func TestTargetAliases_AllResolvable(t *testing.T) {
 	}
 }
 
+// TestClashJSONTargets_AllAliasesResolvable 与 LineFormTargets 的守门对称：
+// Available() 会把 JSON 别名一并列出，每个都必须真能过 Lookup，
+// 且渲染器名归一到 clash.meta.json（X-Convert-Format 与落盘名都从它派生）。
+func TestClashJSONTargets_AllAliasesResolvable(t *testing.T) {
+	for name := range render.ClashJSONTargets {
+		r, err := Lookup(name, clashmeta.Options{})
+		if err != nil {
+			t.Errorf("target %q 无法取得渲染器: %v", name, err)
+			continue
+		}
+		if r.Name() != "clash.meta.json" {
+			t.Errorf("target %q 的渲染器名 = %q，应为 clash.meta.json", name, r.Name())
+		}
+		body, err := r.Render(sampleRequest())
+		if err != nil {
+			t.Fatalf("target %q 渲染失败: %v", name, err)
+		}
+		// JSON 产物必须能被标准库解析回来，且没有 YAML 注释头。
+		if !json.Valid(body) {
+			t.Errorf("target %q 的产物不是合法 JSON：%s", name, body)
+		}
+		if bytes.HasPrefix(body, []byte("#")) {
+			t.Errorf("target %q 的 JSON 产物不应带注释头", name)
+		}
+	}
+}
+
+// TestClashYAMLOutputsYAML 反过守一面对称性：YAML 系的每个写法都必须走 YAML 输出，
+// 且调用方传入的 JSON 标记不能污染输出（序列化格式由 target 决定）。
+func TestClashYAMLOutputsYAML(t *testing.T) {
+	for name := range render.ClashYAMLTargets {
+		r, err := Lookup(name, clashmeta.Options{JSON: true})
+		if err != nil {
+			t.Errorf("target %q 无法取得渲染器: %v", name, err)
+			continue
+		}
+		if r.Name() != "clash.meta" {
+			t.Errorf("target %q 的渲染器名 = %q，应为 clash.meta", name, r.Name())
+			continue
+		}
+		body, err := r.Render(sampleRequest())
+		if err != nil {
+			t.Fatalf("target %q 渲染失败: %v", name, err)
+			continue
+		}
+		if bytes.HasPrefix(body, []byte("{")) {
+			t.Errorf("target %q 输出了 JSON，应为 YAML", name)
+		}
+		if !strings.Contains(string(body), "proxies:") {
+			t.Errorf("target %q 的产物缺 proxies 段：%s", name, body)
+		}
+	}
+}
+
 // TestSsSubBase64Toggle base64 只改变外层编码，渲染器名与裸 JSON 内容都不该变。
 func TestSsSubBase64Toggle(t *testing.T) {
 	plainR, err := Lookup("ss-sub", clashmeta.Options{})
@@ -190,15 +246,39 @@ func TestLookup_Unsupported(t *testing.T) {
 }
 
 // TestAvailable_ContainsEveryTarget 错误信息里列出的 target 必须覆盖真源，
-// 否则用户照抄提示也踩空。
+// 否则用户照抄提示也踩空。四张真源表逐个过——历史上这里只查了 LinkTargets，
+// lineform 与 clash JSON 的别名全靠人肉记得加。
 func TestAvailable_ContainsEveryTarget(t *testing.T) {
 	avail := make(map[string]bool, len(Available()))
 	for _, n := range Available() {
 		avail[n] = true
 	}
 	for name := range render.LinkTargets {
-		if !avail[name] && name != "sub" && name != "subscription" {
+		if name == "sub" || name == "subscription" {
+			continue
+		}
+		if !avail[name] {
 			t.Errorf("Available() 缺 link target %q", name)
+		}
+	}
+	for target, lt := range render.LineFormTargets {
+		if !avail[target] {
+			t.Errorf("Available() 缺 lineform target %q", target)
+		}
+		for _, a := range lt.Aliases {
+			if !avail[a] {
+				t.Errorf("Available() 缺 lineform 别名 %q", a)
+			}
+		}
+	}
+	for name := range render.ClashJSONTargets {
+		if !avail[name] {
+			t.Errorf("Available() 缺 clash JSON target %q", name)
+		}
+	}
+	for name := range render.TargetAliases {
+		if !avail[name] {
+			t.Errorf("Available() 缺 target 别名 %q", name)
 		}
 	}
 }

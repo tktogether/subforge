@@ -26,7 +26,14 @@ var ErrUnsupportedFormat = errors.New("不支持的输出格式")
 func Lookup(target string, clashOpts clashmeta.Options) (render.Renderer, error) {
 	t := strings.ToLower(strings.TrimSpace(target))
 	switch {
-	case t == "", t == "clash", t == "clash.meta", t == "clashmeta", t == "mihomo", t == "yaml":
+	case render.IsClashYAMLTarget(t):
+		// 序列化格式由 target 决定，不由调用方传入的 Options 决定——
+		// 复用同一个 Options 结构体时才不会串到 JSON 输出。
+		clashOpts.JSON = false
+		return clashmeta.New(clashOpts), nil
+	case render.IsClashJSONTarget(t):
+		// 同一棵构好的 yaml.Node 树换成 JSON 编码，配置内容不重复实现。
+		clashOpts.JSON = true
 		return clashmeta.New(clashOpts), nil
 	case t == "list", t == "sub", t == "subscription":
 		// 分享链接清单：filter/rename/sort 全部照常生效，只是输出形态换成纯链接。
@@ -100,6 +107,12 @@ func Available() []string {
 				names = append(names, n)
 				seen[n] = true
 			}
+		}
+	}
+	for n := range render.ClashJSONTargets {
+		if !seen[n] {
+			names = append(names, n)
+			seen[n] = true
 		}
 	}
 	return names

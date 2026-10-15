@@ -2,6 +2,7 @@ package clashmeta
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,18 @@ func renderTest(t *testing.T, req render.Request) []byte {
 	return body
 }
 
+// renderJSON 与 renderTest 对称，产出 JSON 形态。
+func renderJSON(t *testing.T, req render.Request) []byte {
+	t.Helper()
+	opts := DefaultOptions()
+	opts.JSON = true
+	body, err := New(opts).Render(req)
+	if err != nil {
+		t.Fatalf("Render(JSON): %v", err)
+	}
+	return body
+}
+
 // TestRender_Golden 是配置产物的字节级金测（SUBFORGE_UPDATE_GOLDEN=1 可刷新）。
 func TestRender_Golden(t *testing.T) {
 	got := renderTest(t, render.Request{
@@ -64,6 +77,100 @@ func TestRender_Golden(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("输出与 golden 不一致\n--- 实际 ---\n%s\n--- golden ---\n%s", got, want)
+	}
+}
+
+// TestRender_Golden_JSON 是 JSON 输出的字节级金测。
+// JSON 与 YAML 构的是同一棵树，所以金测用同一个 Request。
+func TestRender_Golden_JSON(t *testing.T) {
+	got := renderJSON(t, render.Request{
+		Nodes:   testNodes(),
+		Profile: render.Profile{Name: "subforge-test", Version: "0.1.0", GeneratedAt: "2026-10-14T00:00:00Z"},
+	})
+
+	path := filepath.Join("..", "..", "..", "testdata", "golden", "clash-meta-default.json")
+	if os.Getenv("SUBFORGE_UPDATE_GOLDEN") == "1" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Skip("已刷新 golden")
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取 golden（先跑 SUBFORGE_UPDATE_GOLDEN=1 go test）: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("输出与 golden 不一致\n--- 实际 ---\n%s\n--- golden ---\n%s", got, want)
+	}
+}
+
+// TestRender_JSONRoundTrip 用标准库把 JSON 产物解析回来，确认字段与类型都在。
+// 类型漂移是 JSON 编码最容易犯的错：YAML 里 "443" 是字符串，
+// 编码成 443 之后 mihomo 就当数字读，端口字段直接失效。
+func TestRender_JSONRoundTrip(t *testing.T) {
+	body := renderJSON(t, render.Request{Nodes: testNodes()})
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("产物不是合法 JSON: %v", err)
+	}
+	proxies, ok := doc["proxies"].([]any)
+	if !ok {
+		t.Fatalf("proxies 不是数组: %T", doc["proxies"])
+	}
+	if len(proxies) != 2 {
+		t.Fatalf("proxies 数量 = %d, want 2", len(proxies))
+	}
+	for i, p := range proxies {
+		m, ok := p.(map[string]any)
+		if !ok {
+			t.Fatalf("proxies[%d] 不是对象: %T", i, p)
+			continue
+		}
+		// 端口必须是字符串——mihomo 按 map[string]any 读，数字与字符串都收，
+		// 但改成数字就与 YAML 产物不一致，两种格式的描述就不等价了。
+		port, isStr := m["port"].(string)
+		if !isStr || port != "443" && port != "8443" {
+			t.Errorf("proxies[%d].port 应为字符串 443/8443，实际 %T %v", i, m["port"], m["port"])
+		}
+		for _, f := range []string{"name", "type", "server"} {
+			if _, ok := m[f].(string); !ok {
+				t.Errorf("proxies[%d].%s 不是字符串: %T", i, f, m[f])
+			}
+		}
+	}
+	if _, ok := doc["rules"].([]any); !ok {
+		t.Errorf("rules 不是数组: %T", doc["rules"])
+	}
+	if _, ok := doc["proxy-groups"].([]any); !ok {
+		t.Errorf("proxy-groups 不是数组: %T", doc["proxy-groups"])
+	}
+}
+
+// TestRender_JSONDeterministic JSON 输出同样要字节稳定，否则金测抖动。
+func TestRender_JSONDeterministic(t *testing.T) {
+	req := render.Request{Nodes: testNodes()}
+	a := renderJSON(t, req)
+	b := renderJSON(t, req)
+	if !bytes.Equal(a, b) {
+		t.Fatal("JSON 输出两次渲染不一致（golden 无法工作）")
+	}
+}
+
+// TestRender_JSONEmptyLists 空列表必须是 [] 而不是 null，客户端对 null 的处理各不相同。
+func TestRender_JSONEmptyLists(t *testing.T) {
+	body := renderJSON(t, render.Request{Nodes: model.NodeList{}})
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("产物不是合法 JSON: %v", err)
+	}
+	if _, ok := doc["proxies"].([]any); !ok {
+		t.Fatalf("空 proxies 应为 []，实际 %T: %s", doc["proxies"], body)
+	}
+	if bytes.Contains(body, []byte("null")) {
+		t.Errorf("JSON 产物不应出现 null：%s", body)
 	}
 }
 
@@ -189,30 +296,43 @@ func TestRender_MihomoValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析 fixture: %v", err)
 	}
-	body, err := New(DefaultOptions()).Render(render.Request{
+	req := render.Request{
 		Nodes:   model.NewNodeList(raws, "fixture"),
 		Profile: render.Profile{Name: "subforge-mihomo-test", Version: "test", GeneratedAt: "2026-10-14T00:00:00Z"},
-	})
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	cfg := filepath.Join(t.TempDir(), "subforge.yaml")
-	if err := os.WriteFile(cfg, body, 0o644); err != nil {
-		t.Fatal(err)
 	}
 
-	cfg, err = filepath.Abs(cfg)
-	if err != nil {
-		t.Fatal(err)
+	// YAML 与 JSON 两种形态都必须能被内核加载——两者描述的是一份配置，
+	// 只验一种会漏掉 JSON 编码的类型漂移问题。
+	for _, tc := range []struct {
+		name string
+		body []byte
+	}{
+		{"yaml", renderTest(t, req)},
+		{"json", renderJSON(t, req)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ext := ".yaml"
+			if tc.name == "json" {
+				ext = ".json"
+			}
+			cfg := filepath.Join(t.TempDir(), "subforge"+ext)
+			if err := os.WriteFile(cfg, tc.body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := filepath.Abs(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// 必须用绝对路径的 -f 指名配置：mihomo 默认找 config.yaml，找不到时会先生成初始
+			// 模板再校验那个模板——我们自己的坏配置也会"通过"，等于白测。
+			out, err := exec.Command(bin, "-t", "-f", cfg).CombinedOutput()
+			if err != nil {
+				t.Fatalf("mihomo -t 校验失败:\n%s", out)
+			}
+			if !strings.Contains(string(out), "test is successful") {
+				t.Fatalf("mihomo 未确认通过:\n%s", out)
+			}
+			t.Logf("mihomo -t 通过: %s", strings.TrimSpace(string(out)))
+		})
 	}
-	// 必须用绝对路径的 -f 指名配置：mihomo 默认找 config.yaml，找不到时会先生成初始
-	// 模板再校验那个模板——我们自己的坏配置也会"通过"，等于白测。
-	out, err := exec.Command(bin, "-t", "-f", cfg).CombinedOutput()
-	if err != nil {
-		t.Fatalf("mihomo -t 校验失败:\n%s", out)
-	}
-	if !strings.Contains(string(out), "test is successful") {
-		t.Fatalf("mihomo 未确认通过:\n%s", out)
-	}
-	t.Logf("mihomo -t 通过: %s", strings.TrimSpace(string(out)))
 }

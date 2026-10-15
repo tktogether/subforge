@@ -42,6 +42,42 @@ func IsMixedTarget(target string) bool {
 	return ok && lt.Renderer == "mixed"
 }
 
+// ClashYAMLTargets 是产出 Clash YAML 配置的 target 写法。
+// 与 ClashJSONTargets 分开成两张表，因为输出编码不同、扩展方式也不同：
+// 新增一种序列化格式不该去改这一张名单。
+var ClashYAMLTargets = map[string]bool{
+	"":           true, // 空 target 走默认
+	"clash":      true,
+	"clash.meta": true,
+	"clashmeta":  true,
+	"mihomo":     true,
+	"yaml":       true,
+}
+
+// ClashJSONTargets 是产出 Clash JSON 配置的 target 写法。
+// 构树逻辑与 YAML 完全共用（同一份配置，只换编码步骤），
+// 因此这里只登记写法，不复制渲染逻辑。
+var ClashJSONTargets = map[string]bool{
+	"clash.json":      true,
+	"clash.meta.json": true,
+	"clashmeta.json":  true,
+	"clash-json":      true,
+	"clashmeta-json":  true,
+	"mihomo.json":     true,
+}
+
+// IsClashYAMLTarget 判断 target 是否产出 Clash YAML 配置。
+func IsClashYAMLTarget(target string) bool {
+	_, ok := ClashYAMLTargets[strings.ToLower(strings.TrimSpace(target))]
+	return ok
+}
+
+// IsClashJSONTarget 判断 target 是否产出 Clash JSON 配置。
+func IsClashJSONTarget(target string) bool {
+	_, ok := ClashJSONTargets[strings.ToLower(strings.TrimSpace(target))]
+	return ok
+}
+
 // TargetAliases 收录不属于"分享链接"与"一行一节点"两族、但存在多个写法的 target。
 // SS-android 有两种入口格式：默认 `ss-sub` 输出裸 JSON（与 subconverter 一致），
 // `ss-sub-b64` 输出 base64 包裹（客户端订阅入口用的那种）。两者共用一个渲染器，
