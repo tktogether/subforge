@@ -306,6 +306,56 @@ func TestRender_IPv6CIDR(t *testing.T) {
 	}
 }
 
+// TestRender_BareCIDRNotMisreadAsDomain 回归：/getruleset 的 list 参数把一批
+// 裸规则用分号隔开，里面既有域名也有网段。网段曾被判成 DOMAIN，导致
+// ipcidr provider 吐空 payload、clash 经典规则写出 DOMAIN,10.0.0.0/8。
+// 这条用例是在 192.168.8.112 上跑真实 HTTP 服务时抓出来的。
+func TestRender_BareCIDRNotMisreadAsDomain(t *testing.T) {
+	s, err := NewSet("example.com", "google.com", "10.0.0.0/8", "198.18.0.0/15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(s), 4; got != want {
+		t.Fatalf("解析出 %d 条，期望 %d", got, want)
+	}
+
+	got, err := s.Render(ClashIPCIDRProvider, "net", RenderOpts{})
+	if err != nil {
+		t.Fatalf("Render(ipcidr): %v", err)
+	}
+	if got.Out != 2 {
+		t.Errorf("ipcidr provider 应收到 2 条网段，实际 %d\n%s", got.Out, got.Body)
+	}
+	if !strings.Contains(string(got.Body), "10.0.0.0/8") {
+		t.Errorf("ipcidr provider payload 缺网段:\n%s", got.Body)
+	}
+
+	// 域名 provider 只能收到域名，网段按 Kind 过滤掉。
+	got, err = s.Render(ClashDomainProvider, "dom", RenderOpts{})
+	if err != nil {
+		t.Fatalf("Render(domain): %v", err)
+	}
+	if got.Out != 2 {
+		t.Errorf("domain provider 应只有 2 条域名，实际 %d\n%s", got.Out, got.Body)
+	}
+
+	// clash 经典规则里网段必须标 IP-CIDR，不能标 DOMAIN。
+	got, err = s.Render(ClashClassical, "cl", RenderOpts{Action: "proxy"})
+	if err != nil {
+		t.Fatalf("Render(classical): %v", err)
+	}
+	body := string(got.Body)
+	if !strings.Contains(body, "IP-CIDR,10.0.0.0/8,proxy") {
+		t.Errorf("经典规则缺 IP-CIDR 条目:\n%s", body)
+	}
+	if strings.Contains(body, "DOMAIN,10.0.0.0/8") {
+		t.Errorf("网段被错标成 DOMAIN:\n%s", body)
+	}
+	if got.Out != 4 {
+		t.Errorf("经典规则应保留全部 4 条，实际 %d\n%s", got.Out, body)
+	}
+}
+
 func TestRender_ClassicalRequiresOutbound(t *testing.T) {
 	s, err := NewSet("DOMAIN,example.com", "GEOIP,CN,DIRECT")
 	if err != nil {

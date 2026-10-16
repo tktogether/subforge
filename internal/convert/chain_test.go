@@ -143,17 +143,81 @@ func TestResolveGroups_ExpandsRegex(t *testing.T) {
 // TestResolveGroups_LiteralMembers 组名与内置出站按字面量保留。
 func TestResolveGroups_LiteralMembers(t *testing.T) {
 	groups := ResolveGroups([]render.Group{
+		{Name: "自动选择", Proxies: []string{".*"}},
 		{Name: "上游", Proxies: []string{"自动选择", "REJECT", "DIRECT"}},
 	}, []string{"HK-香港-01"})
-	if !sameStrings(groups[0].Proxies, []string{"自动选择", "REJECT", "DIRECT"}) {
+	var up render.Group
+	for _, g := range groups {
+		if g.Name == "上游" {
+			up = g
+		}
+	}
+	if !sameStrings(up.Proxies, []string{"自动选择", "REJECT", "DIRECT"}) {
+		t.Errorf("成员 = %v", up.Proxies)
+	}
+}
+
+// TestResolveGroups_BadRegex 无法解释成正则的条目按字面量保留，不报错。
+func TestResolveGroups_BadRegex(t *testing.T) {
+	groups := ResolveGroups([]render.Group{{Name: "g", Proxies: []string{"("}}}, []string{"a"})
+	if !sameStrings(groups[0].Proxies, []string{"("}) {
 		t.Errorf("成员 = %v", groups[0].Proxies)
 	}
 }
 
-// TestResolveGroups_BadRegex 非法正则按字面量保留，不报错。
-func TestResolveGroups_BadRegex(t *testing.T) {
-	groups := ResolveGroups([]render.Group{{Name: "g", Proxies: []string{"("}}}, []string{"a"})
-	if !sameStrings(groups[0].Proxies, []string{"("}) {
+// TestResolveGroups_ZeroMatchFallsBackToDirect 正则合法但没有任何节点命中时给直连兜底，
+// 而不是把正则串写进配置——后者 mihomo 会当成引用了不存在的代理组而拒绝加载。
+func TestResolveGroups_ZeroMatchFallsBackToDirect(t *testing.T) {
+	groups := ResolveGroups([]render.Group{
+		{Name: "日本组", Proxies: []string{`(JP|Japan)`}},
+		{Name: "混合", Proxies: []string{`HK-香港`, `(JP|Japan)`, `(KR|Korea)`}},
+	}, []string{"HK-香港-01"})
+	if !sameStrings(groups[0].Proxies, []string{"DIRECT"}) {
+		t.Errorf("全不命中成员 = %v", groups[0].Proxies)
+	}
+	if !sameStrings(groups[1].Proxies, []string{"HK-香港-01", "DIRECT"}) {
+		t.Errorf("混合成员 = %v", groups[1].Proxies)
+	}
+}
+
+// TestResolveGroups_LookaroundTolerated 环视断言是 PCRE 写法，剥掉断言后仍要能编译匹配；
+// 剥掉的代价是丢掉"白俄不算俄"这类护栏，匹配范围只会放宽。
+func TestResolveGroups_LookaroundTolerated(t *testing.T) {
+	groups := ResolveGroups([]render.Group{
+		{Name: "俄组", Proxies: []string{`(?<!白)俄|(?<![\d\.])0?\.\d+(?![0-9])x`}},
+	}, []string{"俄-01", "俄-02 0.20x", "白俄-01"})
+	want := []string{"俄-01", "俄-02 0.20x", "白俄-01"}
+	if !sameStrings(groups[0].Proxies, want) {
+		t.Errorf("成员 = %v, want %v", groups[0].Proxies, want)
+	}
+}
+
+// TestResolveGroups_NegatedMatch 整段取反写法翻译成"不匹配排除项"。
+func TestResolveGroups_NegatedMatch(t *testing.T) {
+	groups := ResolveGroups([]render.Group{
+		{Name: "其他", Proxies: []string{`^(?!.*(HK|US)).*`}},
+	}, []string{"HK-香港-01", "US-01", "SG-01", "JP-01"})
+	if !sameStrings(groups[0].Proxies, []string{"SG-01", "JP-01"}) {
+		t.Errorf("成员 = %v", groups[0].Proxies)
+	}
+}
+
+// TestResolveGroups_NegatedMatchOuterWrap 外层裸分组包裹的取反写法同样识别。
+func TestResolveGroups_NegatedMatchOuterWrap(t *testing.T) {
+	groups := ResolveGroups([]render.Group{
+		{Name: "其他", Proxies: []string{`(^(?!.*(HK)).*)`}},
+	}, []string{"HK-01", "SG-01"})
+	if !sameStrings(groups[0].Proxies, []string{"SG-01"}) {
+		t.Errorf("成员 = %v", groups[0].Proxies)
+	}
+}
+
+// TestResolveGroups_NegatedMatchZeroResult 取反后也可能一个都不剩，同样走直连兜底。
+func TestResolveGroups_NegatedMatchZeroResult(t *testing.T) {
+	groups := ResolveGroups([]render.Group{
+		{Name: "其他", Proxies: []string{`^(?!.*X).*`}},
+	}, []string{"X-01", "X-02"})
+	if !sameStrings(groups[0].Proxies, []string{"DIRECT"}) {
 		t.Errorf("成员 = %v", groups[0].Proxies)
 	}
 }

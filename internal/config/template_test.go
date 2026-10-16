@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -249,11 +250,133 @@ MyGeoIP = 1
 	}
 }
 
-// TestSemantics_RulesParam [common] 里的规则行按分号拆开。
+// TestSemantics_RulesParam [common] 里的规则行按分号拆开，走规则流而不是普通参数。
+// 留在 Params 里的话会与规则流重复收集一遍，产物出现重复规则行。
 func TestSemantics_RulesParam(t *testing.T) {
 	sem := mustSem(t, "[common]\nrules = GEOIP,CN,DIRECT;MATCH,自动选择\n")
-	if got := sem.Params["rules"]; len(got) != 1 || got[0] != "GEOIP,CN,DIRECT;MATCH,自动选择" {
-		t.Errorf("rules = %v", got)
+	if got := sem.RuleLines(); len(got) != 2 || got[0] != "GEOIP,CN,DIRECT" || got[1] != "MATCH,自动选择" {
+		t.Errorf("规则行 = %v", got)
+	}
+	if _, ok := sem.Params["rules"]; ok {
+		t.Errorf("规则行不应同时出现在 Params：%v", sem.Params)
+	}
+}
+
+// TestSemantics_InlineGroupsAndRulesets subconverter 在 [custom] 里的内联写法
+// （custom_proxy_group= / ruleset=）是公开模板的主流写法，必须真解析出来。
+// 不解析的后果是"节点齐、规则空"的配置静默上线——这类模板分流完全失效。
+func TestSemantics_InlineGroupsAndRulesets(t *testing.T) {
+	// 反引号 DSL 写不进原样字符串（反引号本身是定界符），用普通字符串。
+	body := "[custom]\n" +
+		"custom_proxy_group=🚀 手动选择`select`[]♻️ 自动选择`.*\n" +
+		"custom_proxy_group=🌍 自动选择`url-test`.*`http://www.gstatic.com/generate_204`300,,50\n" +
+		"ruleset=🎯 全球直连,[]GEOSITE,private\n" +
+		"ruleset=🎯 全球直连,[]GEOIP,cn,no-resolve\n" +
+		"ruleset=🚀 手动选择,clash-domain:https://example.com/rule.mrs,28800\n" +
+		"ruleset=🚀 手动选择,[]FINAL\n" +
+		"enable_rule_generator=true\n"
+	sem := mustSem(t, body)
+
+	if len(sem.Groups) != 2 {
+		t.Fatalf("组数 = %d，应为 2：%v", len(sem.Groups), sem.Groups)
+	}
+	if got := sem.Groups[0]; got.Name != "🚀 手动选择" || got.Type != "select" ||
+		len(got.Proxies) != 2 || got.Proxies[0] != "♻️ 自动选择" || got.Proxies[1] != ".*" {
+		t.Errorf("组 0 = %+v", got)
+	}
+	g1 := sem.Groups[1]
+	if g1.Name != "🌍 自动选择" || g1.Type != "url-test" || g1.Proxies[0] != ".*" ||
+		g1.Test != "http://www.gstatic.com/generate_204" ||
+		g1.Options.Interval != 300 || g1.Options.Tolerance != 50 {
+		t.Errorf("组 1 = %+v", g1)
+	}
+
+	// 规则流要保住声明顺序：FINAL 落在最后一项，前面的规则才不会被 MATCH 挡住。
+	if len(sem.RuleItems) != 4 {
+		t.Fatalf("规则流 = %d 项：%+v", len(sem.RuleItems), sem.RuleItems)
+	}
+	want := []struct {
+		line   string
+		remote bool
+	}{
+		{"GEOSITE,private,🎯 全球直连", false},
+		{"GEOIP,cn,🎯 全球直连,no-resolve", false},
+		{"", true},
+		{"MATCH,🚀 手动选择", false},
+	}
+	for i, w := range want {
+		it := sem.RuleItems[i]
+		if it.Line != w.line {
+			t.Errorf("第 %d 项 Line = %q，应为 %q", i, it.Line, w.line)
+		}
+		if (it.Remote >= 0) != w.remote {
+			t.Errorf("第 %d 项的远程引用与预期不符: %+v", i, it)
+		}
+	}
+	if got := sem.RemoteRulesets; len(got) != 1 ||
+		got[0].Group != "🚀 手动选择" || got[0].URL != "https://example.com/rule.mrs" ||
+		got[0].Kind != "domain" || got[0].Interval != 28800 {
+		t.Errorf("远程规则集 = %+v", got)
+	}
+
+	// 内联写法已经被解析，不该再提示"未实现"；enable_rule_generator 是普通开关。
+	if len(sem.Warnings) != 0 {
+		t.Errorf("Warnings = %v，内联写法已支持，不应告警", sem.Warnings)
+	}
+	// 内联 ruleset= 不能被当成 getruleset 用的普通参数。
+	if _, ok := sem.Params["ruleset"]; ok {
+		t.Errorf("Params 里不应出现内联 ruleset：%v", sem.Params)
+	}
+}
+
+// TestSemantics_InlineSyntaxWarnings_NoFalsePositives [ruleset] 段落里的 ruleset 键名是
+// 正常用法（那里是段落名而不是键名），其他常见 [custom] 键也不该误报。
+// 特别注意 custom_rules：名字像内联规则声明，实际是"是否启用自定义规则"的布尔开关，
+// 公开模板里天天在用，误报一条就等于告警失去价值。
+func TestSemantics_InlineSyntaxWarnings_NoFalsePositives(t *testing.T) {
+	sem := mustSem(t, `[custom]
+enable_rule_generator=true
+overwrite_original_rules=true
+custom_rules=false
+udp=true
+
+[ruleset]
+MyGeoSite = 2
+`)
+	if len(sem.Warnings) != 0 {
+		t.Errorf("Warnings = %v，常规模板不应产生告警", sem.Warnings)
+	}
+	if got := sem.Params["ruleset"]; len(got) != 1 || got[0] != "MyGeoSite:2" {
+		t.Errorf("ruleset = %v", got)
+	}
+}
+
+// TestSemantics_UnknownCustomInstruction_DuplicateKey 同一段落里同一个未实现的自定义指令
+// 写多次只告警一次——模板里几十条同类指令不该刷屏成几十条提示。
+func TestSemantics_UnknownCustomInstruction_DuplicateKey(t *testing.T) {
+	sem := mustSem(t, `[custom]
+custom_rewrite=.*foo,.*bar
+custom_rewrite=.*baz,.*qux
+custom_rewrite=.*zzz,.*yyy
+`)
+	if len(sem.Warnings) != 1 {
+		t.Fatalf("Warnings = %v，应为 1 条", sem.Warnings)
+	}
+	if !strings.Contains(sem.Warnings[0], "custom_rewrite") {
+		t.Errorf("告警未指出键名: %s", sem.Warnings[0])
+	}
+}
+
+// TestSemantics_UnknownCustomInstruction 遇到没实现的 custom_ 指令仍要提示：
+// 已知写法静默解析，未知写法必须说出来，否则用户不知道模板的哪部分没生效。
+func TestSemantics_UnknownCustomInstruction(t *testing.T) {
+	sem := mustSem(t, "[custom]\ncustom_dns=1.1.1.1\n")
+	if len(sem.Warnings) != 1 {
+		t.Fatalf("Warnings = %v，应为 1 条", sem.Warnings)
+	}
+	if !strings.Contains(sem.Warnings[0], "custom_dns") ||
+		!strings.Contains(sem.Warnings[0], "[custom]") {
+		t.Errorf("告警内容不对: %s", sem.Warnings[0])
 	}
 }
 

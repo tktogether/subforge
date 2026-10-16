@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,11 +164,83 @@ func TestConvert_UnsupportedTarget(t *testing.T) {
 	}
 }
 
+// TestConvert_UnsupportedTargetSkipsFetch target 写错时应立刻报 501，而不是先
+// 把上游拉一遍。状态码在两种实现里都是 501（渲染器查找终究会失败），真正的
+// 差别是一次本该省掉的真实网络请求，所以断言在计数上。
+func TestConvert_UnsupportedTargetSkipsFetch(t *testing.T) {
+	buf, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "mixed-subscription.txt"))
+	if err != nil {
+		t.Fatalf("读取 fixture: %v", err)
+	}
+	var fetched atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetched.Add(1)
+		_, _ = w.Write(buf)
+	}))
+	defer up.Close()
+
+	ts := newTestServer(t, nil)
+	status, _, body := doGet(t, ts.URL+"/sub?url="+url.QueryEscape(up.URL+"/sub.txt")+
+		"&target=notarealformat", "", "")
+	if status != http.StatusNotImplemented {
+		t.Fatalf("状态 = %d，应为 501，body=%s", status, body)
+	}
+	if !strings.Contains(body, "notarealformat") {
+		t.Errorf("错误信息未指出缺失格式: %s", body)
+	}
+	if n := fetched.Load(); n != 0 {
+		t.Errorf("target 非法时不应尝试拉取上游，实际拉了 %d 次", n)
+	}
+}
+
+// TestConvert_TemplateInlineSyntaxApplied 模板用 subconverter 的内联写法
+// （[custom] 里的 custom_proxy_group= / ruleset=）声明分组与规则时，产物里必须真的
+// 出现这些分组和规则——这是公开模板（Aethersailor Custom_Clash_Full.ini）唯一在用
+// 的写法，读不懂等于整份分流失效。
+func TestConvert_TemplateInlineSyntaxApplied(t *testing.T) {
+	sub := fixtureURL(t)
+
+	// 内联 DSL 写不进原样字符串（反引号是定界符），用普通字符串。
+	inini := "[custom]\n" +
+		"custom_proxy_group=🚀 手动选择`select`[]♻️ 自动选择`.*\n" +
+		"ruleset=🎯 全球直连,[]GEOSITE,private\n" +
+		"ruleset=🚀 手动选择,[]FINAL\n"
+
+	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(inini))
+	}))
+	t.Cleanup(tpl.Close)
+
+	ts := newTestServer(t, func(cfg *Config) {
+		cfg.Engine.LoadTemplate = func(ctx context.Context, ref string) (*config.Template, error) {
+			return config.LoadSource(ctx, ref, config.HTTPLoader(&http.Client{Timeout: 5 * time.Second}, nil))
+		}
+	})
+
+	status, hdr, body := doGet(t, ts.URL+"/sub?url="+url.QueryEscape(sub)+
+		"&target=clash&config="+url.QueryEscape(tpl.URL+"/tpl.ini"), "", "")
+	if status != http.StatusOK {
+		t.Fatalf("状态 = %d，body=%s", status, body)
+	}
+	if got := hdr.Get("X-Convert-Skipped"); got != "" {
+		t.Errorf("X-Convert-Skipped = %q，内联写法已解析，不该有跳过项", got)
+	}
+	for _, want := range []string{"🚀 手动选择", "GEOSITE,private,🎯 全球直连", "MATCH,🚀 手动选择"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("产物缺少 %q", want)
+		}
+	}
+	// mihomo 没有 FINAL 这个规则形态，内联的 []FINAL 必须落成 MATCH。
+	if strings.Contains(body, "FINAL,") {
+		t.Error("产物里出现了 FINAL 规则，mihomo 会拒绝加载")
+	}
+}
+
 func TestConvert_NoSource(t *testing.T) {
 	ts := newTestServer(t, nil)
 	status, _, body := doGet(t, ts.URL+"/sub", "", "")
 	if status != http.StatusBadRequest {
-		t.Fatalf("状态 = %d，应为 400", status)
+		t.Fatalf("状态 = %d，应为 400，body=%s", status, body)
 	}
 	if !strings.Contains(body, "至少需要") {
 		t.Errorf("错误信息: %s", body)

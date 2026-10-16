@@ -33,11 +33,11 @@ func mustParse(t *testing.T, raw string) Params {
 }
 
 // TestParseQuery_FullParamSet 覆盖 subconverter 参数超集的常规组合。
-// 多值参数里 url 用 ? 分隔（subconverter 习惯），其余用分号——query 里必须
-// 百分号转义，和真实客户端发请求的形状一致。
+// 多值参数：url 用重复的 url= 参数表达（query 里必须百分号转义，和真实客户端
+// 发请求的形状一致），其余用分号。
 func TestParseQuery_FullParamSet(t *testing.T) {
 	raw := "target=Clash.Meta" +
-		"&url=http://a/sub?http://b/sub?http://c/sub" +
+		"&url=http://a/sub&url=http://b/sub&url=http://c/sub" +
 		"&insert=http://d/extra" +
 		"&include=HK%3BJP" +
 		"&exclude=- 02" +
@@ -82,6 +82,40 @@ func TestParseQuery_FullParamSet(t *testing.T) {
 		if !on {
 			t.Error("布尔参数应为 true")
 		}
+	}
+}
+
+// parseValues 直接由 url.Values 构造参数，绕过 url.ParseQuery 的百分号解码
+// 和 `;` 分隔符拒绝——测分号分隔形态时不能走字符串解析那条路。
+func parseValues(t *testing.T, values url.Values) Params {
+	t.Helper()
+	p, err := ParseQuery(values)
+	if err != nil {
+		t.Fatalf("ParseQuery(%v): %v", values, err)
+	}
+	return p
+}
+
+// TestParseQuery_URLWithQueryString 回归：订阅地址自带查询串是常态（?token=），
+// 曾按 `?` 当分隔符拆 url，结果 token 被丢掉、上游收不到凭证直接 404，
+// 还多出一个 "token=..." 的假来源。
+func TestParseQuery_URLWithQueryString(t *testing.T) {
+	want := "http://1.2.3.4:3001/share/col/%E8%AE%A2%E9%98%85?token=abc-123"
+	p := parseValues(t, url.Values{"url": {want}})
+	if !sameStrings(p.URLs, []string{want}) {
+		t.Errorf("URLs = %v，应为 %q", p.URLs, want)
+	}
+
+	// 分号分隔的多个来源仍然有效，且每个来源各自的查询串都保留。
+	p = parseValues(t, url.Values{"url": {"http://a/sub?x=1;http://b/sub?y=2"}})
+	if !sameStrings(p.URLs, []string{"http://a/sub?x=1", "http://b/sub?y=2"}) {
+		t.Errorf("URLs = %v", p.URLs)
+	}
+
+	// INI [common] url= 写多个地址时用分号或逗号，不能靠 `?` 拆。
+	p = parseValues(t, url.Values{"url": {"http://a/sub;http://b/sub"}})
+	if !sameStrings(p.URLs, []string{"http://a/sub", "http://b/sub"}) {
+		t.Errorf("URLs = %v", p.URLs)
 	}
 }
 

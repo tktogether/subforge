@@ -25,6 +25,17 @@ func TestParseLine(t *testing.T) {
 		{`FINAL,自动选择`, Final, "自动选择", "", ""},
 		{`DOMAIN,example.com,PROXY`, Domain, "example.com", "PROXY", ""}, // 第三段是动作
 		{`example.com`, Domain, "example.com", "", ""},                   // 裸域名按 DOMAIN 处理
+		// 裸网段要先按 CIDR 归类，不能落进 DOMAIN 兜底分支：ipcidr provider
+		// 按 Kind 过滤会把它们全丢掉（实测吐 payload: []），clash 经典规则里
+		// 则会生成 DOMAIN,10.0.0.0/8 这种无效条目。
+		{`10.0.0.0/8`, IPCIDR, "10.0.0.0/8", "", ""},
+		{`198.18.0.0/15`, IPCIDR, "198.18.0.0/15", "", ""},
+		{`2001:db8::/32`, IPCIDR6, "2001:db8::/32", "", ""},
+		{`  172.16.0.0/12  `, IPCIDR, "172.16.0.0/12", "", ""},
+		// 光有点号、没有掩码的不是网段，仍按域名处理。
+		{`10.0.0.0`, Domain, "10.0.0.0", "", ""},
+		// 带斜杠但解析不出网段的，宁可报错也不要猜成域名。
+		{`example.com/8`, Domain, "", "", "无法解析"},
 		// Surge 的 "example.com,PROXY" 不带类型前缀，刻意不猜：把第一段当域名会让
 		// "DOMAIN.SUFFIX,com" 这类笔误静默变成 DOMAIN。写清楚前缀。
 		{`example.com,PROXY`, Domain, "", "", "未知规则形态"},

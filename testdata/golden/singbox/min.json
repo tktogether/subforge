@@ -7,66 +7,43 @@
   "dns": {
     "servers": [
       {
+        "type": "tls",
         "tag": "dns_proxy",
-        "address": "tls://1.1.1.1",
-        "address_resolver": "dns_resolver"
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "domain_resolver": "dns_resolver"
       },
       {
+        "type": "h3",
         "tag": "dns_direct",
-        "address": "h3://dns.alidns.com/dns-query",
+        "server": "/dns-query",
+        "server_port": 443,
+        "domain_resolver": "dns_resolver",
         "detour": "DIRECT"
       },
       {
+        "type": "fakeip",
         "tag": "dns_fakeip",
-        "address": "fakeip"
+        "inet4_range": "198.18.0.0/15"
       },
       {
+        "type": "udp",
         "tag": "dns_resolver",
-        "address": "223.5.5.5",
+        "server": "223.5.5.5",
+        "server_port": 53,
         "detour": "DIRECT"
-      },
-      {
-        "tag": "block",
-        "address": "rcode://success"
       }
     ],
     "rules": [
       {
-        "outbound": [
-          "any"
+        "domain": [
+          "*"
         ],
-        "server": "dns_resolver"
-      },
-      {
-        "geosite": [
-          "category-ads-all"
-        ],
-        "server": "block",
-        "disable_cache": true
-      },
-      {
-        "geosite": [
-          "geolocation-!cn"
-        ],
-        "query_type": [
-          "A",
-          "AAAA"
-        ],
-        "server": "dns_fakeip"
-      },
-      {
-        "geosite": [
-          "geolocation-!cn"
-        ],
+        "action": "route",
         "server": "dns_proxy"
       }
     ],
-    "final": "dns_direct",
-    "independent_cache": true,
-    "fakeip": {
-      "enabled": true,
-      "inet4_range": "198.18.0.0/15"
-    }
+    "final": "dns_direct"
   },
   "ntp": {
     "enabled": true,
@@ -85,11 +62,9 @@
     {
       "type": "tun",
       "tag": "tun-in",
-      "inet4_address": "172.19.0.1/30",
+      "address": "172.19.0.1/30",
       "auto_route": true,
-      "strict_route": true,
-      "stack": "mixed",
-      "sniff": true
+      "strict_route": true
     }
   ],
   "outbounds": [
@@ -102,10 +77,6 @@
       "tag": "REJECT"
     },
     {
-      "type": "dns",
-      "tag": "dns-out"
-    },
-    {
       "type": "vmess",
       "tag": "vmess-node",
       "server": "vmess.example.com",
@@ -113,7 +84,6 @@
       "uuid": "11111111-2222-3333-4444-555555555555",
       "alter_id": 0,
       "security": "auto",
-      "udp": true,
       "transport": {
         "type": "ws",
         "path": "/ws",
@@ -133,15 +103,18 @@
       "server_port": 443,
       "uuid": "11111111-2222-3333-4444-555555555555",
       "flow": "xtls-rprx-vision",
-      "udp": true,
-      "reality": {
-        "public_key": "abcPUBLICKEY",
-        "short_id": "0123456789abcdef"
-      },
       "tls": {
         "enabled": true,
         "server_name": "vless.example.com",
-        "utls": "chrome"
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "9GWwAr72DJJ45eXBbzDnD3K-wQ4tglpMiy4s8V6W2Sg",
+          "short_id": "0123456789abcdef"
+        }
       }
     },
     {
@@ -150,7 +123,6 @@
       "server": "trojan.example.com",
       "server_port": 443,
       "password": "password123",
-      "udp": true,
       "tls": {
         "enabled": true,
         "server_name": "trojan.example.com",
@@ -163,9 +135,8 @@
       "server": "hy2.example.com",
       "server_port": 443,
       "password": "password123",
-      "up": "",
-      "down": "",
-      "udp": true,
+      "up_mbps": 10,
+      "down_mbps": 20,
       "tls": {
         "enabled": true,
         "server_name": "hy2.example.com"
@@ -176,15 +147,31 @@
       "tag": "hy-node",
       "server": "hy.example.com",
       "server_port": 443,
-      "password": "password123",
-      "udp": true,
-      "congestion_controller": "bbr",
-      "alpn": [
-        "h3"
-      ],
+      "auth_str": "password123",
+      "up_mbps": 1000,
+      "down_mbps": 1000,
       "tls": {
         "enabled": true,
-        "server_name": "hy.example.com"
+        "server_name": "hy.example.com",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "hysteria",
+      "tag": "hy-speeds-node",
+      "server": "hys.example.com",
+      "server_port": 443,
+      "auth_str": "password123",
+      "up_mbps": 100,
+      "down_mbps": 200,
+      "tls": {
+        "enabled": true,
+        "server_name": "hys.example.com",
+        "alpn": [
+          "h3"
+        ]
       }
     },
     {
@@ -194,14 +181,13 @@
       "server_port": 443,
       "uuid": "11111111-2222-3333-4444-555555555555",
       "password": "password123",
-      "udp": true,
-      "congestion_controller": "bbr",
-      "alpn": [
-        "h3"
-      ],
+      "congestion_control": "bbr",
       "tls": {
         "enabled": true,
-        "server_name": "tuic.example.com"
+        "server_name": "tuic.example.com",
+        "alpn": [
+          "h3"
+        ]
       }
     },
     {
@@ -209,9 +195,7 @@
       "tag": "anytls-node",
       "server": "anytls.example.com",
       "server_port": 443,
-      "username": "user1",
       "password": "password123",
-      "udp": true,
       "tls": {
         "enabled": true,
         "server_name": "anytls.example.com"
@@ -223,21 +207,7 @@
       "server": "ss.example.com",
       "server_port": 8388,
       "method": "aes-256-gcm",
-      "password": "password123",
-      "udp": true
-    },
-    {
-      "type": "shadowsocksr",
-      "tag": "ssr-node",
-      "server": "ssr.example.com",
-      "server_port": 8388,
-      "method": "chacha20",
-      "password": "password123",
-      "protocol": "auth_sha1_v2",
-      "protocol_param": "",
-      "obfs": "tls1.2_ticket_auth",
-      "obfs_param": "",
-      "udp": true
+      "password": "password123"
     },
     {
       "type": "socks",
@@ -254,11 +224,24 @@
       "server_port": 8080,
       "username": "user1",
       "password": "pass1"
+    },
+    {
+      "type": "http",
+      "tag": "https-node",
+      "server": "https.example.com",
+      "server_port": 8443,
+      "username": "user1",
+      "password": "pass1",
+      "tls": {
+        "enabled": true,
+        "server_name": "https.example.com"
+      }
     }
   ],
   "route": {
     "rules": [],
     "auto_detect_interface": true,
+    "default_domain_resolver": "dns_resolver",
     "final": "DIRECT"
   },
   "experimental": {

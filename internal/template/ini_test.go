@@ -135,6 +135,41 @@ func TestParse_DuplicateKeyLastWins(t *testing.T) {
 	}
 }
 
+// TestParse_RepeatableKeyKeepsAll subconverter 的模板一行一条地声明分组与规则，
+// 同一段里 custom_proxy_group= 出现几十次。这些键必须全部保留、按出现顺序排列：
+// 覆盖语义只会留下最后一条，整份模板的分组与规则会凭空消失。
+func TestParse_RepeatableKeyKeepsAll(t *testing.T) {
+	cfg := mustParse(t, "[custom]\ncustom_proxy_group=甲`select`.*\nruleset=A,[]FINAL\ncustom_proxy_group=乙`url-test`.*\n")
+	sec := cfg.Lookup("custom")
+	if sec == nil {
+		t.Fatal("缺少 [custom] 段落")
+	}
+	got := make([]string, 0, len(sec.Entries()))
+	for _, e := range sec.Entries() {
+		got = append(got, e.Key+"="+e.Value.Raw)
+	}
+	want := []string{"custom_proxy_group=甲`select`.*", "ruleset=A,[]FINAL", "custom_proxy_group=乙`url-test`.*"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("条目 = %v，应为 %v", got, want)
+	}
+}
+
+// TestParse_RepeatableKeyOverlayReplaces 覆盖合并时，可重复键要整份取代而不是只改一条。
+func TestParse_RepeatableKeyOverlayReplaces(t *testing.T) {
+	low := mustParse(t, "[custom]\ncustom_proxy_group=甲`select`.*\ncustom_proxy_group=乙`select`.*\n")
+	high := mustParse(t, "[custom]\ncustom_proxy_group=丙`select`.*\n")
+	low.Overlay(high)
+	got := make([]string, 0, len(low.Lookup("custom").Entries()))
+	for _, e := range low.Lookup("custom").Entries() {
+		if e.Key == "custom_proxy_group" {
+			got = append(got, e.Value.Raw)
+		}
+	}
+	if strings.Join(got, "|") != "丙`select`.*" {
+		t.Errorf("合并后可重复键 = %v，后者应整份取代", got)
+	}
+}
+
 func TestValue_SourceAndLine(t *testing.T) {
 	cfg := mustParse(t, "[common]\n\nname = 测试配置\n")
 	v, ok := cfg.Get("common", "name")
