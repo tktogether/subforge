@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/transform"
 )
@@ -56,6 +57,16 @@ type Params struct {
 	Headers map[string]string
 	// Ruleset 规则集键值（ruleset:<name>:<type> 形式，I6 完整实现）。
 	Ruleset map[string]string
+	// TemplateRules 模板给出的规则流（[common] rules= 与 [custom] 的内联规则），
+	// 按模板声明顺序排列。Remote 非零的条目要由 Engine 拉取远程规则集后就地展开，
+	// 展开完成前这个字段保留、Rules 不含它们。
+	TemplateRules []config.RuleItem
+	// TemplateRemoteRulesets 规则流引用的远程规则集，转换时拉取展开。
+	TemplateRemoteRulesets []config.RemoteRuleset
+	// TemplateWarnings 模板解释阶段的非阻断提示（如模板用了我们无法识别的
+	// 分组/规则写法）。不影响本次转换是否成功，但必须让用户看到：否则一份
+	// "节点齐、规则空"的配置会静默上线。
+	TemplateWarnings []string
 	// Raw 全部原始参数（含未知项），便于排查与透传。
 	Raw map[string][]string
 	// Extensions 未识别的 x-* 扩展参数（预留扩展点）。
@@ -94,7 +105,10 @@ func ParseMulti(m map[string][]string) (Params, error) {
 	if target != "" {
 		p.Target = strings.ToLower(strings.TrimSpace(target))
 	}
-	p.URLs = take(p.Raw, "url", "?", ";")
+	// url 的取值本身是 URL，`?` 是 URL 的一部分，不能当分隔符——
+	// 按 `?` 拆会把 "?token=..." 丢掉，上游收不到 token 就 404，
+	// 还多出一个 "token=..." 的假来源。多个来源用 `;` 或重复参数分隔。
+	p.URLs = take(p.Raw, "url", ";")
 	p.Insert = take(p.Raw, "insert", "?", ";")
 	p.Include = take(p.Raw, "include", ";")
 	p.Exclude = take(p.Raw, "exclude", ";")

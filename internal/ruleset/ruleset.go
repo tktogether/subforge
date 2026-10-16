@@ -9,6 +9,7 @@ package ruleset
 
 import (
 	"fmt"
+	"net"
 	"regexp"
 	"sort"
 	"strings"
@@ -99,7 +100,20 @@ func ParseLine(line string) (Rule, error) {
 	parts := strings.SplitN(line, ",", 3)
 	if len(parts) == 1 {
 		v := strings.TrimSpace(parts[0])
-		if v == "" || !isPlainDomain(v) {
+		if v == "" {
+			return Rule{}, fmt.Errorf("无法解析的规则（应为 TYPE,VALUE）")
+		}
+		// 裸段先按 CIDR 试。公共规则文件（.list）常把域名与网段混着写，
+		// 网段被误判成 DOMAIN 有两个后果：ipcidr provider 按 Kind 过滤后会
+		// 吐出空 payload；Clash 经典规则里生成 DOMAIN,10.0.0.0/8 这种无效条目。
+		if _, _, err := net.ParseCIDR(v); err == nil {
+			kind := IPCIDR
+			if strings.Contains(v, ":") {
+				kind = IPCIDR6
+			}
+			return Rule{Kind: kind, Value: v}, nil
+		}
+		if !isPlainDomain(v) {
 			return Rule{}, fmt.Errorf("无法解析的规则（应为 TYPE,VALUE）")
 		}
 		return Rule{Kind: Domain, Value: v}, nil
@@ -141,7 +155,7 @@ func kindNames() []string {
 // isPlainDomain 粗判是否像一个域名：不含通配、正则元字符与空白。
 // 只用作"裸行按 DOMAIN 处理"的开关，不当域名合法性校验。
 func isPlainDomain(v string) bool {
-	if v == "" || strings.ContainsAny(v, " \t*?^$|\\()[]+{,") {
+	if v == "" || strings.ContainsAny(v, " \t*?^$|\\()[]+{/") {
 		return false
 	}
 	return !strings.Contains(v, ":")

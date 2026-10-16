@@ -126,9 +126,16 @@ func cmdConvert(args []string) error {
 		return err
 	}
 
+	// 配置模板在拉订阅之前就要读完，所以上下文在这里建。
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	var baseTpl *config.Template
 	if configFile != "" {
-		baseTpl, err = config.LoadFile(configFile)
+		// 带 :// 的当远程模板拉回来，否则按本地路径读。与 HTTP API 的 config 参数
+		// 同一套语义，命令行里直接贴一个 GitHub 链接就能用。
+		baseTpl, err = config.LoadSource(ctx, configFile,
+			config.HTTPLoader(&http.Client{Timeout: timeout}, nil))
 		if err != nil {
 			return fmt.Errorf("加载配置模板 %s: %w", configFile, err)
 		}
@@ -150,9 +157,6 @@ func cmdConvert(args []string) error {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
 	start := time.Now()
 	result, err := engine.Run(ctx, params)
 	if err != nil {
@@ -163,7 +167,9 @@ func cmdConvert(args []string) error {
 			len(result.Failures), strings.Join(result.Failures, "\n  "))
 	}
 	if len(result.Warnings) > 0 {
-		fmt.Fprintf(os.Stderr, "提示: 渲染阶段跳过 %d 项\n  %s\n",
+		// 两类都算：模板里不认识的分组/规则定义被忽略，和渲染阶段单个节点降级。
+		// 前一类更致命——产物会是"节点齐、规则空"，所以不能省这条提示。
+		fmt.Fprintf(os.Stderr, "提示: 跳过/忽略 %d 项\n  %s\n",
 			len(result.Warnings), strings.Join(result.Warnings, "\n  "))
 	}
 	fmt.Fprintf(os.Stderr, "管线: %d -> %d 节点\n", result.RawNodes, result.Nodes)

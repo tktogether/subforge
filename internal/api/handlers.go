@@ -78,9 +78,10 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Convert-Warning", fmt.Sprintf("%d 个来源失败", len(result.Failures)))
 	}
 	if len(result.Warnings) > 0 {
-		// 渲染阶段被跳过的项。响应头只放计数——节点名可能含 emoji，不是合法的 header 值。
+		// 模板提示（不认识的分组/规则写法）与渲染阶段被跳过的项合在一起。
+		// 响应头只放计数——条目可能含 emoji，不是合法的 header 值。
 		w.Header().Set("X-Convert-Skipped", fmt.Sprintf("%d", len(result.Warnings)))
-		s.logger.Printf("rid=%s 渲染跳过 %d 项: %s", dash(r.Header.Get("X-Request-ID")),
+		s.logger.Printf("rid=%s 跳过/忽略 %d 项: %s", dash(r.Header.Get("X-Request-ID")),
 			len(result.Warnings), strings.Join(result.Warnings, " | "))
 	}
 	if n := countCached(result); n > 0 {

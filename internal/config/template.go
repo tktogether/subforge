@@ -166,8 +166,16 @@ type Semantics struct {
 	Params map[string][]string
 	// NodePref 节点名前缀规则（[node_pref] 段落）。
 	NodePref transform.NodePrefSpec
-	// Groups 代理组定义（[clash_proxy_group] 段落，用 "---" 分隔多个）。
+	// Groups 代理组定义（[clash_proxy_group] 段落或 [custom] 的 custom_proxy_group=）。
 	Groups []render.Group
+	// RuleItems 模板给出的规则流，按声明顺序排列。
+	// 有网络能力的调用方要就地展开其中的远程规则集，位置信息不能丢。
+	RuleItems []RuleItem
+	// RemoteRulesets 规则流引用的远程规则集，需要网络才能展开。
+	RemoteRulesets []RemoteRuleset
+	// Warnings 解释阶段的非阻断提示。不阻断转换，但必须上报——模板用了我们
+	// 读不懂的写法时，产物可能是"节点齐、规则空"，不提示就没人知道。
+	Warnings []string
 }
 
 // Semantics 把模板解释成转换请求能用的参数。
@@ -184,10 +192,16 @@ func (t *Template) Semantics() (Semantics, error) {
 	}
 	out := Semantics{Params: map[string][]string{}}
 
-	if s := t.cfg.Lookup("common"); s != nil {
+	// [common] 与 [custom] 都是"键名即参数名"的段落；[custom] 额外承载内联分组与规则，
+	// 那些键由 customControl 拦下，不进通用参数。
+	for _, sec := range []string{"common", "custom"} {
+		s := t.cfg.Lookup(sec)
+		if s == nil {
+			continue
+		}
 		for _, e := range s.Entries() {
-			key := strings.TrimPrefix(e.Key, "!")
-			if key == "" || commonSkip[key] {
+			key := strings.ToLower(strings.TrimPrefix(e.Key, "!"))
+			if key == "" || commonSkip[key] || customControl[key] {
 				continue
 			}
 			if v := strings.TrimSpace(e.Value.Raw); v != "" {
@@ -213,13 +227,7 @@ func (t *Template) Semantics() (Semantics, error) {
 		out.NodePref = nodePrefSpec(s)
 	}
 
-	if s := t.cfg.Lookup(template.GroupSectionName); s != nil {
-		for _, block := range s.GroupBlocks() {
-			if g, ok := groupFromBlock(block); ok {
-				out.Groups = append(out.Groups, g)
-			}
-		}
-	}
+	out.Groups = t.inlineOrSectionGroups()
 
 	if s := t.cfg.Lookup("ruleset"); s != nil {
 		for _, e := range s.Entries() {
@@ -231,7 +239,76 @@ func (t *Template) Semantics() (Semantics, error) {
 			out.Params["ruleset"] = append(out.Params["ruleset"], name+":"+typ)
 		}
 	}
+
+	// 规则流全部由 inlineRules 收口：它按段落出现顺序收 rules=，[common] 与
+	// [custom] 里的同一条规则不会被收集两次。顺序有意义——mihomo 按顺序匹配，
+	// 靠后的规则优先级低，模板作者靠位置调优先级。
+	inline, remotes := inlineRules(t.cfg)
+	out.RuleItems = inline
+	out.RemoteRulesets = remotes
+	out.Warnings = inlineWarnings(t.cfg)
 	return out, nil
+}
+
+// RuleLines 取规则流里已展开成行的部分（远程规则集条目不含在内）。
+// 只需要行文本的调用方（展示、金测）用它；要完整规则得先让 Engine 展开。
+func (s Semantics) RuleLines() []string {
+	var out []string
+	for _, it := range s.RuleItems {
+		if it.Remote < 0 {
+			out = append(out, it.Line)
+		}
+	}
+	return out
+}
+
+// inlineOrSectionGroups 合并两种分组写法。
+//
+// [custom] 的内联写法先接：多数模板把内联分组当主体，[clash_proxy_group] 段落
+// 用来追加或补充；同名的组后出现的覆盖先出现的，由调用方的组解析处理。
+func (t *Template) inlineOrSectionGroups() []render.Group {
+	out := inlineGroups(t.cfg)
+	s := t.cfg.Lookup(template.GroupSectionName)
+	if s == nil {
+		return out
+	}
+	for _, block := range s.GroupBlocks() {
+		if g, ok := groupFromBlock(block); ok {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// inlineWarnings 扫一遍全部段落，找出 subconverter 认、我们目前不认的自定义指令。
+//
+// 判定收窄到未识别的 custom_ 前缀键：subconverter 的 custom_* 是一组封闭指令
+// （custom_proxy_group / custom_rules / custom_rewrite / custom_dns …），
+// 见到不认识的说明模板依赖了某个我们还没实现的功能。
+// 不做通用未知键检测——[common] 里的合法自定义键很多，广撒网只会用无害告警
+// 淹没真正该看的那条。同一段落里同一键写多次只告警一次。
+func inlineWarnings(cfg *template.Config) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range cfg.SectionNames() {
+		s := cfg.Section(name)
+		if s == nil {
+			continue
+		}
+		for _, e := range s.Entries() {
+			key := strings.ToLower(strings.TrimSpace(e.Key))
+			if !strings.HasPrefix(key, "custom_") || customControl[key] || e.Value.Raw == "" {
+				continue
+			}
+			if seen[name+"/"+key] {
+				continue
+			}
+			seen[name+"/"+key] = true
+			out = append(out, fmt.Sprintf(
+				"模板 [%s] 里的 %s= 是 subconverter 自定义指令，当前未实现，该条定义被忽略", name, key))
+		}
+	}
+	return out
 }
 
 // commonSkip 是 [common] 里的模板控制键：它们不是单次转换参数，不能原样透传。
@@ -246,6 +323,7 @@ var commonSkip = map[string]bool{
 	"node-order": true,
 	"rename":     true,
 	"emoji":      true,
+	"rules":      true, // 规则行由 Semantics.Rules 收口，走普通参数会产生重复
 }
 
 // nodePrefControl 是 [node_pref] 里的控制键，它们不是协议类型。

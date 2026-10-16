@@ -42,6 +42,9 @@ type Engine struct {
 	// LoadTemplate 解析请求参数 config 指向的模板（本地路径或远程 URL）。
 	// 为 nil 且请求带了 config 参数时会报错，避免悄悄忽略用户明确要的模板。
 	LoadTemplate func(ctx context.Context, ref string) (*config.Template, error)
+	// RulesetLoader 拉取模板引用的远程规则集（ruleset=clash-domain:URL）。
+	// 为 nil 时用默认 HTTP 客户端；两者都不能复用 Fetcher，理由见 rulesetBody。
+	RulesetLoader config.RemoteLoader
 }
 
 // Result 是一次转换的产物。
@@ -82,6 +85,14 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 	// target 归一化必须早于编管线：协议收窄要落成类型过滤，节点数统计才与产物一致。
 	eff, target := resolveTarget(eff)
+
+	// 渲染器也在这里就解析掉。target 完全由调用方控制，提前查一次能在浪费
+	// 任何一次上游拉取之前就报"格式没实现"；放在管线末尾的话，一个 target
+	// 写错的请求会白跑一整轮拉取，然后把本该是 501 的错误报成 502。
+	renderer, err := e.RendererFor(target)
+	if err != nil {
+		return Result{}, err
+	}
 
 	pipe, err := BuildPipeline(eff)
 	if err != nil {
@@ -143,10 +154,6 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		return Result{}, ErrNoNodes
 	}
 
-	renderer, err := e.RendererFor(target)
-	if err != nil {
-		return Result{}, err
-	}
 	profile := e.Profile
 	if profile.Version != "" && profile.GeneratedAt == "" {
 		profile.GeneratedAt = nowUTC(e.Now)
@@ -171,6 +178,10 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 	if wr, ok := renderer.(render.WarningReporter); ok {
 		result.Warnings = wr.Warnings()
+	}
+	if len(eff.TemplateWarnings) > 0 {
+		// 模板提示排在渲染阶段提示前面：模板层面的漏配比单个节点降级更致命。
+		result.Warnings = append(append([]string{}, eff.TemplateWarnings...), result.Warnings...)
 	}
 	return result, nil
 }
@@ -236,7 +247,16 @@ func (e *Engine) resolveParams(ctx context.Context, base Params) (Params, error)
 	if err != nil {
 		return Params{}, err
 	}
-	return ApplyTemplate(sem, base)
+	out, err := ApplyTemplate(sem, base)
+	if err != nil {
+		return Params{}, err
+	}
+	// 远程规则集在这里展开：Semantics 是纯解析没有网络能力，只有拿到模板引用才拉。
+	expanded, warns := e.expandRemoteRulesets(ctx, out)
+	if len(warns) > 0 {
+		expanded.TemplateWarnings = append(expanded.TemplateWarnings, warns...)
+	}
+	return expanded, nil
 }
 
 func nowUTC(now func() time.Time) string {

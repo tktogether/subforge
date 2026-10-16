@@ -44,11 +44,15 @@ func (s *Snapshot[T]) Store(v T) T {
 	return *old
 }
 
-// Watch 轮询文件内容变化，内容改变时回调 onChange。
+// Watch 轮询文件内容变化，内容改变且稳定时回调 onChange。
 //
 // 有意不用 fsnotify：Windows 上需要额外依赖，而配置文件很小，轮询的开销可以忽略。
 // 轮询先看 mtime+size（几乎不花钱），两者都变了才真正读文件并比对内容摘要——
 // 这样即使文件系统的时间粒度较粗也不会漏掉"大小相同、内容不同"的修改。
+//
+// 写入方不是原子写：os.WriteFile 是 truncate + write，中途读会拿到改到一半的
+// 内容。所以变化要在连续两轮都读到相同摘要才交付，代价是一个轮询间隔的延迟，
+// 换来的是永远不会把残缺配置推到下游。
 //
 // onChange 在检测到变化时同步调用；返回错误只记入返回值，不会停止轮询。
 func Watch(ctx context.Context, path string, interval time.Duration, onChange func(content []byte) error) error {
@@ -92,6 +96,9 @@ func Watch(ctx context.Context, path string, interval time.Duration, onChange fu
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	var pending state
+	havePending := false
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -112,12 +119,20 @@ func Watch(ctx context.Context, path string, interval time.Duration, onChange fu
 			}
 			if st.digest == last.digest {
 				last = st // 只换了 mtime、内容没变（比如原子替换成同一份内容）
+				havePending = false
 				continue
 			}
-			last = st
-			if onChange != nil {
-				_ = onChange(buf)
+			// 同一份内容必须在两轮里都读到才交付，滤掉写一半的中间态。
+			if havePending && pending.digest == st.digest {
+				havePending = false
+				last = st
+				if onChange != nil {
+					_ = onChange(buf)
+				}
+				continue
 			}
+			havePending = true
+			pending = st
 		}
 	}
 }

@@ -27,6 +27,21 @@ func isGroupSection(name string) bool {
 	return strings.EqualFold(name, groupSectionName)
 }
 
+// repeatable 是允许在同一段里重复出现的键。
+//
+// subconverter 的模板把分组和规则一行一条地写（[custom] 里的 custom_proxy_group=
+// 出现几十次），按"同名键后者覆盖前者"解析的话只剩最后一条，整份模板的分组与规则
+// 都会消失。这些键必须逐条追加，顺序还是语义的一部分。
+var repeatable = map[string]bool{
+	"custom_proxy_group": true,
+	"ruleset":            true,
+	"rules":              true,
+}
+
+func isRepeatable(key string) bool {
+	return repeatable[strings.ToLower(strings.TrimSpace(key))]
+}
+
 // Value 是一个配置值，带上来源信息。
 // 来源可追溯是排查"这个设置到底来自哪个文件"的刚需。
 type Value struct {
@@ -106,6 +121,20 @@ func (s *Section) Set(key string, v Value) {
 // [clash_proxy_group] 段落里的 "---" 分隔符出现多次也必须被完整保留，
 // 否则多代理组的边界信息会丢——Set 做不到这一点。
 func (s *Section) Add(key string, v Value) {
+	s.entries = append(s.entries, Entry{Key: key, Value: v})
+}
+
+// Replace 先删掉同名键的全部条目，再追加这一条。
+// 覆盖合并遇到可重复键时用它：后合入的模板声明了自己的分组清单，就应该整份取代，
+// 而不是只改其中一条。
+func (s *Section) Replace(key string, v Value) {
+	for i := 0; i < len(s.entries); {
+		if strings.EqualFold(s.entries[i].Key, key) {
+			s.entries = append(s.entries[:i], s.entries[i+1:]...)
+			continue
+		}
+		i++
+	}
 	s.entries = append(s.entries, Entry{Key: key, Value: v})
 }
 
@@ -192,15 +221,15 @@ func (c *Config) Scalar(section, key, fallback string) string {
 // Overlay 把 other 合进来，同名段落与同名键都由 other 覆盖。
 // 覆盖优先级链就是靠它实现的：先合低优先级，再合高优先级。
 //
-// 注意：Set 不去重同名键，所以 [clash_proxy_group] 里多次出现的 "---"
-// 分隔符会被压成一条——覆盖合并不能把两个模板的多个代理组各自保留下来。
-// 需要"两组代理组相加"的场景请走 config.Merge，它对该段落按块追加。
+// 注意：覆盖合并只能"替换"，不能"相加"。[clash_proxy_group] 里两个模板各有多组时，
+// 这里只会留下后者的组。需要两组代理组相加的场景走 config.Merge，它对该段落按块追加。
 func (c *Config) Overlay(other *Config) {
 	c.OverlayExcept(other, nil)
 }
 
 // OverlayExcept 同 Overlay，但跳过 skip 判定为真的段落。
 // [clash_proxy_group] 需要按"组"追加而不是按键覆盖，走这个入口。
+// 可重复键走 Replace：整份清单由后者取代，而不是只改掉其中一条。
 func (c *Config) OverlayExcept(other *Config, skip func(name string) bool) {
 	if other == nil {
 		return
@@ -211,6 +240,10 @@ func (c *Config) OverlayExcept(other *Config, skip func(name string) bool) {
 		}
 		target := c.Section(name)
 		for _, e := range other.sections[name].Entries() {
+			if isRepeatable(e.Key) {
+				target.Replace(e.Key, e.Value)
+				continue
+			}
 			target.Set(e.Key, e.Value)
 		}
 	}
@@ -325,9 +358,10 @@ func parseBytes(data []byte, label, baseDir string, stack []string) (*Config, er
 			return nil, fmt.Errorf("%s:%d: 键 %q 出现在任何段落之前", label, lineNo, key)
 		}
 		v := Value{Raw: value, Source: label, Line: lineNo}
-		if isGroupSection(cur.Name) {
+		if isGroupSection(cur.Name) || isRepeatable(key) {
 			// [clash_proxy_group] 里多个组各有各的 name/type，同名键必须追加而不是
 			// 原地覆盖——Set 会让第二个组的键写回第一个组的位置，块边界就此消失。
+			// 可重复键同理：模板一行一条地声明分组与规则，覆盖语义只剩最后一条。
 			cur.Add(key, v)
 		} else {
 			cur.Set(key, v)
