@@ -1,0 +1,60 @@
+# SubForge systemd 单元（systemd v240+，已在 Ubuntu 22.04 的语法范围内核对）
+#
+# 安装：
+#   sudo install -o root -g root -m 0755 dist/subforge-linux-amd64 /usr/local/bin/subforge
+#   sudo install -o root -g root -m 0640 subforge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now subforge
+#
+# 首次使用先配令牌：serve -token <随机串> 生成的令牌是唯一的访问凭证，
+# 默认监听 127.0.0.1，只有本机可访问；要暴露到局域网必须先设置令牌
+# （不设令牌时绑定非本机地址，程序会拒绝启动）。
+#
+# 配置与缓存放在 /etc/subforge/ 与 /var/lib/subforge/，分别对应 INI 配置文件
+# （改动后自动热重载，无需重启）和上游内容的磁盘缓存。
+
+[Unit]
+Description=SubForge subscription conversion and rule engine
+Documentation=https://github.com/tktogether/subforge
+After=network-online.target
+Wants=network-online.target
+
+# 启动限流属于 [Unit]，不是 [Service]（systemd ≥229 起从 [Service] 移走）。
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=subforge
+Group=subforge
+ExecStart=/usr/local/bin/subforge serve \
+    --config /etc/subforge/subforge.ini \
+    --cache-dir /var/lib/subforge/cache \
+    --listen 127.0.0.1:25500 \
+    --timeout 30 \
+    --shutdown 10
+
+# 配置热重载是 mtime 轮询驱动的，改 INI 不需要 SIGHUP。
+Restart=on-failure
+RestartSec=3s
+
+# 无状态服务，不需要系统调优；保守的默认硬化。
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# 只做出站 HTTP 拉取，不监听额外端口。
+RestrictNamespaces=true
+SystemCallArchitectures=native
+# StateDirectory 在 ProtectSystem=full 下自动可写，无需另开 ReadWritePaths。
+StateDirectory=subforge
+StateDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

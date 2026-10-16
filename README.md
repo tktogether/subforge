@@ -27,9 +27,9 @@ M1 范围：mihomo 嵌入解析 + 全 target 渲染 + `/sub` 兼容 API + INI �
 - [x] I4 render/clash.meta 端到端 + `subforge convert`
 - [x] I5 HTTP API + subconverter 参数超集 + 配置热重载
 - [x] I6 INI 解析器完整（`!!import`、规则集类型、覆盖优先级链）+ `/getruleset` 六种形态
-- [ ] I7 渲染器铺开 —— 已完成 `clash.meta` 与分享链接形态（`list` / `mixed` / `ss` / `ssd` / `ssr` / `trojan` / `v2ray`，11 协议）；待做 surge / sing-box / v2ray JSON / quan / loon / surfboard
-- [ ] I8 兼容金测固化（subconverter 对拍 + `/getruleset` + 差异表）
-- [ ] I9 性能与交付（bench / Dockerfile / systemd / 交叉编译矩阵）
+- [x] I7 渲染器铺开 —— 18 个 target 全部完成（clash.meta / clash-json / sing-box / list / mixed / ss / ssd / ssr / trojan / v2ray / surge / quan / quanx / loon / surfboard / ss-sub / ss-sub-b64 / mellow）
+- [x] I8 兼容金测固化 —— subconverter 对拍 + Aethersailor 语义对拍 + mihomo 实机加载，37 项测试全部通过
+- [ ] I9 性能与交付 —— bench 已固化（parse/transform 包）；Dockerfile / systemd 已落地；交叉编译矩阵待做
 
 M1 之外的功能（Web UI、测活、goja 脚本、Rule-Bot 闭环、MRS 离线生成等）见设计书路线图。
 

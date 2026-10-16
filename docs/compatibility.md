@@ -12,13 +12,52 @@
 
 | # | 差异点 | subconverter/SCE 行为 | SubForge 行为 | 处置 |
 |---|---|---|---|---|
-| — | （暂无，M1-I8 金测开始时填充） | | | |
+| A1 | 订阅地址自带查询串（`url=http://…?token=…`） | 按 `?` 拆分多来源，查询串作为该来源的一部分 | 已修复：`url` 不再按 `?` 拆，只认 `;` 和重复参数（`TestParseQuery_URLWithQueryString`）。此前按 `?` 拆会丢掉 `?token=`，上游收不到凭证直接 404，并多出一个 `token=…` 的假来源 | 已对齐 |
+| A2 | 未实现的 target | 返回错误体 | 501 Not Implemented，且在**任何上游拉取之前**判定（`TestConvert_UnsupportedTargetSkipsFetch` 断言上游请求次数为 0） | 已对齐 |
+| A3 | `config` 参数指向远程 URL | 拉取并应用 | 已支持：CLI `-config` 与 HTTP `config` 参数同语义，带 `://` 即按远程模板拉取 | 已对齐 |
+| A4 | INI `[common] url=` 里写订阅地址 | 生效，作为默认订阅来源 | **不支持**：`url` 只从 HTTP query 参数 / CLI `-url` 取，INI 里的 `url=` 被当作普通转换参数透传，不会成为来源 | 待定（M2） |
 
 ## INI 模板语法
 
 | # | 差异点 | subconverter 行为 | SubForge 行为 | 处置 |
 |---|---|---|---|---|
-| — | （暂无） | | | |
+| N1 | `[custom]` 里的 `custom_proxy_group=` 内联分组 | 生效：反引号 DSL（`` `select`` / `` `url-test``、成员前缀 `[]`、url-test 参数 `测试URL`间隔`容忍度,最大失败`） | 已对齐：同套 DSL；同一段落里重复的同名键**全部保留**（公开模板里同一个键写 56 次，压成一个等于丢弃 55 个分组） | 已对齐 |
+| N2 | `[custom]` 里的 `ruleset=` 内联规则 | 生效：`ruleset=<组>,<类型>,<值>[,间隔]`，类型含 `[]GEOSITE` / `[]GEOIP` / `clash-domain:` / `clash-classic:` / `[]FINAL` | 已对齐：直映类型按声明顺序成行，远程类型拉取后在**原位**展开（`MATCH` 之前的规则集不能被挪到 `MATCH` 之后，否则整段规则失效） | 已对齐 |
+| N3 | `enable_rule_generator` / `overwrite_original_rules` | `enable_rule_generator=true` 把远程规则集展开成内联 `GEOSITE,` / `IP-CIDR,` / `DST-PORT,` 行；`overwrite_original_rules=true` 用生成结果替换原有规则 | 效果等价：远程规则集一律展开成内联规则行，这两个开关不再需要判断（mihomo 的 `rules:` provider 只吃本地文件路径，不吃 URL，所以没法原样写成 `!!import`） | 已对齐 |
+| N4 | 远程规则集（`clash-domain:` / `clash-classic:`） | 拉取并在本地展开或写成 `!!import` | 已对齐：拉取后在规则流原位展开；拉取失败或内容异常（非文本字节，多为上游 CDN 返回压缩壳）时跳过该规则集并逐条告警，不阻断整次转换 | 已对齐 |
+| N5 | `[common]` 里的 `!!import` | 拉取并合并远程模板 | 已支持，走 `LoadTemplate` 递归加载 | 已对齐 |
+| N6 | 成员正则里的 PCRE 环视断言（`(?<=…)` / `(?<!…)` / `(?=…)` / `(?!…)`） | 生效：subconverter 用回溯正则引擎（`regexp2`），断言按真值求值 | 部分对齐：`^(?!.*X).*` 这种整段取反翻译成"不匹配 X"（语义等价）；其余断言直接剥掉，匹配范围只会放宽不会收紧 | 有意差异（Go RE2 无回溯，见下节） |
+| N7 | 分组成员正则命中不了任何节点 | 落 `DIRECT` | 已对齐：落 `DIRECT`。留空或保留正则串都会让 mihomo 报 `proxy group[i]: … not found` 拒绝加载整份配置 | 已对齐 |
+| N8 | 顶层默认项 | `port: 7890` / `socks-port: 7891` / `allow-lan: true` | `mixed-port: 7890` / `allow-lan: false`，另加 `ipv6: false` / `unify-ip: true` / `tcp-concurrent: true` / 内置最小 `dns:` | 有意差异：混合端口是 mihomo 的现代默认写法；`allow-lan: false` 对一台订阅转换服务更安全 |
+| N9 | 上游 `.mrs` 返回非文本字节 | 静默丢弃：产物里 0 条 `DOMAIN` 规则，不留痕迹 | 跳过该规则集并逐条告警，写明 URL 与原因 | 有意差异：可观测优于静默 |
+
+### N1~N4 对拍记录：Aethersailor `Custom_Clash_Full.ini`
+
+用最流行的公开模板之一 [Aethersailor Custom_Clash_Full.ini](https://github.com/Aethersailor/Custom_OpenClash_Rules/blob/main/cfg/Custom_Clash_Full.ini) 对拍（真实 49 节点订阅，`target=clash`，双方各产出一份产物）。这份模板把全部 56 个分组和 93 条规则都写在 `[custom]` 段落的内联语法里，完全没有用 `[clash_proxy_group]` / `[ruleset]` 段落，是 N1~N4 的一次全覆盖实测。
+
+| 层 | SubForge | subconverter v0.9.1-36573b3 |
+|---|---|---|
+| 节点 | 49，名称 / 顺序 / 类型逐条一致 | 49 |
+| 代理组 | 56，**名称、顺序、成员清单全部一致**（合计 2,546 个成员位，逐位相同） | 56 |
+| 规则 | 93，**逐行一致**；形态分布 `{GEOSITE:43, IP-CIDR:34, GEOIP:7, DST-PORT:4, DOMAIN-SUFFIX:3, SRC-PORT:1, MATCH:1}` | 93，同分布 |
+| `mihomo -t` | **通过** | **失败**：`yaml: invalid trailing UTF-8 octet` |
+
+**subconverter 自己的产物不可加载**：那份 93,774 B 的 YAML 里有非法 UTF-8 尾字节（来源是一个 `socks5` 节点的 `username` 字段含二进制垃圾），mihomo 直接 `yaml: invalid trailing UTF-8 octet` 拒绝加载。把它替换成合法字节之后又撞上 `yaml: line 52: did not find expected ',' or '}'`。SubForge 的产物是严格合法 UTF-8，能正常加载。
+
+### N6 说明：环视断言为什么只能部分对齐
+
+Go 的正则引擎是 RE2，为保证线性时间复杂度不做回溯，因此不实现环视断言；subconverter 用的是 `dlclark/regexp2`（回溯引擎），两者对同一份正则的能力集不同。这是引擎选型差异，不是模板兼容漏项。
+
+实测这份模板里有 4 个分组的成员正则带断言，处理方式与结果：
+
+| 分组 | 正则写法 | 处理 | 结果 |
+|---|---|---|---|
+| 🇯🇵 日本节点 | `(?<!尼\|-)日` | 剥掉断言 | 6 个节点，与 subconverter 一致 |
+| 🐢 低倍率节点 | `(?<![\d\.])0?\.\d+(?![0-9])(?:x\|倍)?` | 剥掉断言 | 5 个 `0.20x` 节点，一致 |
+| 🌐 其他地区 | `(^(?!.*(已分类关键词)).*)` | 翻译成否定匹配 | 10 个节点，一致 |
+| 🇷🇺 俄罗斯节点 | `(?<!白)俄罗斯` | 剥掉断言，0 命中 | 落 `DIRECT`，一致 |
+
+`^(?!.*X).*` 是唯一"剥掉就反义"的写法，所以单独翻译成否定匹配而不是并到剥除逻辑里。其余断言在这类模板里都是排除性护栏（"白"前的"俄"不算俄罗斯），剥掉后匹配只会放宽；当前实测放宽没有引入错误成员，但换成节点名里真带这类字符的订阅时可能出现多归类，这是这条差异的实际代价。
 
 ## 各 target 渲染
 
@@ -34,7 +73,7 @@
 | — | `ss-sub` / `ss-sub-json` / `ssjson` / `ss-sub-b64` | 已落地（SS-android 节点配置） |
 | — | `mellow` / `mellow-ios` | 已落地（差异见下节 M1~M4） |
 | — | `sstable` | 未落地（无参考产物可核实，见下节 M5） |
-| — | `sing-box` / `singbox` | 已落地（JSON 配置，差异见下节 B1~B6） |
+| — | `sing-box` / `singbox` | 已落地（JSON 配置，实机校验通过，差异见下节 B1~B7） |
 | — | `clash.json` / `clash.meta.json` / `clashmeta.json` / `clash-json` / `clashmeta-json` / `mihomo.json` | 已落地，与 `clash.meta` 共用构树逻辑，只换编码 |
 
 ## SS-android 节点配置（ss-sub）
@@ -108,37 +147,62 @@ hysteria / hysteria2 / tuic / anytls / socks5 / http 全部可导出。
 
 产出 sing-box 自己的 JSON 配置，不是"换编码的 Clash"。顶层段落顺序与实机参考
 产物一致：`log` / `dns` / `ntp` / `inbounds` / `outbounds` / `route` /
-`experimental`，出站按 `type` + `tag` 两个字段定位（v1.10+ 写法，取代旧的
-平铺 `server` / `port`）。
+`experimental`。目标内核为 sing-box **1.14**，字段以 `sing-box check -c` 实测为
+准（见 B7），因为官方 `schema.json` 在这几个点上与内核不一致。
 
-前三个出站固定为内置项，tag 名照抄参考产物：
+出站按 `type` + `tag` 定位，地址用 `server` + `server_port`。前两个出站固定为
+内置项：
 
 | tag | type | 用途 |
 | --- | --- | --- |
 | `DIRECT` | `direct` | 直连 |
 | `REJECT` | `block` | 丢弃 |
-| `dns-out` | `dns` | DNS 回环出站，被 `route.rules` 与 `dns.rules` 引用 |
+
+1.12 起 `dns` 出站被整体移除，所以不再有 `dns-out` 回环出站；DNS 全部走
+`dns` 段内的服务器与规则。
 
 规则映射到 `route.rules`：同字段、同出站的相邻行合并进同一个对象的数组
 （`domain_suffix: [...]`），因为 sing-box 的规则对象就是"多字段各带一个数组"，
-逐行拆会产出重复字段；不同字段不合并，domain 类与 `geoip` 的匹配阶段不同，
-合并会改变命中顺序。`MATCH` / `FINAL` 不落规则行，改写 `route.final`。
+逐行拆会产出重复字段；不同字段不合并，domain 类与 `ip_cidr` 的匹配阶段不同，
+合并会改变命中顺序。规则动作是**平铺字段**：路由规则用 `outbound`，DNS 规则用
+`action`（字符串）+ `server`（见 B7-e）。`MATCH` / `FINAL` 不落规则行，改写
+`route.final`。指向已跳过节点的规则会被丢掉并告警。
 
-代理组映射：`select` → `selector`，`url-test` → `urltest`（带 `tolerance` 与
-`interval`，`interval` 用 sing-box 的时长字面量如 `300s`），`fallback` →
-`fallback`（只有 `interval`）。成员里引用了未导出节点的 tag 会被过滤掉，
-成员清空后整组不输出——留一个指向不存在出站的引用会让内核整份配置加载失败。
+代理组映射为 outbounds 里的 `selector` / `urltest` 项（成员用 `outbounds` 数组
+列 tag）。`select` / `relay` / `direct` / `pass` → `selector`，`url-test` →
+`urltest`（带 `url`、`tolerance`、`interval`，`interval` 用时长字面量如 `300s`）。
+`fallback` 在 1.12 起没有对应的出站类型，退化为 `selector` 并告警——失去逐个
+试探的语义。成员里引用了未导出节点的 tag 会被过滤掉，成员清空后整组不输出，
+指向不存在出站的引用会让内核整份配置加载失败。
 
 ### 已知差异
 
 | # | 差异点 | subconverter v0.9.0 行为 | SubForge 行为 | 处置 |
 | --- | --- | --- | --- | --- |
-| B1 | 节点覆盖面 | 12 个探针节点只导出 vmess / ss / ssr / trojan 四个，其余协议全部丢弃 | 12 个节点全部导出（vless-reality、vless-ws、hysteria2、hysteria、tuic、anytls、socks5、http 都在），丢不了的逐节点告警 | **有意偏离**，与 M1 同一动因：参考产物覆盖面不够用，sing-box 这些协议都有实现 |
+| B1 | 节点覆盖面 | 12 个探针节点只导出 vmess / ss / ssr / trojan 四个，其余协议全部丢弃 | vmess / vless / trojan / hysteria2 / hysteria / tuic / anytls / shadowsocks / socks / http / https 全部导出（`https` 落成 `http` + `tls`）；`ssr` 无法导出——1.12 起 `shadowsocksr` 出站被移除，该节点丢弃并逐节点告警 | **有意偏离**，与 M1 同一动因：参考产物覆盖面不够用。ssr 是内核限制，不是渲染遗漏 |
 | B2 | 分类组 | 内置 13 个 emoji 分类组（🎥 NETFLIX、⛔️ 广告拦截、📲 电报信息…），来自它自带的模板 | 不自带任何分类组，完全由模板 `[clash_proxy_group]` 决定；没配就一个都不输出 | **有意偏离**。内置分类组是第三方规则数据（CC-BY-SA / GPL），按 R3 不静态打包；需要时由用户配远程源拉取 |
-| B3 | url-test 参数 | 无 url-test 之外的组参数可对照 | Clash 的 `timeout` 在 sing-box 的 `urltest` 没有对应字段，静默丢弃；`fallback` 只保留 `interval` | 保守处置。参考产物只用到 `url` 与 `interval`，无法核实其余参数 |
+| B3 | 组参数 | 无 url-test 之外的组参数可对照 | Clash 的 `timeout` 在 sing-box 的 `urltest` 没有对应字段，丢弃；`fallback` → `selector` 并告警 | 保守处置。参考产物只用到 `url` 与 `interval`，无法核实其余参数 |
 | B4 | 规则集 | 无实机产物可核实 | `RULE-SET` / `SCRIPT` 丢弃并计入 `X-Convert-Skipped` 告警 | 与 M4 同一处置：没有可核实的语法就不猜输出 |
 | B5 | 规则覆盖 | 参考产物单条规则就含 161KB 的 `domain_suffix` 列表，`route` 段占整份体积的 99% | 规则内容全部来自模板或请求参数，不内置任何规则清单 | 与 R3 一致；产物体积因此小得多 |
-| B6 | 实机校验 | 有 | 无 sing-box 二进制可加载校验，只有 JSON 合法性与字段断言（`TestOutboundFields` 逐协议核对） | **缺口**。本机无 Docker 也无 sing-box release，字段映射靠对着内核 schema 逐条核对；拿到二进制后应补一次实机 `sing-box check` |
+| B6 | 实机校验 | 有 | 金测两份 + CLI 产物均过 sing-box 1.14.3 的 `sing-box check -c`（linux/amd64） | **已关闭**，2026-10-14。远端 Ubuntu 22.04 + Go 1.26.3 实测：`go build` / `go vet` / 全量 `go test` 全绿，两份 golden 与 CLI 转换产物全部 PASS。本地另有一层 jsonschema 校验作为快速前置门 |
+| B7 | 1.14 实机校验发现 | 不适用（参考产物是旧内核） | 官方 `schema.json` 与内核行为在 9 个点上不一致，全部以实机为准；字段映射相应调整 | **已落实**。明细见下表 |
+
+#### B7 明细：官方 schema 与 sing-box 1.14 内核的差异
+
+以下每一项都是"照官方 schema 写能过校验、却过不了 `sing-box check`"（或反之），
+逐条用真实二进制判别过。
+
+| 子项 | 现象 | 实测报错 | 渲染器处置 |
+| --- | --- | --- | --- |
+| a | 规则动作被误认为嵌套对象。官方 schema 的 `Rule` 是 `allOf` 合成、`unevaluatedProperties:false`，而 `action` 被定义在 `oneOf` 的 `$ref` 里，注解不会上传到祖先，于是顶层 `action` 被判非法属性 | 写 `{"action":{"action":"route","outbound":...}}` → `json: cannot unmarshal object into Go struct field _DNSRuleAction.action of type string` | 动作平铺：路由规则用 `outbound`，DNS 规则用 `action`（字符串）+ `server`。这是 schema 生成器的产物缺陷，不是我们的写法错 |
+| b | hysteria（v1）凭据字段是 `auth_str` | 写 `password` → `unknown field "password"` | 映射 `password` → `auth_str` |
+| c | `up_mbps` / `down_mbps` 必须是整数。schema 把 hysteria 的 `up`/`down` 标成 `integer|string`，`up_mbps`/`down_mbps` 才是 `integer` | `json: cannot unmarshal string into Go struct field HysteriaOutboundOptions.up_mbps of type int` | 字符串形态也解析成整数 |
+| d | hysteria（v1）强制要求 `up_mbps` **与** `down_mbps` 同时存在，缺一即失败；hysteria2 侧可选 | `initialize outbound[N]: missing upload speed` / `missing download speed` | 缺失的按 1000 Mbps 兜底（相当于不限速）并逐节点告警；机场链接省略速度是常态，不能丢节点 |
+| e | X25519 `reality.public_key` 必须是 **base64 URL 安全、无填充**（`-_` 字母表，不带 `=`）。14 组密钥对照实测：全部 std 编码（`+/` + 填充）→ `illegal base64 data at input byte N`；全部 URL 安全无填充 → PASS | `decode public_key: illegal base64 data at input byte 23` | 渲染时 `RawStdEncoding` → `RawURLEncoding` 转换，并在 `tls.reality` 内嵌。Clash/V2Ray 生态统一输出 std 编码，不转必然失败 |
+| f | DNS 服务器用 `type` 判别式，`address` 字段被移除；`address_resolver` 改名 `domain_resolver` | — | `servers[]` 每项按 15 种 type 之一组装，用 `server`/`server_port` |
+| g | 主机名形式的 DNS 服务器必须声明 `domain_resolver`；缺 `route.default_domain_resolver` 在 1.12 弃用、**1.14 直接判配置非法** | `missing route.default_domain_resolver or domain_resolver` | 默认配置给主机名服务器补 `domain_resolver`，并输出 `route.default_domain_resolver`；引用了不存在的 DNS tag 会告警 |
+| h | `dns` 段只允许 `cache_capacity`/`client_subnet`/`disable_cache`/`disable_expire`/`final`/`optimistic`/`reverse_mapping`/`rules`/`servers`/`strategy`/`timeout`；`default`/`resolver`/`proxy`/`block`/`fakeip`/`independent_cache` 全被移除。fakeip 移入 `dns.servers[]` 的 `{type:"fakeip", inet4_range}` | — | 兜底解析器落成一条匹配 `domain:["*"]` 的规则；fakeip 作为 4 台 DNS 服务器之一 |
+| i | `geoip` / `geosite` 匹配被整体移除，`ip_cidr6` 并入 `ip_cidr`（v4/v6 通用）；`shadowsocksr`、`fallback` 出站、`dns` 出站、`udp` 字段全被移除；tuic 的 `congestion-controller` 改名 `congestion_control`；`tls.utls` 是 `{enabled, fingerprint}` 对象而非字符串，`alpn` 与 `reality` 移入 `tls` 子对象；`OutboundRealityOptions` 只剩 `{enabled, public_key, short_id}`（`spider_x` 被移除）；`mixed` inbound 用 `listen`/`listen_port`，`tun` 用 `address`（`inet4_address`/`stack`/`sniff` 移除） | — | 逐项按 1.14 形态输出。geoip/geosite 规则无法产出（需第三方规则集，按 R3 不打包），命中的规则丢弃并告警，不是静默 |
 
 ## 一行一节点配置形态（surge / quan / quanx / loon / surfboard）
 
@@ -329,7 +393,7 @@ JSON 不支持注释，配置头无处可放，元信息只留在 HTTP 响应头
 | R5 | Surge list 的 `[General]` 段 | 视模板而定 | 固定输出 `CNAME = 1` | 有意：域名规则集的标准写法，让客户端检查 CNAME 解析结果 |
 | R6 | Quantumult X 的 `expires` | 由模板决定 | 固定 2592000（30 天） | 有意但保守：这是 QX 远程提供方文档的约定值。想要实时生效需自建模板套壳 |
 | R7 | DOMAIN-SET 的关键词 | 部分实现会原样写进去 | 丢弃（计入 Skipped） | 有意：DOMAIN-SET 是纯域名列表，客户端按域名匹配，关键词条目无意义 |
-| R8 | 裸域名行 | 按 DOMAIN 处理 | 同（仅当取值看起来是纯域名时） | 对齐 |
+| R8 | 裸规则行（无类型前缀） | 按 DOMAIN 处理 | 先按 CIDR 试：解析成网段就归 `IP-CIDR` / `IP-CIDR6`（含冒号判 v6），否则当纯域名归 DOMAIN，都不是就报 400 | 对齐并更精确。公共规则文件（`.list`）常把域名与网段混写；网段曾落进 DOMAIN 兜底分支，导致形态 4 吐 `payload: []`、形态 6 写出 `DOMAIN,10.0.0.0/8` 这种无效条目。在运行中的服务上复现后修掉，加了 `TestRender_BareCIDRNotMisreadAsDomain` 回归 |
 | R9 | 不带类型前缀的规则行 | 按 Surge 写法 `example.com,PROXY` 处理 | 报 400 | 有意：把第一段当域名会让 `DOMAIN.SUFFIX,com` 这类笔误静默变成 `DOMAIN,com`。写清楚前缀 |
 | R10 | 经典形态的默认出站 | 无此项 | 内核要求每条规则都带出站（缺了 `mihomo -t` 报 `rules[i] error: format invalid` 拒载）。用 `out=<组名>` 给缺第三段的规则补默认出站；不传 `out` 时若有规则缺出站，直接报 400，不产出内核拒载的配置 | 有意。`MATCH,<组>` / `FINAL,<组>` 的第二段本身就是出站，不参与补齐 |
 | R11 | 响应缓存头 | 有 | 无 | 待定（I9 的缓存与 ETag 方案落地时一并处理） |

@@ -1,0 +1,12 @@
+vmess://eyJ2IjoiMiIsInBzIjoidm1lc3Mtbm9kZSIsImFkZCI6InZtZXNzLmV4YW1wbGUuY29tIiwicG9ydCI6IjQ0MyIsImlkIjoiMTExMTExMTEtMjIyMi0zMzMzLTQ0NDQtNTU1NTU1NTU1NTU1IiwiYWlkIjoiMCIsInNjeSI6ImF1dG8iLCJuZXQiOiJ3cyIsInR5cGUiOiJub25lIiwiaG9zdCI6InZtZXNzLmV4YW1wbGUuY29tIiwicGF0aCI6Ii93cyIsInRscyI6InRscyIsInNuaSI6InZtZXNzLmV4YW1wbGUuY29tIn0=
+vless://11111111-2222-3333-4444-555555555555@vless.example.com:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY&sid=0123456789abcdef&type=tcp&flow=xtls-rprx-vision#vless-reality
+vless://11111111-2222-3333-4444-555555555555@vless-ws.example.com:443?encryption=none&security=tls&sni=vless-ws.example.com&type=ws&host=vless-ws.example.com&path=%2Fws#vless-ws
+hysteria2://password123@hy2.example.com:443?sni=hy2.example.com&insecure=1#hy2-node
+hysteria://hy1.example.com:443?protocol=udp&auth=password123&peer=hy1.example.com&insecure=1&upmbps=100&downmbps=200&alpn=h3#hy1-node
+tuic://11111111-2222-3333-4444-555555555555:password123@tuic.example.com:443?congestion_control=bbr&alpn=h3&sni=tuic.example.com&udp_relay_mode=native&allow_insecure=1#tuic-node
+ss://YWVzLTI1Ni1nY206cGFzc3dvcmQxMjM@ss.example.com:8388#ss-node
+ssr://c3NyLmV4YW1wbGUuY29tOjEyMzQ6b3JpZ2luOmFlcy0yNTYtY2ZiOnBsYWluOmNHRnpjM2R2Y21ReE1qTS8_cmVtYXJrcz1jM055TFc1dlpHVQ
+trojan://password123@trojan.example.com:443?sni=trojan.example.com&allowInsecure=1&type=tcp#trojan-node
+anytls://password123@anytls.example.com:443?sni=anytls.example.com&insecure=1#anytls-node
+socks5://user1:pass1@socks.example.com:1080#socks-node
+http://user1:pass1@http.example.com:8080#http-node
