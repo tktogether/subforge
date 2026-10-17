@@ -244,3 +244,16 @@ func ParseClashProviders(yamlBuf []byte) ([]Provider, error) {
 	}
 	return out, nil
 }
+
+// ParseClashRules 从 Clash/mihomo YAML 配置中提取 rules 规则行。
+// 与 ParseClashProxies 同构：直接取原始字符串列表，不做字段归一化。
+// 配置里没有 rules 时返回 nil（不是错误）——绝大多数订阅没有内置规则。
+func ParseClashRules(yamlBuf []byte) ([]string, error) {
+	var cfg struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(yamlBuf, &cfg); err != nil {
+		return nil, fmt.Errorf("解析 YAML: %w", err)
+	}
+	return cfg.Rules, nil
+}

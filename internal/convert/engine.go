@@ -120,6 +120,7 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		failures  []string
 		cached    []bool
 		providers []model.Provider
+		subRules  []string
 	)
 	// provider 按名去重：多个来源可能带同名 provider，首次出现的定义优先。
 	seenProvider := map[string]bool{}
@@ -130,6 +131,18 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 			}
 			seenProvider[p.Name] = true
 			providers = append(providers, p)
+		}
+	}
+	// 订阅内置规则按来源顺序收集，去重后追加到用户规则之后。
+	seenRule := map[string]bool{}
+	collectRules := func(rs []string) {
+		for _, r := range rs {
+			r = strings.TrimSpace(r)
+			if r == "" || seenRule[r] {
+				continue
+			}
+			seenRule[r] = true
+			subRules = append(subRules, r)
 		}
 	}
 	for _, raw := range p.URLs {
@@ -150,6 +163,7 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		}
 		list = append(list, model.NewNodeList(dec.Nodes, name)...)
 		collectProviders(dec.Providers)
+		collectRules(dec.Rules)
 		cached = append(cached, res.FromCache)
 	}
 	for _, f := range p.Files {
@@ -165,6 +179,7 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		}
 		list = append(list, model.NewNodeList(dec.Nodes, filepath.Base(f))...)
 		collectProviders(dec.Providers)
+		collectRules(dec.Rules)
 	}
 
 	if list.IsEmpty() {
@@ -173,6 +188,11 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 			return Result{}, fmt.Errorf("所有来源都失败:\n  %s", strings.Join(failures, "\n  "))
 		}
 		return Result{}, ErrNoNodes
+	}
+
+	// 订阅内置规则追加到用户规则之后：用户规则优先，订阅规则兜底。
+	if len(subRules) > 0 {
+		eff.Rules = append(eff.Rules, subRules...)
 	}
 
 	rawNodes := list.Len()

@@ -105,12 +105,14 @@ func Sniff(buf []byte) (SniffResult, error) {
 	return SniffResult{}, fmt.Errorf("无法识别订阅内容形态（前 64 字节: %q）", preview(b))
 }
 
-// Decoded 是一次来源解码的完整结果：节点 + 透传的 proxy-provider 定义。
+// Decoded 是一次来源解码的完整结果：节点 + 透传的 proxy-provider 定义 + 内置规则。
 type Decoded struct {
 	// Nodes 解析出的节点（原始 config map）。
 	Nodes []map[string]any
 	// Providers Clash YAML 里的 proxy-providers 定义；分享链接来源恒为空。
 	Providers []model.Provider
+	// Rules Clash YAML 里的 rules 规则行；分享链接来源恒为空。
+	Rules []string
 }
 
 // DecodeSubscription 把订阅原文解析为节点列表（原始 config map），自动识别
@@ -138,7 +140,9 @@ func DecodeSource(buf []byte) (Decoded, error) {
 		}
 		// provider 解析失败不该拖垮节点：节点是主体，provider 只是附加透传。
 		providers, _ := model.ParseClashProviders(sniff.Decoded)
-		return Decoded{Nodes: proxies, Providers: providers}, nil
+		// 内置规则同样不该拖垮节点：规则是附加项，提取失败只记 nil。
+		rules, _ := model.ParseClashRules(sniff.Decoded)
+		return Decoded{Nodes: proxies, Providers: providers, Rules: rules}, nil
 	default:
 		nodes, err := convert.ConvertsV2Ray(sniff.Decoded)
 		if err != nil {
