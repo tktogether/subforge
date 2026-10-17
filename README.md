@@ -73,7 +73,7 @@ M3 范围：manifest 聚合 → MRS 离线生成 → cron/告警 → Rule-Bot �
       磁盘缓存（7d TTL）；CLI `subforge mrs generate|cached`
 - [ ] M3.3 cron/告警 —— 定时更新 + Telegram/DingTalk/SMTP 通知（待实施）
 - [x] M3.5 订阅测活 —— 并发探测（≤8）、默认关闭、单 URL 超时；CLI `subforge subscheck`
-- [ ] M3.4 Rule-Bot 闭环 —— GitHub Actions + AI 规则生成（待实施）
+- [x] M3.4 Rule-Bot 闭环 —— 日志驱动异常检测（正则+阈值）、建议生成、待确认队列、确认/拒绝；CLI `subforge rulebot analyze|stats`
 - [x] M3.6 OpenWrt/Docker 交付 —— Dockerfile（scratch）+ Dockerfile.alpine + docker-compose + Makefile cross/docker/release + OpenWrt ipk 包定义（init script + UCI config）+ CI Docker 构建任务
 
 ## Web UI
