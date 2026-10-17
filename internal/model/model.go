@@ -70,6 +70,16 @@ func (n Node) Fingerprint() string {
 	return b.String()
 }
 
+// Provider 是一个 mihomo proxy-provider 定义（订阅来源代理）。
+// Raw 是 provider 配置的原始 map，与 Node.Raw 同构：原样透传，不丢扩展字段
+// （type / url / interval / path / health-check / filter…）。
+type Provider struct {
+	// Name provider 名，proxy-groups 里通过 use 引用它。
+	Name string
+	// Raw 原始配置 map，渲染的唯一事实源。
+	Raw map[string]any
+}
+
 // NodeList 是一组节点；顺序敏感（渲染结果受顺序影响）。
 type NodeList []Node
 
@@ -203,4 +213,34 @@ func ParseClashProxies(yamlBuf []byte) ([]map[string]any, error) {
 		return nil, errors.New("配置中不含 proxies")
 	}
 	return cfg.Proxies, nil
+}
+
+// ParseClashProviders 从 Clash/mihomo YAML 配置中提取 proxy-providers 定义。
+// 与 ParseClashProxies 同构：直接取原始 map，不做字段归一化，原样透传给渲染器。
+// 配置里没有 provider 时返回 nil（不是错误）——绝大多数订阅没有 provider。
+// 顺序按 provider 名字典序固定，保证渲染产物确定性。
+func ParseClashProviders(yamlBuf []byte) ([]Provider, error) {
+	var cfg struct {
+		Providers map[string]map[string]any `yaml:"proxy-providers"`
+	}
+	if err := yaml.Unmarshal(yamlBuf, &cfg); err != nil {
+		return nil, fmt.Errorf("解析 YAML: %w", err)
+	}
+	if len(cfg.Providers) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(cfg.Providers))
+	for n := range cfg.Providers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]Provider, 0, len(names))
+	for _, n := range names {
+		raw := cfg.Providers[n]
+		if raw == nil {
+			raw = map[string]any{}
+		}
+		out = append(out, Provider{Name: n, Raw: raw})
+	}
+	return out, nil
 }

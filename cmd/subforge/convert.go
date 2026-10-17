@@ -41,7 +41,10 @@ const convertUsage = `subforge convert - 本地订阅转换
   -url      订阅地址，可重复（分享链接 / 整体 Base64 / Clash YAML 自动识别）
   -file     本地订阅或配置文件，可重复
   -config   subconverter 风格的 INI 模板（[common] / [node_pref] / [rename] /
-            [emoji] / [clash_proxy_group] / [ruleset]）；命令行参数优先级更高
+            [emoji] / [clash_proxy_group] / [ruleset] / [pipeline:<名>]）；
+            命令行参数优先级更高
+  -pipeline 选中 -config 模板里的 [pipeline:<名>] 命名管线；不给时走默认装配
+            （filter -> node_pref -> rename -> emoji -> dedupe -> sort）
 
 处理:
   -include  节点名白名单正则，可重复
@@ -62,15 +65,18 @@ const convertUsage = `subforge convert - 本地订阅转换
   -header   附加请求头 "K: V"，可重复
   -cache-dir 上游内容磁盘缓存目录（默认不缓存）
   -timeout  上游请求超时秒数（默认 30）
+  -override  本地覆盖层文件（YAML / INI）：改代理组、prepend/append 规则、
+            按名正则改节点 server/port；用 "subforge diff" 预览改动
 `
 
 func cmdConvert(args []string) error {
 	fs := flag.NewFlagSet("convert", flag.ContinueOnError)
 	var (
-		urls, files, include, exclude, types, rename, emoji, headers multiFlag
-		out, format, sortKey, name, cacheDir, configFile             string
-		mixedPort, timeoutSeconds                                    int
-		list                                                         bool
+		urls, files, include, exclude, types, rename, emoji, headers   multiFlag
+		out, format, sortKey, name, cacheDir, configFile, overrideFile string
+		pipeline                                                       string
+		mixedPort, timeoutSeconds                                      int
+		list                                                           bool
 	)
 	fs.Var(&urls, "url", "订阅地址，可重复")
 	fs.Var(&files, "file", "本地订阅或配置文件，可重复")
@@ -85,7 +91,9 @@ func cmdConvert(args []string) error {
 	fs.StringVar(&sortKey, "sort", "", "排序键：original / name / type / server / port")
 	fs.StringVar(&name, "name", "", "配置名，写入产物注释头")
 	fs.StringVar(&configFile, "config", "", "subconverter 风格 INI 模板")
+	fs.StringVar(&pipeline, "pipeline", "", "选中 -config 模板里的 [pipeline:<名>] 命名管线")
 	fs.StringVar(&cacheDir, "cache-dir", "", "上游内容磁盘缓存目录（默认不缓存）")
+	fs.StringVar(&overrideFile, "override", "", "本地覆盖层文件（YAML / INI）")
 	fs.IntVar(&mixedPort, "mixed-port", 7890, "clash.meta mixed-port")
 	fs.IntVar(&timeoutSeconds, "timeout", 30, "上游请求超时秒数")
 	fs.Usage = func() { fmt.Print(convertUsage) }
@@ -98,9 +106,22 @@ func cmdConvert(args []string) error {
 		return fmt.Errorf("至少需要一个 -url 或 -file")
 	}
 
-	params, err := buildCLIParams(list, format, urls, include, exclude, types, rename, emoji, files, headers, sortKey)
+	params, err := buildCLIParams(list, format, urls, include, exclude, types, rename, emoji, files, headers, sortKey, pipeline)
 	if err != nil {
 		return err
+	}
+
+	if overrideFile != "" {
+		// 覆盖层在参数校验之后、拉订阅之前加载：文件写错（未知段落、重复定义、
+		// 非法正则）当场报，不浪费一轮上游请求。
+		ov, err := config.LoadOverrideFile(overrideFile)
+		if err != nil {
+			return err
+		}
+		params.Override = ov
+		fmt.Fprintf(os.Stderr, "覆盖层: %s（%d 组 / %d 规则项 / %d 节点项）\n",
+			overrideFile, len(ov.Groups),
+			len(ov.Rules.Prepend)+len(ov.Rules.Append), len(ov.Proxies))
 	}
 
 	// 先把参数校验做完再动网络：格式、正则、排序键写错了就该立刻报，不能白拉一遍订阅。
@@ -197,7 +218,7 @@ func cmdConvert(args []string) error {
 // buildCLIParams 把命令行 flag 归一成 query 参数形状，再走与 HTTP 入口同一条解析路径。
 // 这样才能让 INI 模板参与"参数 < 命令行"的覆盖合并；直接填结构体的话 Raw 是空的，
 // 合并时会把命令行传入的设置静默丢掉。
-func buildCLIParams(list bool, format string, urls, include, exclude, types, rename, emoji, files, headers multiFlag, sortKey string) (convert.Params, error) {
+func buildCLIParams(list bool, format string, urls, include, exclude, types, rename, emoji, files, headers multiFlag, sortKey, pipeline string) (convert.Params, error) {
 	raw := map[string][]string{}
 	add := func(key string, vals ...string) {
 		for _, v := range vals {
@@ -241,6 +262,9 @@ func buildCLIParams(list bool, format string, urls, include, exclude, types, ren
 	if sortKey != "" {
 		add("sort", strings.ToLower(strings.TrimSpace(sortKey)))
 	}
+	// 命名管线走与 HTTP 入口同一个参数名（pipeline=），模板里的 [pipeline:<名>]
+	// 因此对 CLI 与 /sub 同样可选中。
+	add("pipeline", strings.TrimSpace(pipeline))
 
 	params, err := convert.ParseMulti(raw)
 	if err != nil {

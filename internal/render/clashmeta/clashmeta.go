@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/render"
 )
 
@@ -163,6 +164,15 @@ func (r *Renderer) Render(req render.Request) ([]byte, error) {
 		return nil, err
 	}
 	add("proxies", proxies)
+	// proxy-providers 原样透传（来源 Clash YAML 里的定义）。mihomo 用顶层
+	// proxy-providers 声明订阅来源，组的 use 引用它；不输出会丢掉用户配置。
+	if len(req.Providers) > 0 {
+		providers, err := r.providersNode(req.Providers)
+		if err != nil {
+			return nil, err
+		}
+		add("proxy-providers", providers)
+	}
 	groupsNode, err := r.groupsNode(groups)
 	if err != nil {
 		return nil, err
@@ -229,22 +239,41 @@ func (r *Renderer) dnsNode() (yaml.Node, error) {
 func (r *Renderer) proxiesNode(raws []map[string]any) (yaml.Node, error) {
 	children := make([]*yaml.Node, 0, len(raws))
 	for _, raw := range raws {
-		keys := make([]string, 0, len(raw))
-		for k := range raw {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		entries := make([]any, 0, len(keys)*2)
-		for _, k := range keys {
-			entries = append(entries, k, raw[k])
-		}
-		n, err := render.MappingNode(entries...)
+		n, err := rawMappingNode(raw)
 		if err != nil {
 			return yaml.Node{}, err
 		}
 		children = append(children, &n)
 	}
 	return render.SequenceNode(children...), nil
+}
+
+// providersNode 把透传的 provider 定义渲染成映射（provider 名 -> 配置）。
+// provider 名按字典序输出，配置内的键同样排序，保证产物确定性。
+func (r *Renderer) providersNode(providers []model.Provider) (yaml.Node, error) {
+	entries := make([]any, 0, len(providers)*2)
+	for _, p := range providers {
+		cfg, err := rawMappingNode(p.Raw)
+		if err != nil {
+			return yaml.Node{}, err
+		}
+		entries = append(entries, p.Name, cfg)
+	}
+	return render.MappingNode(entries...)
+}
+
+// rawMappingNode 把原始 map 转成键有序的映射节点（proxies / provider 共用）。
+func rawMappingNode(raw map[string]any) (yaml.Node, error) {
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	entries := make([]any, 0, len(keys)*2)
+	for _, k := range keys {
+		entries = append(entries, k, raw[k])
+	}
+	return render.MappingNode(entries...)
 }
 
 func (r *Renderer) groupsNode(groups []render.Group) (yaml.Node, error) {
@@ -307,6 +336,9 @@ func (r *Renderer) groupNode(g render.Group) (yaml.Node, error) {
 		if g.Strategy == "compatible" || g.Strategy == "global" {
 			add("strategy", g.Strategy)
 		}
+	}
+	if len(g.Use) > 0 {
+		add("use", render.StringSequence(g.Use))
 	}
 	add("proxies", render.StringSequence(g.Proxies))
 	return render.MappingNode(entries...)

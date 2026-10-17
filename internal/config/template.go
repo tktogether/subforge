@@ -173,6 +173,8 @@ type Semantics struct {
 	RuleItems []RuleItem
 	// RemoteRulesets 规则流引用的远程规则集，需要网络才能展开。
 	RemoteRulesets []RemoteRuleset
+	// Pipelines 命名管线定义（[pipeline:<name>] 段落），按段落出现顺序排列。
+	Pipelines []PipelineSpec
 	// Warnings 解释阶段的非阻断提示。不阻断转换，但必须上报——模板用了我们
 	// 读不懂的写法时，产物可能是"节点齐、规则空"，不提示就没人知道。
 	Warnings []string
@@ -246,8 +248,26 @@ func (t *Template) Semantics() (Semantics, error) {
 	inline, remotes := inlineRules(t.cfg)
 	out.RuleItems = inline
 	out.RemoteRulesets = remotes
+	pipes, err := t.pipelines()
+	if err != nil {
+		return Semantics{}, err
+	}
+	out.Pipelines = pipes
 	out.Warnings = inlineWarnings(t.cfg)
 	return out, nil
+}
+
+// PipelineMap 把命名管线定义转成按名索引的映射。
+// 同名 [pipeline:<name>] 段落在 INI 层已合并（step 追加），这里直接建索引即可。
+func (s Semantics) PipelineMap() map[string]PipelineSpec {
+	if len(s.Pipelines) == 0 {
+		return nil
+	}
+	out := make(map[string]PipelineSpec, len(s.Pipelines))
+	for _, p := range s.Pipelines {
+		out[p.Name] = p
+	}
+	return out
 }
 
 // RuleLines 取规则流里已展开成行的部分（远程规则集条目不含在内）。
@@ -406,7 +426,10 @@ func groupFromBlock(block []template.Entry) (render.Group, bool) {
 				g.Type = v
 			}
 		case "nodes", "proxies", "nodes-list", "proxy-list":
-			g.Proxies = append(g.Proxies, splitRules(e.Value.Raw)...)
+			g.Proxies = append(g.Proxies, splitList(e.Value.Raw)...)
+		case "use", "providers", "provider":
+			// use 引用 proxy-provider 名（mihomo 组字段），与成员列表可并存。
+			g.Use = append(g.Use, splitList(e.Value.Raw)...)
 		case "interval", "tolerance", "timeout", "idle":
 			n, err := strconv.Atoi(strings.TrimSpace(e.Value.Raw))
 			if err != nil || n < 0 {
@@ -445,6 +468,20 @@ func groupFromBlock(block []template.Entry) (render.Group, bool) {
 func splitRules(s string) []string {
 	var out []string
 	for _, part := range strings.Split(s, ";") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// splitList 按分号或逗号拆成多个列表项（代理组成员等）。
+// 分号兼容旧模板写法，逗号兼容 clash 标准语法（proxies = HK, US）。
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ';' || r == ','
+	}) {
 		if p := strings.TrimSpace(part); p != "" {
 			out = append(out, p)
 		}

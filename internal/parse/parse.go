@@ -105,29 +105,49 @@ func Sniff(buf []byte) (SniffResult, error) {
 	return SniffResult{}, fmt.Errorf("无法识别订阅内容形态（前 64 字节: %q）", preview(b))
 }
 
+// Decoded 是一次来源解码的完整结果：节点 + 透传的 proxy-provider 定义。
+type Decoded struct {
+	// Nodes 解析出的节点（原始 config map）。
+	Nodes []map[string]any
+	// Providers Clash YAML 里的 proxy-providers 定义；分享链接来源恒为空。
+	Providers []model.Provider
+}
+
 // DecodeSubscription 把订阅原文解析为节点列表（原始 config map），自动识别
 // 明文链接 / 整体 Base64 链接 / Clash YAML 配置。fetch → model 管线统一走这里。
 func DecodeSubscription(buf []byte) ([]map[string]any, error) {
-	sniff, err := Sniff(buf)
+	d, err := DecodeSource(buf)
 	if err != nil {
 		return nil, err
+	}
+	return d.Nodes, nil
+}
+
+// DecodeSource 在 DecodeSubscription 基础上额外提取 Clash YAML 里的 proxy-providers，
+// 供 Engine 原样透传到产物（mihomo 的 provider 字段兼容）。分享链接来源没有 provider 概念。
+func DecodeSource(buf []byte) (Decoded, error) {
+	sniff, err := Sniff(buf)
+	if err != nil {
+		return Decoded{}, err
 	}
 	switch sniff.Format {
 	case FormatClashYAML:
 		proxies, err := model.ParseClashProxies(sniff.Decoded)
 		if err != nil {
-			return nil, fmt.Errorf("解析 Clash YAML: %w", err)
+			return Decoded{}, fmt.Errorf("解析 Clash YAML: %w", err)
 		}
-		return proxies, nil
+		// provider 解析失败不该拖垮节点：节点是主体，provider 只是附加透传。
+		providers, _ := model.ParseClashProviders(sniff.Decoded)
+		return Decoded{Nodes: proxies, Providers: providers}, nil
 	default:
 		nodes, err := convert.ConvertsV2Ray(sniff.Decoded)
 		if err != nil {
-			return nil, fmt.Errorf("解析订阅内容: %w", err)
+			return Decoded{}, fmt.Errorf("解析订阅内容: %w", err)
 		}
 		if len(nodes) == 0 {
-			return nil, ErrEmptySubscription
+			return Decoded{}, ErrEmptySubscription
 		}
-		return nodes, nil
+		return Decoded{Nodes: nodes}, nil
 	}
 }
 

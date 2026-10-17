@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -83,6 +84,16 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// 用户 override 是优先级链里"请求参数"之上的一层：在模板语义之后应用，
+	// 组合并到模板组、规则 prepend/append。节点级覆盖（server/port）在拉取
+	// 完成后、进管线前落到原始节点上。
+	ov := p.Override
+	if len(ov.Groups) > 0 {
+		eff.Groups = config.MergeGroups(eff.Groups, ov.ToGroups())
+	}
+	if len(ov.Rules.Prepend) > 0 || len(ov.Rules.Append) > 0 {
+		eff.Rules = config.MergeRules(eff.Rules, ov.Rules.Prepend, ov.Rules.Append)
+	}
 	// target 归一化必须早于编管线：协议收窄要落成类型过滤，节点数统计才与产物一致。
 	eff, target := resolveTarget(eff)
 
@@ -94,16 +105,28 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		return Result{}, err
 	}
 
-	pipe, err := BuildPipeline(eff)
+	plan, err := BuildPlan(eff)
 	if err != nil {
 		return Result{}, err
 	}
 
 	var (
-		list     model.NodeList
-		failures []string
-		cached   []bool
+		list      model.NodeList
+		failures  []string
+		cached    []bool
+		providers []model.Provider
 	)
+	// provider 按名去重：多个来源可能带同名 provider，首次出现的定义优先。
+	seenProvider := map[string]bool{}
+	collectProviders := func(ps []model.Provider) {
+		for _, p := range ps {
+			if seenProvider[p.Name] {
+				continue
+			}
+			seenProvider[p.Name] = true
+			providers = append(providers, p)
+		}
+	}
 	for _, raw := range p.URLs {
 		u := strings.TrimSpace(raw)
 		if u == "" {
@@ -115,12 +138,13 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 			failures = append(failures, fmt.Sprintf("%s: %v", u, res.Err))
 			continue
 		}
-		raws, err := parse.DecodeSubscription(res.Content)
+		dec, err := parse.DecodeSource(res.Content)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", u, err))
 			continue
 		}
-		list = append(list, model.NewNodeList(raws, name)...)
+		list = append(list, model.NewNodeList(dec.Nodes, name)...)
+		collectProviders(dec.Providers)
 		cached = append(cached, res.FromCache)
 	}
 	for _, f := range p.Files {
@@ -129,12 +153,13 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 			failures = append(failures, fmt.Sprintf("%s: %v", f, err))
 			continue
 		}
-		raws, err := parse.DecodeSubscription(buf)
+		dec, err := parse.DecodeSource(buf)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", f, err))
 			continue
 		}
-		list = append(list, model.NewNodeList(raws, filepath.Base(f))...)
+		list = append(list, model.NewNodeList(dec.Nodes, filepath.Base(f))...)
+		collectProviders(dec.Providers)
 	}
 
 	if list.IsEmpty() {
@@ -146,10 +171,15 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 
 	rawNodes := list.Len()
-	nodes, err := pipe.Apply(list)
+	// 节点级覆盖（server/port）在这里落到原始节点上，早于管线：去重按指纹、
+	// 排序键也可能用 server，都该看到覆盖后的值。匹配不到节点的覆盖记入告警——
+	// 写错名字的覆盖应当被看见，而不是静默失效。
+	overrideWarns, _ := applyProxyOverrides(list, p.Override.Proxies)
+	planRes, err := plan.Run(list)
 	if err != nil {
 		return Result{}, err
 	}
+	nodes := planRes.Nodes
 	if nodes.IsEmpty() {
 		return Result{}, ErrNoNodes
 	}
@@ -159,10 +189,11 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		profile.GeneratedAt = nowUTC(e.Now)
 	}
 	body, err := renderer.Render(render.Request{
-		Nodes:   nodes,
-		Groups:  ResolveGroups(eff.Groups, nodes.Names()),
-		Rules:   eff.Rules,
-		Profile: profile,
+		Nodes:     nodes,
+		Groups:    ResolveGroups(eff.Groups, nodes.Names()),
+		Rules:     eff.Rules,
+		Providers: providers,
+		Profile:   profile,
 	})
 	if err != nil {
 		return Result{}, err
@@ -179,11 +210,61 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	if wr, ok := renderer.(render.WarningReporter); ok {
 		result.Warnings = wr.Warnings()
 	}
-	if len(eff.TemplateWarnings) > 0 {
-		// 模板提示排在渲染阶段提示前面：模板层面的漏配比单个节点降级更致命。
-		result.Warnings = append(append([]string{}, eff.TemplateWarnings...), result.Warnings...)
+	if len(eff.TemplateWarnings) > 0 || len(planRes.Warnings) > 0 || len(overrideWarns) > 0 {
+		// 模板提示与管线告警排在渲染阶段提示前面：模板层面的漏配比单个节点降级更致命。
+		head := make([]string, 0, len(eff.TemplateWarnings)+len(planRes.Warnings)+len(overrideWarns))
+		head = append(head, eff.TemplateWarnings...)
+		head = append(head, planRes.Warnings...)
+		head = append(head, overrideWarns...)
+		result.Warnings = append(head, result.Warnings...)
 	}
 	return result, nil
+}
+
+// applyProxyOverrides 把节点级覆盖（server/port）落到原始节点上。
+// 按 name 正则匹节点名；改完用 model.NodeFromRaw 重新派生只读视图。
+// 返回告警（正则非法或匹配不到节点）与覆盖次数。
+func applyProxyOverrides(list model.NodeList, overrides []config.ProxyOverride) ([]string, int) {
+	if len(overrides) == 0 || list.IsEmpty() {
+		return nil, 0
+	}
+	var warns []string
+	applied := 0
+	for _, o := range overrides {
+		re, err := regexp.Compile(o.Name)
+		if err != nil {
+			warns = append(warns, fmt.Sprintf("override.proxy 正则 %q 非法: %v", o.Name, err))
+			continue
+		}
+		matched := 0
+		for i, n := range list {
+			if !re.MatchString(n.Name) {
+				continue
+			}
+			raw := n.Raw
+			changed := false
+			if o.Server != "" {
+				raw["server"] = o.Server
+				changed = true
+			}
+			if o.Port != "" {
+				// port 在内核里可能是数字也可能是字符串，统一按字符串写回，
+				// 渲染器两种都吃。
+				raw["port"] = o.Port
+				changed = true
+			}
+			if changed {
+				list[i] = model.NodeFromRaw(raw, n.Source)
+				matched++
+			}
+		}
+		if matched == 0 {
+			warns = append(warns, fmt.Sprintf("override.proxy %q 未匹配到任何节点", o.Name))
+			continue
+		}
+		applied += matched
+	}
+	return warns, applied
 }
 
 // resolveTarget 归一化输出目标，返回实际使用的渲染器名。

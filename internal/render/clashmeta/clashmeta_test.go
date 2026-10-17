@@ -276,6 +276,42 @@ func TestRender_Deterministic(t *testing.T) {
 	}
 }
 
+// TestRender_Providers provider 定义原样透传，组的 use 一并输出。
+func TestRender_Providers(t *testing.T) {
+	req := render.Request{
+		Nodes: testNodes(),
+		Groups: []render.Group{
+			{Name: "provider 组", Type: "select", Use: []string{"airport"}},
+		},
+		Providers: []model.Provider{
+			{Name: "airport", Raw: map[string]any{
+				"type": "http",
+				"url":  "https://example.com/sub",
+				"health-check": map[string]any{
+					"enable":   true,
+					"url":      "https://www.gstatic.com/generate_204",
+					"interval": 300,
+				},
+			}},
+		},
+	}
+	body := renderTest(t, req)
+	text := string(body)
+	for _, want := range []string{
+		"proxy-providers:", "airport:", "type: http",
+		"url: https://example.com/sub", "health-check:", "use:", "- airport",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("产物缺少 %q\n%s", want, text)
+		}
+	}
+	// 无 provider 时不应出现该键（保持旧产物字节级不变）。
+	plain := string(renderTest(t, render.Request{Nodes: testNodes()}))
+	if strings.Contains(plain, "proxy-providers") {
+		t.Error("无 provider 时不应输出 proxy-providers")
+	}
+}
+
 // TestRender_MihomoValid 用 mihomo -t 实机校验产物（外部二进制，环境变量指向才执行）。
 // 本机无 Docker，故走 SUBFORGE_MIHOMO=<path> 触发；CI 里同理可选开启。
 func TestRender_MihomoValid(t *testing.T) {

@@ -40,6 +40,8 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	p.TemplateRules = sem.RuleItems
 	p.TemplateRemoteRulesets = sem.RemoteRulesets
 	p.TemplateWarnings = sem.Warnings
+	// 命名管线只由模板声明（[pipeline:<name>] 段落），请求侧用 pipeline=<name> 选一条。
+	p.Pipelines = sem.PipelineMap()
 	// 结构化字段与原始参数同一套规则：请求侧写了就用请求侧的，否则用模板的。
 	// ParseMulti 不会填这两个字段，所以必须显式带过来，否则会静默丢掉请求侧的设置。
 	p.NodePref = base.NodePref

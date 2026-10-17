@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/transform"
 )
@@ -269,6 +270,51 @@ func TestHasURL(t *testing.T) {
 	}
 	if !mustParse(t, "url=http://a").HasURL() {
 		t.Error("有 url 时应为 true")
+	}
+}
+
+func TestBuildPlan_NamedPipeline(t *testing.T) {
+	spec := config.PipelineSpec{
+		Name:    "clean",
+		OnError: "warn",
+		Steps:   []config.PipelineStep{{Kind: "op.dedupe"}},
+	}
+	p := Params{Pipeline: "clean", Pipelines: map[string]config.PipelineSpec{"clean": spec}}
+	plan, err := BuildPlan(p)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	res, err := plan.Run(testNodes())
+	if err != nil {
+		t.Fatalf("plan.Run: %v", err)
+	}
+	if got := res.Nodes.Len(); got != 3 {
+		t.Errorf("去重后节点数 = %d，want 3", got)
+	}
+}
+
+func TestBuildPlan_MissingNamedPipeline(t *testing.T) {
+	p := Params{Pipeline: "nope"}
+	if _, err := BuildPlan(p); err == nil {
+		t.Error("引用不存在的命名管线应报错")
+	}
+}
+
+func TestBuildPlan_DefaultFallsBackToBuildPipeline(t *testing.T) {
+	p := Params{Target: "clash.meta"}
+	plan, err := BuildPlan(p)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if plan.Name != "default" {
+		t.Errorf("Plan.Name = %q，want %q", plan.Name, "default")
+	}
+	res, err := plan.Run(testNodes())
+	if err != nil {
+		t.Fatalf("plan.Run: %v", err)
+	}
+	if res.Nodes.Len() != 3 {
+		t.Errorf("默认管线去重后节点数 = %d，want 3", res.Nodes.Len())
 	}
 }
 

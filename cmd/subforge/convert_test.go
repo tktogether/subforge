@@ -14,7 +14,7 @@ func TestBuildCLIParams_FlagToRaw(t *testing.T) {
 		multiFlag{"港,🚀"},
 		multiFlag{"sub.txt"},
 		multiFlag{"K: V", "Bad"},
-		"name",
+		"name", "",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestBuildCLIParams_FlagToRaw(t *testing.T) {
 
 // TestBuildCLIParams_DefaultTarget 不给 -format 时留空，让模板的 target 有机会生效。
 func TestBuildCLIParams_DefaultTarget(t *testing.T) {
-	p, err := buildCLIParams(false, "", multiFlag{"u"}, nil, nil, nil, nil, nil, nil, nil, "")
+	p, err := buildCLIParams(false, "", multiFlag{"u"}, nil, nil, nil, nil, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,17 +74,40 @@ func TestBuildCLIParams_DefaultTarget(t *testing.T) {
 
 // TestBuildCLIParams_BadRegex 正则写错要在返回时报出来，不能等到拉订阅之后。
 func TestBuildCLIParams_BadRegex(t *testing.T) {
-	if _, err := buildCLIParams(false, "", multiFlag{"u"}, multiFlag{"("}, nil, nil, nil, nil, nil, nil, ""); err == nil {
+	if _, err := buildCLIParams(false, "", multiFlag{"u"}, multiFlag{"("}, nil, nil, nil, nil, nil, nil, "", ""); err == nil {
 		t.Error("非法 include 正则应报错")
 	}
-	if _, err := buildCLIParams(false, "", multiFlag{"u"}, nil, nil, nil, multiFlag{",x"}, nil, nil, nil, ""); err == nil {
+	if _, err := buildCLIParams(false, "", multiFlag{"u"}, nil, nil, nil, multiFlag{",x"}, nil, nil, nil, "", ""); err == nil {
 		t.Error("缺少正则的 rename 应报错")
+	}
+}
+
+// TestBuildCLIParams_PipelineFlag 命名管线要落成 query 参数 pipeline=<名>，
+// 否则 CLI 选不中模板里的 [pipeline:<名>]，只能走默认装配。
+func TestBuildCLIParams_PipelineFlag(t *testing.T) {
+	p, err := buildCLIParams(false, "", multiFlag{"u"}, nil, nil, nil, nil, nil, nil, nil, "", " clean ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Pipeline != "clean" {
+		t.Errorf("Pipeline = %q，want clean（两侧空白应去掉）", p.Pipeline)
+	}
+	if got := p.Raw["pipeline"]; len(got) != 1 || got[0] != "clean" {
+		t.Errorf("Raw[pipeline] = %v，模板覆盖合并依赖它", got)
+	}
+	// 不给 -pipeline 时不应写入 Raw，否则会盖掉模板 [common] 里的 pipeline=。
+	p2, err := buildCLIParams(false, "", multiFlag{"u"}, nil, nil, nil, nil, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p2.Raw["pipeline"]; ok {
+		t.Error("未指定 -pipeline 时 Raw 里不应有 pipeline")
 	}
 }
 
 // TestBuildCLIParams_ListFlag -list 要落成 query 参数，否则 Engine 不知道要切到清单形态。
 func TestBuildCLIParams_ListFlag(t *testing.T) {
-	p, err := buildCLIParams(true, "", multiFlag{"u"}, nil, nil, nil, nil, nil, nil, nil, "")
+	p, err := buildCLIParams(true, "", multiFlag{"u"}, nil, nil, nil, nil, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

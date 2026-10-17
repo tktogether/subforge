@@ -36,6 +36,12 @@ var repeatable = map[string]bool{
 	"custom_proxy_group": true,
 	"ruleset":            true,
 	"rules":              true,
+	// [pipeline:<name>] 里一行一步，同名键必须逐条追加，否则只剩最后一步。
+	"step": true,
+	// override INI 里一组多成员写出。
+	"proxy":   true,
+	"prepend": true,
+	"append":  true,
 }
 
 func isRepeatable(key string) bool {

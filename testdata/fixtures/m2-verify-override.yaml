@@ -1,0 +1,12 @@
+groups:
+  - name: 手动选择
+    type: select
+    proxies: [HK-01]
+rules:
+  prepend:
+    - DOMAIN-SUFFIX,openai.com,手动选择
+  append:
+    - MATCH,手动选择
+proxies:
+  - name: "HK-01"
+    server: hk-new.example.com

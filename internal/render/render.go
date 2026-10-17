@@ -26,6 +26,9 @@ type Request struct {
 	Groups []Group
 	// Rules 规则行（原样透传，如 "GEOIP,CN,DIRECT"）；为空时用最小可用默认规则。
 	Rules []string
+	// Providers 原样透传的 mihomo proxy-provider 定义（来源 Clash YAML 里的
+	// proxy-providers）。渲染器按目标格式支持情况输出，不支持时忽略。
+	Providers []model.Provider
 	// Profile 配置元信息，用于输出注释头。
 	Profile Profile
 }
@@ -60,6 +63,8 @@ type Group struct {
 	Type string
 	// Proxies 组成员（节点名或上游组名）。
 	Proxies []string
+	// Use 引用的 proxy-provider 名（mihomo 组的 use 字段）。与 Proxies 可并存。
+	Use []string
 	// Strategy url-test 的负载均衡策略：global / compatible。
 	Strategy string
 	// Test 测活地址（url-test/fallback 可用）。

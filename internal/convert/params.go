@@ -57,6 +57,10 @@ type Params struct {
 	Headers map[string]string
 	// Ruleset 规则集键值（ruleset:<name>:<type> 形式，I6 完整实现）。
 	Ruleset map[string]string
+	// Pipeline 命名管线名（pipeline=<name>），引用模板里的 [pipeline:<name>] 定义。
+	Pipeline string
+	// Pipelines 模板提供的命名管线定义，按名索引。不来自 query，由模板带过来。
+	Pipelines map[string]config.PipelineSpec
 	// TemplateRules 模板给出的规则流（[common] rules= 与 [custom] 的内联规则），
 	// 按模板声明顺序排列。Remote 非零的条目要由 Engine 拉取远程规则集后就地展开，
 	// 展开完成前这个字段保留、Rules 不含它们。
@@ -67,6 +71,10 @@ type Params struct {
 	// 分组/规则写法）。不影响本次转换是否成功，但必须让用户看到：否则一份
 	// "节点齐、规则空"的配置会静默上线。
 	TemplateWarnings []string
+	// Override 用户本地覆盖层（M2 §1.2 分层覆盖 DSL）。由 CLI 加载文件后填入。
+	// 在模板语义之后、管线之前应用：组合并到模板组，规则 prepend/append，
+	// 节点级 server/port 改完再进管线——去重与排序看到的都是最终值。
+	Override config.Override
 	// Raw 全部原始参数（含未知项），便于排查与透传。
 	Raw map[string][]string
 	// Extensions 未识别的 x-* 扩展参数（预留扩展点）。
@@ -130,6 +138,8 @@ func ParseMulti(m map[string][]string) (Params, error) {
 	p.SCV = isTrue(p.Raw, "scv")
 	p.TLS13 = isTrue(p.Raw, "tls13")
 	p.Config = single(p.Raw, "config")
+	// pipeline=<name> 选中模板里的命名管线；未指定时走默认装配。
+	p.Pipeline = strings.TrimSpace(single(p.Raw, "pipeline"))
 	// 规则行按分号分隔；一行一条，形如 "GEOIP,CN,DIRECT"。
 	p.Rules = take(p.Raw, "rules", ";")
 
@@ -217,6 +227,25 @@ func BuildPipeline(p Params) (transform.Pipeline, error) {
 		steps = append(steps, sort)
 	}
 	return transform.Pipeline(steps), nil
+}
+
+// BuildPlan 把参数映射为可执行的 Plan（带 per-step 错误策略与告警收集）。
+//
+// 指定了 pipeline=<name> 时用模板里的命名管线；否则把 BuildPipeline 的裸链
+// 包成默认策略（abort）的 Plan。两条路径都返回 Plan，Engine 只需一个执行入口。
+func BuildPlan(p Params) (transform.Plan, error) {
+	if p.Pipeline != "" {
+		spec, ok := p.Pipelines[p.Pipeline]
+		if !ok {
+			return transform.Plan{}, fmt.Errorf("未找到命名管线 %q：模板里没有 [pipeline:%s] 段落", p.Pipeline, p.Pipeline)
+		}
+		return spec.Compile()
+	}
+	pipe, err := BuildPipeline(p)
+	if err != nil {
+		return transform.Plan{}, err
+	}
+	return transform.PlanFrom("default", pipe), nil
 }
 
 // single 取某参数的第一个非空值。

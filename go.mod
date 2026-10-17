@@ -3,6 +3,7 @@ module github.com/tktogether/subforge
 go 1.24
 
 require (
+	github.com/dop251/goja v0.0.0-20240220182346-e401ed450204
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/metacubex/mihomo v1.19.31
 	gopkg.in/yaml.v3 v3.0.1
@@ -16,6 +17,7 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/coder/websocket v1.8.12 // indirect
 	github.com/coreos/go-iptables v0.8.0 // indirect
+	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/dunglas/httpsfv v1.0.2 // indirect
 	github.com/easytier/easytier/easytier-go v0.0.0-20260910071355-3d0c9c3ca5e2 // indirect
 	github.com/enfein/mieru/v3 v3.37.0 // indirect
@@ -26,6 +28,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gaukas/godicttls v0.0.4 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect

@@ -100,3 +100,46 @@ func TestDecodeSubscription_Invalid(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeSource_Providers Clash YAML 来源同时解出节点与 proxy-providers。
+func TestDecodeSource_Providers(t *testing.T) {
+	yaml := []byte(`proxy-providers:
+  airport:
+    type: http
+    url: https://example.com/sub
+proxies:
+  - name: n1
+    type: ss
+    server: a.example.com
+    port: "8388"
+    cipher: aes-256-gcm
+    password: p1
+`)
+	d, err := DecodeSource(yaml)
+	if err != nil {
+		t.Fatalf("DecodeSource: %v", err)
+	}
+	if len(d.Nodes) != 1 {
+		t.Fatalf("节点数 = %d, want 1", len(d.Nodes))
+	}
+	if len(d.Providers) != 1 || d.Providers[0].Name != "airport" {
+		t.Fatalf("provider = %+v", d.Providers)
+	}
+	if d.Providers[0].Raw["url"] != "https://example.com/sub" {
+		t.Errorf("provider url 未保留: %v", d.Providers[0].Raw["url"])
+	}
+}
+
+// TestDecodeSource_LinksNoProviders 分享链接来源没有 provider 概念，Providers 恒为空。
+func TestDecodeSource_LinksNoProviders(t *testing.T) {
+	d, err := DecodeSource(readFixture(t, "mixed-subscription.txt"))
+	if err != nil {
+		t.Fatalf("DecodeSource: %v", err)
+	}
+	if len(d.Nodes) == 0 {
+		t.Fatal("应解析出节点")
+	}
+	if len(d.Providers) != 0 {
+		t.Errorf("链接来源不应有 provider: %v", d.Providers)
+	}
+}

@@ -145,3 +145,55 @@ func TestNodeListHelpers(t *testing.T) {
 		t.Fatalf("空 NodeList 的 DistinctTypes = %v", got)
 	}
 }
+
+// TestParseClashProviders provider 定义原样提取，名字按字典序固定，扩展字段不丢。
+func TestParseClashProviders(t *testing.T) {
+	yaml := []byte(`mixed-port: 7890
+proxy-providers:
+  zeta:
+    type: http
+    url: https://z.example.com/sub
+  alpha:
+    type: http
+    url: https://a.example.com/sub
+    interval: 3600
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+proxies:
+  - name: n1
+    type: ss
+    server: a.example.com
+    port: "8388"
+`)
+	got, err := ParseClashProviders(yaml)
+	if err != nil {
+		t.Fatalf("ParseClashProviders: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("provider 数 = %d, want 2", len(got))
+	}
+	if got[0].Name != "alpha" || got[1].Name != "zeta" {
+		t.Fatalf("顺序应字典序: %q %q", got[0].Name, got[1].Name)
+	}
+	if got[0].Raw["url"] != "https://a.example.com/sub" {
+		t.Errorf("url 未保留: %v", got[0].Raw["url"])
+	}
+	if got[0].Raw["interval"] != 3600 {
+		t.Errorf("interval 未保留: %v (%T)", got[0].Raw["interval"], got[0].Raw["interval"])
+	}
+	if _, ok := got[0].Raw["health-check"].(map[string]any); !ok {
+		t.Errorf("health-check 嵌套字段未保留: %T", got[0].Raw["health-check"])
+	}
+}
+
+// TestParseClashProviders_None 没有 provider 段时返回 nil，不是错误。
+func TestParseClashProviders_None(t *testing.T) {
+	got, err := ParseClashProviders([]byte("proxies:\n  - name: n1\n    type: ss\n"))
+	if err != nil {
+		t.Fatalf("无 provider 不应报错: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("无 provider 应返回 nil, got %v", got)
+	}
+}
