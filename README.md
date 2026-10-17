@@ -29,7 +29,9 @@ M1 范围：mihomo 嵌入解析 + 全 target 渲染 + `/sub` 兼容 API + INI �
 - [x] I6 INI 解析器完整（`!!import`、规则集类型、覆盖优先级链）+ `/getruleset` 六种形态
 - [x] I7 渲染器铺开 —— 18 个 target 全部完成（clash.meta / clash-json / sing-box / list / mixed / ss / ssd / ssr / trojan / v2ray / surge / quan / quanx / loon / surfboard / ss-sub / ss-sub-b64 / mellow）
 - [x] I8 兼容金测固化 —— subconverter 对拍 + Aethersailor 语义对拍 + mihomo 实机加载，37 项测试全部通过
-- [ ] I9 性能与交付 —— bench 已固化（parse/transform 包）；Dockerfile / systemd 已落地；交叉编译矩阵待做
+- [x] I9 性能与交付 —— bench 已固化（parse/transform 包）；Dockerfile / systemd 已落地；
+      交叉编译矩阵实测通过（linux/{amd64,arm64,arm,mipsle,mips}、windows/amd64、darwin/{amd64,arm64}、freebsd/amd64），
+      CI 已固化（.github/workflows/ci.yml）；二进制 25~30 MB
 
 ## 当前状态：M2 定制化开发中
 
@@ -51,6 +53,9 @@ M2 范围：管线引擎 + 分层覆盖 DSL + goja 沙箱 + Collection/Provider 
       与 subconverter v0.9.0 对拍规则/组完全一致（5/5、93/93、5/5、57/57）；
       `.mrs` 二进制规则集已能解码展开（与 `mihomo convert-ruleset` 逐行一致），
       9 份产物全部通过 `mihomo -t`；
+      **sub-web 可直连**：16 个客户端类型全部 200，`/version` 返回 subconverter 兼容纯文本，
+      `sort`/`filename`/`emoji`/`list` 等 sub-web 参数全部接受；
+      契约测试：`internal/api/subweb_compat_test.go`（TestSubWeb_* 全绿）；
       核查报告：[docs/m2-aethersailor-compat.md](docs/m2-aethersailor-compat.md)
 
 M3/M4 的功能（规则工厂、MRS 离线生成、测活、Rule-Bot 闭环等）见设计书路线图。

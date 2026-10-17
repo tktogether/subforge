@@ -450,3 +450,65 @@ JSON 不支持注释，配置头无处可放，元信息只留在 HTTP 响应头
 K1、K2 也意味着：subconverter 的 clashmeta 模板若含 `FINAL` 或 `reject` 类型分组，
 其产物在 mihomo 下同样不可加载。M1-I8 用 subconverter 二进制对拍时按此判断，
 不要把内核自身的拒绝当成 SubForge 的转换错误。
+---
+
+## sub-web 前端兼容（`CareyWang/sub-web`）
+
+M2 验收标准之一是「sub-web 可直连」。依据是读上游源码而不是猜：
+
+| 上游文件 | 它决定了什么 |
+|----------|--------------|
+| `src/config/constants.js` | 后端入口是 `VITE_SUBCONVERTER_DEFAULT_BACKEND + '/sub?'`；版本端点由该串去掉末 5 字符再拼 `/version` |
+| `src/config/client-types.js` | 下拉框的 16 个客户端类型（`clash` / `surge&ver=4` / `quan` / `quanx` / `mellow` / `surfboard` / `loon` / `singbox` / `ss` / `ssd` / `sssub` / `ssr` / `clashr` / `v2ray` / `trojan` / `surge&ver=3`） |
+| `src/composables/useSubscription.js` | query 的拼法。`advanced === "2"`（打开「高级」开关）时会无条件塞进 `emoji/list/tfo/scv/fdn/expand/sort` 这组布尔，外加 `append_type/udp/surge.doh/clash.doh/new_name` |
+| `src/services/backendService.js` | `GET /version`，把响应体当**字符串**交给 `formatVersion` |
+| `src/utils/formatters.js` | `formatVersion`：先 `replace(/backend\n$/gm, "")`，再 `replace("subconverter", "")` |
+
+契约测试：`internal/api/subweb_compat_test.go`。它把上面的拼法与解析算法逐行搬进 Go，
+覆盖 16 个客户端类型 × 普通/高级两种模式。
+
+### `/version` 的形态
+
+必须是纯文本，形如 `<名字> v<版本> backend` + 换行。返回 JSON 会让 `formatVersion` 的
+`.replace` 抛异常，而那个异常在 sub-web 里被 `catch` 静默吞掉——页面上版本号永远为空，
+没有任何报错。SubForge 返回 `subforge <版本> backend` + 换行；不冒充 `subconverter`，
+因为前端会把串里的 `subconverter` 剥掉。
+
+结构化版本信息（name / version / startedAt / uptime / time）在 `/api/version`。
+
+### 参数处置表
+
+| 参数 | subconverter 语义 | SubForge 处置 | 说明 |
+|------|-------------------|---------------|------|
+| `target` | 输出格式 | ✅ 对齐 | `sssub` / `clashr` 两个 sub-web 会发的写法已补齐（见下） |
+| `url` | 订阅地址，`|` 分隔多条 | ✅ 对齐 | 多个来源用 `;` 或重复参数；`?` 不拆（URL 自带 query） |
+| `insert` | 额外插入的订阅 | ✅ 对齐 | |
+| `config` / `include` / `exclude` / `type` | 模板与筛选 | ✅ 对齐 | |
+| `sort` | **布尔**：true=按备注排序 | ✅ 兼容并扩展 | 布尔映射到排序键（true→`name`，false→`original`）；也接受 Sub-Store 的排序键写法。非法键仍报错 |
+| `filename` | 覆盖下载文件名 | ✅ 对齐 | 只影响 `Content-Disposition`，不影响产物 |
+| `emoji` | 布尔：给节点名加国旗 emoji | ⚠️ 接受但语义不同 | SubForge 的 `emoji` 是 `正则,替换` 对（Sub-Store 语义）。传布尔时是 no-op（正则不命中任何节点名），不会报错也不会改坏产物 |
+| `list` / `udp` / `tfo` / `scv` / `tls13` | 布尔开关 | ✅ 对齐 | |
+| `new_name` | Clash 用新字段名 | ⚠️ 接受并忽略 | SubForge 只产出 mihomo 的新字段名，`new_name=true` 本就是我们要的行为 |
+| `expand` | 展开规则集 | ⚠️ 接受并忽略 | SubForge 一律展开，没有「不展开」的模式 |
+| `append_type` | 节点名追加 `[SS]` 等类型标签 | ❌ 未实现 | 被接受但不生效。需要时用模板 `[node_pref]` 的前缀规则替代 |
+| `fdn` | 过滤已废弃协议节点 | ❌ 未实现 | 被接受但不生效。SubForge 按协议支持面渲染，不认识的协议在解析期就丢了 |
+| `clash.doh` / `surge.doh` | DNS over HTTPS 开关 | ❌ 未实现 | 被接受但不生效。clash.meta 渲染器默认已用 DoH nameserver |
+| `ver` | Surge 版本（3/4） | ⚠️ 接受并忽略 | `surge2/3/4/suri` 归一到同一个 Surge 渲染器：它们只是客户端版本差异，不产生独立语法 |
+
+「接受但不生效」与「报错」是有意的取舍：前者让存量前端继续可用（参数进了 `Raw`，
+`/inspect` 能回显），后者会让一个纯 UI 开关把整条请求打挂。
+
+### 目标格式补齐
+
+| sub-web 写法 | 处置 | 理由 |
+|--------------|------|------|
+| `sssub` | 别名到 `ss-sub`（裸 JSON） | SubForge 内部包名是 `sssub`，但 target 名原先只有带连字符的 `ss-sub`；sub-web 发的是无连字符写法 |
+| `clashr` | 别名到 Clash YAML（小写现代形态） | ClashR 已停止维护。它的大写字段名（`Proxy`/`Proxy Group`/`Rule`）mihomo 会拒绝加载；ClashR 客户端本身接受小写形态。取舍是「能用」优先于「逐字节复刻一个死掉的客户端」 |
+
+### 已知差异
+
+| # | 项 | subconverter | SubForge | 处置 |
+|---|---|--------------|----------|------|
+| W1 | `emoji=true` | 给节点名加国旗 | no-op | 见上表。加 emoji 需要一份「地区关键词 → 国旗」的映射表，属规则工厂（M3）的活 |
+| W2 | `append_type` / `fdn` / `*.doh` | 生效 | 接受但忽略 | 见上表 |
+| W3 | `/short` 短链服务 | 无（sub-web 用外部 myurls） | 无 | sub-web 的 `SHORT_URL_API` 指向外部服务，与本后端无关 |
