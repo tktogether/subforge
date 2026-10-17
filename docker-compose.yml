@@ -1,0 +1,19 @@
+# SubForge Docker Compose
+services:
+  subforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: subforge:latest
+    container_name: subforge
+    ports:
+      - "25500:25500"
+    volumes:
+      - subforge-data:/data
+      - ./config:/config:ro
+    environment:
+      - SUBFORGE_DATA=/data
+      - SUBFORGE_CONFIG=/config
+    restart: unless-stopped
+volumes:
+  subforge-data:

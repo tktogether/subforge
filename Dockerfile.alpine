@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+# SubForge Alpine version: includes ca-certificates and tzdata.
+FROM golang:1.26-bookworm AS builder
+ARG VERSION=dev
+ARG COMMIT=none
+ARG DATE=unknown
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY vendor/ ./vendor/
+RUN go mod verify
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -mod=vendor -ldflags="-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=${VERSION} -X github.com/tktogether/subforge/internal/buildinfo.Commit=${COMMIT} -X github.com/tktogether/subforge/internal/buildinfo.Date=${DATE}" -o /out/subforge ./cmd/subforge
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=builder /out/subforge /usr/local/bin/subforge
+COPY LICENSE /LICENSE
+ENV SUBFORGE_DATA=/data
+VOLUME ["/data"]
+EXPOSE 25500
+ENTRYPOINT ["/usr/local/bin/subforge"]
+CMD ["serve"]
