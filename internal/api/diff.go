@@ -56,14 +56,18 @@ func DiffLines(a, b string) []DiffLine {
 	return out
 }
 
+// splitLines 把文本切成待比较的行。
+//
+// 空串表示"没有任何行"，返回空切片——否则 Convert 页在基线为空时会看到一行
+// 内容为空的删除行（幽灵行），两侧都空时也会显示一行空"相等"行而不是"无差异"。
+// 非空文本保留末尾空行的差异，只去掉结尾那一个由 Split 产生的空串。
 func splitLines(s string) []string {
-	// 保留末尾空行差异，但落尾的单个空字符串去掉。
+	if s == "" {
+		return nil
+	}
 	parts := strings.Split(s, "\n")
 	if len(parts) > 0 && parts[len(parts)-1] == "" {
 		parts = parts[:len(parts)-1]
-	}
-	if len(parts) == 0 {
-		parts = []string{""}
 	}
 	return parts
 }

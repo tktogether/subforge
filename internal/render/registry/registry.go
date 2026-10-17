@@ -7,6 +7,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/tktogether/subforge/internal/render"
@@ -122,7 +123,7 @@ func Available() []string {
 			seen[name] = true
 		}
 	}
-	for _, lt := range render.LineFormTargets {
+	for _, lt := range sortedLineFormTargets() {
 		candidates := append([]string{lt.Renderer}, lt.Aliases...)
 		for _, n := range candidates {
 			if !seen[n] {
@@ -131,17 +132,54 @@ func Available() []string {
 			}
 		}
 	}
-	for n := range render.ClashJSONTargets {
+	// 这三族来自 map，range 顺序随机：不排序的话 /api/targets 的尾段每次请求
+	// 顺序都不同，前端下拉框会抖动，任何断言全序的测试也会随机红。
+	for _, n := range sortedBoolKeys(render.ClashJSONTargets) {
 		if !seen[n] {
 			names = append(names, n)
 			seen[n] = true
 		}
 	}
-	for n := range render.TargetAliases {
+	for _, n := range sortedKeys(render.TargetAliases) {
 		if !seen[n] {
 			names = append(names, n)
 			seen[n] = true
 		}
 	}
 	return names
+}
+
+// sortedLineFormTargets 按规范名排序返回 LineFormTargets，理由同 sortedKeys：
+// 该表是 map，直接 range 会让"一行一节点"族的别名顺序随机。
+func sortedLineFormTargets() []render.LineFormTarget {
+	names := make([]string, 0, len(render.LineFormTargets))
+	for name := range render.LineFormTargets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]render.LineFormTarget, 0, len(names))
+	for _, name := range names {
+		out = append(out, render.LineFormTargets[name])
+	}
+	return out
+}
+
+// sortedKeys / sortedBoolKeys 取 map 的键并按字典序返回，
+// 消除 map 迭代顺序带来的不确定性。
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedBoolKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

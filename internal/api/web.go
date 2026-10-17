@@ -102,7 +102,13 @@ func (s *Server) handleAPIHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIPipelines(w http.ResponseWriter, r *http.Request) {
-	p, _ := s.engine.ResolveTemplates(r.Context(), r.URL.Query().Get("config"))
+	// 模板加载失败必须报出来：吞掉错误会让 Rules/Convert 页把"config 写错"
+	// 显示成"模板里没有命名管线"，用户会去翻一个根本没错的地方。
+	p, err := s.engine.ResolveTemplates(r.Context(), r.URL.Query().Get("config"))
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, err)
+		return
+	}
 	names := make([]string, 0, len(p.Pipelines))
 	for name := range p.Pipelines {
 		names = append(names, name)
@@ -116,7 +122,11 @@ func (s *Server) handleAPITargets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIRulesets(w http.ResponseWriter, r *http.Request) {
-	p, _ := s.engine.ResolveTemplates(r.Context(), r.URL.Query().Get("config"))
+	p, err := s.engine.ResolveTemplates(r.Context(), r.URL.Query().Get("config"))
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, err)
+		return
+	}
 	m := p.Ruleset
 	if m == nil {
 		m = map[string]string{}
