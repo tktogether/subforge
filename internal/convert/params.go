@@ -52,6 +52,10 @@ type Params struct {
 	Sort string
 	// Config 模板名。
 	Config string
+	// Filename 覆盖下载文件名（subconverter 的 filename 参数）。
+	// sub-web 的"高级"模式会传它，用户改了这个字段却拿不到对应文件名会以为是后端 bug。
+	// 只影响 Content-Disposition，不影响产物内容。
+	Filename string
 	// Headers 附加到上游订阅请求的请求头（token 等）。
 	// 不走 query：凭证不该出现在 URL 里，由调用方按来源设置。
 	Headers map[string]string
@@ -128,9 +132,19 @@ func ParseMulti(m map[string][]string) (Params, error) {
 			return Params{}, err
 		}
 	}
-	sort := single(p.Raw, "sort")
-	if sort != "" {
-		p.Sort = strings.ToLower(strings.TrimSpace(sort))
+	// sort 有两种写法，都必须吃：
+	//   - subconverter / sub-web 用布尔：true=按备注排序，false=保持原序；
+	//   - Sub-Store 语义用排序键：name/type/server/port/original。
+	// 只认后者会让 sub-web 的"高级"模式整条请求 502——它固定会传 sort=false。
+	// 布尔映射到排序键后交给 transform 统一校验，非法键仍在这里就报错。
+	switch v := strings.ToLower(strings.TrimSpace(single(p.Raw, "sort"))); v {
+	case "":
+	case "1", "true", "yes", "on":
+		p.Sort = string(transform.SortByName)
+	case "0", "false", "no", "off":
+		p.Sort = string(transform.SortByOriginal)
+	default:
+		p.Sort = v
 	}
 	p.List = isTrue(p.Raw, "list")
 	p.UDP = isTrue(p.Raw, "udp")
@@ -138,6 +152,7 @@ func ParseMulti(m map[string][]string) (Params, error) {
 	p.SCV = isTrue(p.Raw, "scv")
 	p.TLS13 = isTrue(p.Raw, "tls13")
 	p.Config = single(p.Raw, "config")
+	p.Filename = strings.TrimSpace(single(p.Raw, "filename"))
 	// pipeline=<name> 选中模板里的命名管线；未指定时走默认装配。
 	p.Pipeline = strings.TrimSpace(single(p.Raw, "pipeline"))
 	// 规则行按分号分隔；一行一条，形如 "GEOIP,CN,DIRECT"。

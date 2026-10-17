@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -129,6 +130,7 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/inspect", s.handleInspect)
 
 	r.Route("/api", func(r chi.Router) {
+		r.Get("/version", s.handleAPIVersion)
 		r.Get("/stats", s.handleAPIStats)
 		r.Get("/history", s.handleAPIHistory)
 		r.Get("/pipelines", s.handleAPIPipelines)
@@ -143,8 +145,31 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
-// handleVersion 返回版本与运行时长。
+// handleVersion 返回 subconverter 形态的纯文本版本串。
+//
+// 这是 sub-web（CareyWang/sub-web）"可直连"的硬契约：它的 BackendService
+// 直接 GET <backend>/version，拿到 response.data 后按字符串处理——
+// formatVersion 会剥掉结尾的 "backend\n" 与串里的 "subconverter" 再显示。
+// 返回 JSON 会让 .replace 抛异常并被静默吞掉，页面上版本号永远是空的。
+//
+// 形态对齐 subconverter v0.9.0 实测输出（text/plain、"<名字> v<版本> backend\n"）；
+// 名字用自己的，协议只约定形状不约定产品名。
+// 需要结构化的版本信息走 /api/version。
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", versionLine(s.engine.Profile.Version))
+}
+
+// versionLine 拼 subconverter 兼容的版本行。
+func versionLine(version string) string {
+	if strings.TrimSpace(version) == "" {
+		version = "dev"
+	}
+	return "subforge " + version + " backend\n"
+}
+
+// handleAPIVersion 返回结构化的版本与运行时长，供本仓 Web UI 与脚本使用。
+// 与 /version 分开：/version 是给外部前端的兼容契约，不能塞 JSON。
+func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"name":      s.cfg.Name,
 		"version":   s.engine.Profile.Version,

@@ -88,12 +88,16 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Convert-Cache", fmt.Sprintf("命中 %d 个", n))
 	}
 	// 客户端 /sub 也记录历史，Dashboard 才能看到真实转换。
+	// Groups/Rules 取自 Engine 的生效值：Dashboard 的状态概览要显示"分组有没有生效"，
+	// 只记节点数看不出来。这两个计数与 /api/convert 路径同源，两条路不会漂移。
 	if s.historyBuf != nil {
 		s.historyBuf.Record(HistoryEntry{
 			Target:   params.Target,
 			Format:   result.Format,
 			Nodes:    result.Nodes,
 			RawNodes: result.RawNodes,
+			Groups:   result.Groups,
+			Rules:    result.Rules,
 			Failures: result.Failures,
 			Warnings: result.Warnings,
 			Cached:   countCached(result),
@@ -345,7 +349,13 @@ func contentTypeFor(target string) string {
 }
 
 // filenameFor 给出下载文件名。format 是生效的输出格式——list 模式的产物不是 YAML。
+//
+// 优先级：请求显式给的 filename > 模板名 > 按格式派生。
+// 显式 filename 排最前是因为它就是用户为了覆盖后两者才传的。
 func filenameFor(p convert.Params, format string) string {
+	if p.Filename != "" {
+		return p.Filename
+	}
 	if p.Config != "" {
 		return p.Config
 	}

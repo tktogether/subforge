@@ -52,6 +52,11 @@ var ClashYAMLTargets = map[string]bool{
 	"clashmeta":  true,
 	"mihomo":     true,
 	"yaml":       true,
+	// clashr 是 subconverter 的 ClashR 目标，也是 sub-web 客户端列表里的一项。
+	// ClashR 早已停止维护，且它的字段名（Proxy/Rule 大写）是 Clash 大写形态的历史遗留；
+	// 这里按现代 Clash/meta 的小写形态产出——ClashR 客户端接受小写，而大写形态
+	// mihomo 会拒绝加载。取舍是"能用"优先于"逐字节复刻一个死掉的客户端"。
+	"clashr": true,
 }
 
 // ClashJSONTargets 是产出 Clash JSON 配置的 target 写法。
@@ -102,8 +107,11 @@ var TargetAliases = map[string]string{
 	"ss-sub-json": "ss-sub",
 	"ss-sub-b64":  "ss-sub",
 	"ssjson":      "ss-sub",
-	"mellow":      "mellow",
-	"mellow-ios":  "mellow",
+	// sssub 是 subconverter 与 sub-web 用的写法（无连字符），落同一个渲染器；
+	// 裸 JSON 形态，与 subconverter 的 sssub 目标一致。
+	"sssub":      "ss-sub",
+	"mellow":     "mellow",
+	"mellow-ios": "mellow",
 }
 
 // LineFormTarget 描述"一行一节点"族的配置形态 target：Renderer 是归一后的

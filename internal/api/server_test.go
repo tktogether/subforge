@@ -754,17 +754,31 @@ func TestResponseHeaders(t *testing.T) {
 func TestVersionHealthIndexNotFound(t *testing.T) {
 	ts := newTestServer(t, nil)
 
+	// /version 是给 sub-web 的兼容契约：纯文本、以 "backend\n" 结尾。
+	// 返回 JSON 会让 sub-web 的 formatVersion 抛异常并静默吞掉，版本号显示为空。
 	status, hdr, body := doGet(t, ts.URL+"/version", "", "")
 	if status != http.StatusOK {
 		t.Fatalf("/version 状态 = %d", status)
 	}
+	if got := string(body); got != "subforge test-version backend\n" {
+		t.Errorf("/version 内容 = %q，want %q", got, "subforge test-version backend\n")
+	}
+	if ct := hdr.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("/version Content-Type = %q，want text/plain", ct)
+	}
+
+	// 结构化版本信息在 /api/version。
+	status, hdr, body = doGet(t, ts.URL+"/api/version", "", "")
+	if status != http.StatusOK {
+		t.Fatalf("/api/version 状态 = %d", status)
+	}
 	var v map[string]any
 	mustJSON(t, body, &v)
 	if v["version"] != "test-version" || v["name"] != "subforge" {
-		t.Errorf("/version 内容: %v", v)
+		t.Errorf("/api/version 内容: %v", v)
 	}
 	if !strings.HasPrefix(hdr.Get("Content-Type"), "application/json") {
-		t.Errorf("/version Content-Type = %q", hdr.Get("Content-Type"))
+		t.Errorf("/api/version Content-Type = %q", hdr.Get("Content-Type"))
 	}
 
 	status, _, body = doGet(t, ts.URL+"/healthz", "", "")

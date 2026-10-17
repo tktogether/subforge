@@ -65,6 +65,11 @@ type Result struct {
 	Warnings []string
 	// Cached 每个来源是否命中磁盘缓存。
 	Cached []bool
+	// Groups 生效的代理组数（覆盖合并之后、成员展开之后）。
+	// 给 Dashboard 的状态概览用：只看节点数看不出"分组有没有生效"。
+	Groups int
+	// Rules 生效的规则行数（含展开后的远程规则集）。
+	Rules int
 }
 
 // Run 执行一次转换。没有任何来源时直接报错，避免产出空配置。
@@ -188,9 +193,10 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	if profile.Version != "" && profile.GeneratedAt == "" {
 		profile.GeneratedAt = nowUTC(e.Now)
 	}
+	groups := ResolveGroups(eff.Groups, nodes.Names())
 	body, err := renderer.Render(render.Request{
 		Nodes:     nodes,
-		Groups:    ResolveGroups(eff.Groups, nodes.Names()),
+		Groups:    groups,
 		Rules:     eff.Rules,
 		Providers: providers,
 		Profile:   profile,
@@ -206,6 +212,8 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		RawNodes: rawNodes,
 		Failures: failures,
 		Cached:   cached,
+		Groups:   len(groups),
+		Rules:    len(eff.Rules),
 	}
 	if wr, ok := renderer.(render.WarningReporter); ok {
 		result.Warnings = wr.Warnings()
