@@ -66,6 +66,20 @@
 - **引入成本**：新增 vendor 只有 `mihomo/component/cidr`（2 个文件），二进制体积 +301.5 KB（37.78 MB → 38.08 MB）。
 - **实机验证**：8 个 Aethersailor 模板 + 1 个兼容文件的产物全部通过 `mihomo -t`；`Custom_Clash.ini` 引用的 3 份 `.mrs` 共 1012 个域名全部出现在产物里（与内核参考输出逐条比对，0 缺失）。
 
+
+### CDN 缓存说明（运营提示）
+
+`.mrs`（以及其它规则集） fetched from `cdn.jsdelivr.net`（`@main`）时，jsdelivr 的边缘
+缓存（`s-maxage=43200`，双层 cache-fra/cache-sin）可能在上游更新后仍服务旧版本，
+造成**同一份模板两次转换的规则数不同**（实测 1012 vs 1018，差 6 条，对应上游新增的 6 个域名）。
+
+这不是 SubForge 的 bug：
+
+- SubForge 不缓存规则集（`config.HTTPLoader` 是单次 GET，无 ETag 缓存）；
+- 解码器对同一份字节是确定的（`TestDecodeMRS_StableAcrossCalls` 守护）；
+- 上游文件的哈希在单次 fetch 内稳定。
+
+缓解建议：模板作者把 `@main` 换成 pinned commit SHA；或用户在转换时把 CDN URL 换成本地副本。
 ### N6 说明：环视断言为什么只能部分对齐
 
 
