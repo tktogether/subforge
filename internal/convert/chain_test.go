@@ -196,6 +196,7 @@ func TestResolveGroups_EmptyMemberListFallsBackToDirect(t *testing.T) {
 		t.Errorf("正常组 = %v，want [HK-01]", groups[1].Proxies)
 	}
 }
+
 // TestResolveGroups_LookaroundTolerated 环视断言是 PCRE 写法，剥掉断言后仍要能编译匹配；
 // 剥掉的代价是丢掉"白俄不算俄"这类护栏，匹配范围只会放宽。
 func TestResolveGroups_LookaroundTolerated(t *testing.T) {

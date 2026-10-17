@@ -25,9 +25,9 @@ type Override struct {
 // GroupOverride 是 override 中的一条代理组覆盖。
 // 同名组按 mergeGroups 规则合并；数组追加，标量替换。
 type GroupOverride struct {
-	Name     string   `yaml:"name"`
-	Type     string   `yaml:"type"`
-	Proxies  []string `yaml:"proxies"`
+	Name    string   `yaml:"name"`
+	Type    string   `yaml:"type"`
+	Proxies []string `yaml:"proxies"`
 	// Use 引用的 proxy-provider 名（mihomo 组的 use 字段）。
 	Use      []string `yaml:"use"`
 	Strategy string   `yaml:"strategy"`

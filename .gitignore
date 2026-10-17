@@ -15,6 +15,9 @@
 # 日志
 *.log
 
+# 设计上下文（impeccable 技能生成，本地专用）
+.impeccable.md
+
 # 编辑器与操作系统
 .idea/
 .vscode/

@@ -604,4 +604,3 @@ func TestIsAbsoluteURL(t *testing.T) {
 		}
 	}
 }
-
