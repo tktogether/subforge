@@ -6,9 +6,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/tktogether/subforge/internal/config"
+	"github.com/tktogether/subforge/internal/parse"
 	"github.com/tktogether/subforge/internal/ruleset"
 )
 
@@ -35,19 +37,34 @@ func (e *Engine) expandRemoteRulesets(ctx context.Context, p Params) (Params, []
 			warnings = append(warnings, fmt.Sprintf("规则集 %s 获取失败，该规则集未生效: %v", rs.URL, err))
 			continue
 		}
-		if reason := rulesetProblem(body); reason != "" {
-			warnings = append(warnings, fmt.Sprintf("规则集 %s 内容异常（%s），该规则集未生效", rs.URL, reason))
-			continue
-		}
 		var out []string
-		switch rs.Kind {
-		case "domain":
-			out = expandMRS(body, rs.Group)
-		case "classic":
-			out = expandClassic(body, rs.Group)
-		default:
-			warnings = append(warnings, fmt.Sprintf("规则集 %s 的类型 %q 不支持", rs.URL, rs.Kind))
-			continue
+		if parse.IsMRS(body) {
+			// MRS 是内核的二进制规则集格式：模板里的 clash-domain:<url>.mrs 就是它。
+			// 必须先分流再走文本校验——二进制内容会被 rulesetProblem 判成"含 NUL"，
+			// 于是整份规则集被静默丢掉（这正是兼容性核查里的 G1）。
+			set, err := parse.DecodeMRS(body)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("规则集 %s 是 MRS 但解码失败，该规则集未生效: %v", rs.URL, err))
+				continue
+			}
+			if w := mrsKindMismatch(rs.Kind, set.Behavior); w != "" {
+				warnings = append(warnings, fmt.Sprintf("规则集 %s %s", rs.URL, w))
+			}
+			out = expandMRSBinary(set, rs.Group)
+		} else {
+			if reason := rulesetProblem(body); reason != "" {
+				warnings = append(warnings, fmt.Sprintf("规则集 %s 内容异常（%s），该规则集未生效", rs.URL, reason))
+				continue
+			}
+			switch rs.Kind {
+			case "domain":
+				out = expandMRS(body, rs.Group)
+			case "classic":
+				out = expandClassic(body, rs.Group)
+			default:
+				warnings = append(warnings, fmt.Sprintf("规则集 %s 的类型 %q 不支持", rs.URL, rs.Kind))
+				continue
+			}
 		}
 		if len(out) == 0 {
 			warnings = append(warnings, fmt.Sprintf("规则集 %s 没有展开出任何规则", rs.URL))
@@ -125,6 +142,71 @@ func expandMRS(body []byte, group string) []string {
 		out = append(out, fmt.Sprintf("DOMAIN,%s,%s", dom, group))
 	}
 	return out
+}
+
+// expandMRSBinary 把已解码的 MRS 规则集展开成规则行。
+//
+// 规则形态按**文件声明的行为**决定，而不是按模板写的 clash-domain/clash-classic：
+// 文件里是什么就展开成什么，比照模板名字猜更不容易出错（猜错会产出匹配语义完全不同的规则）。
+//
+// 域名条目到 Clash 规则的映射（内核 domain 行为支持四种写法）：
+//
+//	+.d   → DOMAIN-SUFFIX,d      内核语义 = d 本身 + 所有子域，与 DOMAIN-SUFFIX 等价
+//	.d    → DOMAIN-SUFFIX,d      内核语义 = 仅子域；这里略微放宽到含 d 本身
+//	d     → DOMAIN,d             精确匹配
+//	*.d   → DOMAIN-REGEX         单标签通配没有对应形态，用正则精确表达
+//
+// ".d" 的放宽是有意的：精确表达需要 DOMAIN-REGEX（匹配是线性扫描，几万条规则会明显变慢），
+// 而放宽后多命中的只有 d 本身——它与列表里其余条目同属一份规则集，路由到同一个组。
+func expandMRSBinary(set parse.MRSRuleSet, group string) []string {
+	out := make([]string, 0, len(set.Rules))
+	switch set.Behavior {
+	case parse.MRSBehaviorDomain:
+		for _, key := range set.Rules {
+			switch {
+			case strings.HasPrefix(key, "+."):
+				if d := key[2:]; d != "" {
+					out = append(out, "DOMAIN-SUFFIX,"+d+","+group)
+				}
+			case strings.HasPrefix(key, "*."):
+				if d := key[2:]; d != "" {
+					out = append(out, "DOMAIN-REGEX,^[^.]+\\."+regexp.QuoteMeta(d)+"$,"+group)
+				}
+			case strings.HasPrefix(key, "."):
+				if d := key[1:]; d != "" {
+					out = append(out, "DOMAIN-SUFFIX,"+d+","+group)
+				}
+			default:
+				out = append(out, "DOMAIN,"+key+","+group)
+			}
+		}
+	case parse.MRSBehaviorIPCIDR:
+		for _, key := range set.Rules {
+			kind := "IP-CIDR"
+			if strings.Contains(key, ":") {
+				kind = "IP-CIDR6"
+			}
+			out = append(out, kind+","+key+","+group)
+		}
+	}
+	return out
+}
+
+// mrsKindMismatch 检查模板声明的规则集类型与 MRS 文件声明的行为是否一致。
+// 不一致时仍然按文件行为展开，但必须告警：模板作者可能拿错了文件，
+// 而"展开成另一种语义的规则"是最难排查的一类问题。
+func mrsKindMismatch(kind string, behavior parse.MRSBehavior) string {
+	want := ""
+	switch kind {
+	case "domain":
+		want = "domain"
+	case "classic":
+		want = "classical"
+	}
+	if want == "" || want == behavior.String() {
+		return ""
+	}
+	return fmt.Sprintf("声明为 %s 但 MRS 内部行为是 %s，已按文件内容展开", want, behavior)
 }
 
 // rulesetProblem 判断规则集内容是否可用于展开，返回原因（空表示可用）。
