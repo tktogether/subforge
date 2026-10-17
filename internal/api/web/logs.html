@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubForge · Logs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js"></script>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="/">sub<span>forge</span></a>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/convert">Convert</a>
+    <a href="/rules">Rules</a>
+    <a href="/logs">Logs</a>
+  </nav>
+  <div class="spacer"></div>
+  <input id="tokenInput" class="mono" placeholder="token (本地)" style="width:150px">
+  <input id="logFilter" class="mono" placeholder="keyword / level" style="width:180px">
+  <button id="themeToggle" class="theme-toggle">☀</button>
+</header>
+<main class="page">
+  <div class="page-head">
+    <h1>Logs</h1>
+    <p>结构化日志流 · 过滤 · 导出</p>
+  </div>
+  <section class="panel">
+    <h2>流 <span class="hint">每 2 秒轮询新增</span></h2>
+    <div class="logs" id="logBox"></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" id="logExportText">导出文本</button>
+      <button class="btn ghost" id="logExportJson">导出 JSON</button>
+      <button class="btn ghost" id="logClear">清屏</button>
+    </div>
+  </section>
+</main>
+<script src="/js/logs.js"></script>
+</body>
+</html>

@@ -87,6 +87,19 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 	if n := countCached(result); n > 0 {
 		w.Header().Set("X-Convert-Cache", fmt.Sprintf("命中 %d 个", n))
 	}
+	// 客户端 /sub 也记录历史，Dashboard 才能看到真实转换。
+	if s.historyBuf != nil {
+		s.historyBuf.Record(HistoryEntry{
+			Target:   params.Target,
+			Format:   result.Format,
+			Nodes:    result.Nodes,
+			RawNodes: result.RawNodes,
+			Failures: result.Failures,
+			Warnings: result.Warnings,
+			Cached:   countCached(result),
+			URLCount: len(params.URLs),
+		})
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result.Body)
 }

@@ -20,6 +20,7 @@ const usageText = `subforge - 订阅转换 + 分流规则一体化引擎（M1 �
   version    输出版本信息
   doctor     环境与运行时自检
   convert    本地把订阅转换成客户端配置
+  diff       预览覆盖层对模板默认值的改动
   serve      启动 HTTP 服务（M1-I5 增量实现）
 
 运行 "subforge <命令> -h" 查看具体命令的参数。
@@ -42,6 +43,8 @@ func main() {
 		return
 	case "convert":
 		err = cmdConvert(os.Args[2:])
+	case "diff":
+		err = cmdDiff(os.Args[2:])
 	case "serve":
 		err = cmdServe(os.Args[2:])
 	default:

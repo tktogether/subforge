@@ -30,6 +30,10 @@ type Config struct {
 	HTTPClient *http.Client
 	// Logger 日志目标；为空时用 log.Default()。
 	Logger *log.Logger
+	// LogBuffer 日志环形缓冲区；用于 /api/logs。为空时构造默认容量。
+	LogBuffer *LogBuffer
+	// HistoryBuffer 转换历史环形缓冲区；用于 /api/history 与 /api/stats。为空时构造默认容量。
+	HistoryBuffer *HistoryBuffer
 	// StartedAt 服务启动时刻，用于 /version 的 uptime；零值取构造时间。
 	StartedAt time.Time
 	// Name 服务标识，写入响应头。
@@ -38,11 +42,13 @@ type Config struct {
 
 // Server 是 HTTP 服务。
 type Server struct {
-	cfg       Config
-	engine    *convert.Engine
-	logger    *log.Logger
-	startedAt time.Time
-	http      *http.Client
+	cfg        Config
+	engine     *convert.Engine
+	logger     *log.Logger
+	startedAt  time.Time
+	http       *http.Client
+	logBuf     *LogBuffer
+	historyBuf *HistoryBuffer
 }
 
 // 默认请求超时：上游订阅偶尔很慢，但一个请求不该挂住连接池。
@@ -56,9 +62,19 @@ func New(cfg Config) *Server {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
 	}
+	if cfg.LogBuffer == nil {
+		cfg.LogBuffer = NewLogBuffer(0)
+	}
+	if cfg.HistoryBuffer == nil {
+		cfg.HistoryBuffer = NewHistoryBuffer(0)
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = log.Default()
 	}
+	// 日志同时写原目标与环形缓冲区：/api/logs 靠它读最近的请求日志，
+	// 而原 logger（stderr 或测试的 discard）保持不变。
+	cfg.Logger = log.New(io.MultiWriter(cfg.Logger.Writer(), cfg.LogBuffer),
+		cfg.Logger.Prefix(), cfg.Logger.Flags())
 	if cfg.StartedAt.IsZero() {
 		cfg.StartedAt = time.Now().UTC()
 	}
@@ -75,6 +91,7 @@ func New(cfg Config) *Server {
 	return &Server{
 		cfg: cfg, engine: cfg.Engine, logger: cfg.Logger,
 		startedAt: cfg.StartedAt, http: cfg.HTTPClient,
+		logBuf: cfg.LogBuffer, historyBuf: cfg.HistoryBuffer,
 	}
 }
 
@@ -92,7 +109,15 @@ func (s *Server) Routes() http.Handler {
 	r.Use(chimw.Timeout(s.cfg.Timeout))
 	r.Use(responseHeaders(s.cfg.Name))
 
-	r.Get("/", s.handleIndex)
+	r.Get("/", s.handleDashboard)
+	r.Get("/convert", s.handlePage("convert.html"))
+	r.Get("/rules", s.handlePage("rules.html"))
+	r.Get("/logs", s.handlePage("logs.html"))
+
+	r.Get("/app.css", s.handleAsset("app.css"))
+	r.Get("/app.js", s.handleAsset("app.js"))
+	r.Get("/js/*", s.handleJSAsset)
+
 	r.Get("/version", s.handleVersion)
 	r.Get("/healthz", s.handleHealth)
 
@@ -102,6 +127,17 @@ func (s *Server) Routes() http.Handler {
 
 	r.Get("/getruleset", s.handleGetRuleset)
 	r.Get("/inspect", s.handleInspect)
+
+	r.Route("/api", func(r chi.Router) {
+		r.Get("/stats", s.handleAPIStats)
+		r.Get("/history", s.handleAPIHistory)
+		r.Get("/pipelines", s.handleAPIPipelines)
+		r.Get("/targets", s.handleAPITargets)
+		r.Get("/rulesets", s.handleAPIRulesets)
+		r.Get("/logs", s.handleAPILogs)
+		r.Post("/convert", s.handleAPIConvert)
+		r.Post("/diff", s.handleAPIDiff)
+	})
 
 	r.NotFound(s.handleNotFound)
 	return r

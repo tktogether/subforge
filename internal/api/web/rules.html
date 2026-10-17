@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubForge · Rules</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js"></script>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="/">sub<span>forge</span></a>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/convert">Convert</a>
+    <a href="/rules">Rules</a>
+    <a href="/logs">Logs</a>
+  </nav>
+  <div class="spacer"></div>
+  <input id="tokenInput" class="mono" placeholder="token (本地)" style="width:150px">
+  <button id="themeToggle" class="theme-toggle">☀</button>
+</header>
+<main class="page">
+  <div class="page-head">
+    <h1>Rules</h1>
+    <p>远程/模板规则集列表 + 覆盖编辑器</p>
+  </div>
+
+  <div class="grid two">
+    <div>
+      <section class="panel">
+        <h2>规则集列表 <span class="hint">来自当前基础模板</span></h2>
+        <div id="rulesetsBox" class="state">加载中…</div>
+      </section>
+
+      <section class="panel" style="margin-top:16px">
+        <h2>覆盖编辑器 <span class="hint">YAML/INI 双模式</span></h2>
+        <div class="field">
+          <label>模式</label>
+          <select id="reMode"><option value="yaml">YAML 覆盖</option><option value="ini">INI 模板</option></select>
+        </div>
+        <div class="field">
+          <textarea id="reEditor" rows="16" placeholder="在此编辑覆盖层，随后刷新 Convert 页使用"></textarea>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn primary" id="reCopy">复制</button>
+          <button class="btn ghost" id="reClear">清空</button>
+        </div>
+      </section>
+    </div>
+
+    <aside>
+      <section class="panel">
+        <h2>规则流</h2>
+        <p class="muted" style="font-size:13px">当前模板声明的 [custom] rules 与 [ruleset] 映射。点选规则集在 Convert 里用 ruleset= 参数引用；远程拉取由服务端缓存。</p>
+      </section>
+    </aside>
+  </div>
+</main>
+<script src="/js/rules.js"></script>
+</body>
+</html>
