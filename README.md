@@ -16,7 +16,7 @@
 - [架构决策记录](docs/adr/0001-stack-decisions.md)
 - [兼容性已知差异表](docs/compatibility.md)
 
-## 当前状态：M2 定制化里程碑已完成（M3 规则工厂进行中）
+## 当前状态：M3 规则工厂里程碑已完成
 
 M1 范围：mihomo 嵌入解析 + 全 target 渲染 + `/sub` 兼容 API + INI 解析器 + 金测集。
 
@@ -60,7 +60,7 @@ M2 范围：管线引擎 + 分层覆盖 DSL + goja 沙箱 + Collection/Provider 
 
 M3/M4 的功能（规则工厂、MRS 离线生成、测活、Rule-Bot 闭环等）见设计书路线图。
 
-## 当前状态：M3 规则工厂（进行中）
+## 当前状态：M3 规则工厂（已完成）
 
 M3 范围：manifest 聚合 → MRS 离线生成 → cron/告警 → Rule-Bot 闭环 → 测活 → OpenWrt/Docker 交付。
 设计见 [M2–M4 设计方案](docs/design/m2-m4-design.md) §2。
@@ -71,7 +71,7 @@ M3 范围：manifest 聚合 → MRS 离线生成 → cron/告警 → Rule-Bot �
 - [x] M3.2 MRS 离线生成 —— 复用内核 `rules/provider.ConvertToMrs`，
       与 `mihomo convert-ruleset` 字节级一致（ipcidr/domain 往返对拍 committed .mrs）；
       磁盘缓存（7d TTL）；CLI `subforge mrs generate|cached`
-- [ ] M3.3 cron/告警 —— 定时更新 + Telegram/DingTalk/SMTP 通知（待实施）
+- [x] M3.3 cron/告警 —— 内嵌 cron（robfig/cron）+ 三通道告警（Telegram/DingTalk/SMTP）+ 失败重试 3 次指数退避
 - [x] M3.5 订阅测活 —— 并发探测（≤8）、默认关闭、单 URL 超时；CLI `subforge subscheck`
 - [x] M3.4 Rule-Bot 闭环 —— 日志驱动异常检测（正则+阈值）、建议生成、待确认队列、确认/拒绝；CLI `subforge rulebot analyze|stats`
 - [x] M3.6 OpenWrt/Docker 交付 —— Dockerfile（scratch）+ Dockerfile.alpine + docker-compose + Makefile cross/docker/release + OpenWrt ipk 包定义（init script + UCI config）+ CI Docker 构建任务
