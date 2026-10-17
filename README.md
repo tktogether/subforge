@@ -60,6 +60,22 @@ M2 范围：管线引擎 + 分层覆盖 DSL + goja 沙箱 + Collection/Provider 
 
 M3/M4 的功能（规则工厂、MRS 离线生成、测活、Rule-Bot 闭环等）见设计书路线图。
 
+## 当前状态：M3 规则工厂（进行中）
+
+M3 范围：manifest 聚合 → MRS 离线生成 → cron/告警 → Rule-Bot 闭环 → 测活 → OpenWrt/Docker 交付。
+设计见 [M2–M4 设计方案](docs/design/m2-m4-design.md) §2。
+
+- [x] M3.1 manifest 聚合 —— 多上游规则集并发拉取（≤4，复用 fetch + ETag）、
+      版本化文件 `<name>-<UTC timestamp>.<ext>`、retention 保留最近 N（默认 5）、
+      失败保留上一版 + warn；CLI `subforge manifest update|versions|rollback`
+- [x] M3.2 MRS 离线生成 —— 复用内核 `rules/provider.ConvertToMrs`，
+      与 `mihomo convert-ruleset` 字节级一致（ipcidr/domain 往返对拍 committed .mrs）；
+      磁盘缓存（7d TTL）；CLI `subforge mrs generate|cached`
+- [ ] M3.3 cron/告警 —— 定时更新 + Telegram/DingTalk/SMTP 通知（待实施）
+- [x] M3.5 订阅测活 —— 并发探测（≤8）、默认关闭、单 URL 超时；CLI `subforge subscheck`
+- [ ] M3.4 Rule-Bot 闭环 —— GitHub Actions + AI 规则生成（待实施）
+- [ ] M3.6 OpenWrt/Docker 交付 —— ipk/apk + Docker 多架构镜像（待实施）
+
 ## Web UI
 
 服务启动后浏览器打开 `http://127.0.0.1:25500/`（默认仅监听本机）：
