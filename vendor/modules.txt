@@ -942,6 +942,9 @@ github.com/pires/go-proxyproto
 # github.com/rasky/go-lzo v0.0.0-20200203143853-96a758eda86e
 ## explicit
 github.com/rasky/go-lzo
+# github.com/robfig/cron/v3 v3.0.1
+## explicit; go 1.12
+github.com/robfig/cron/v3
 # github.com/safchain/ethtool v0.3.0
 ## explicit; go 1.16
 github.com/safchain/ethtool
