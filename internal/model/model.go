@@ -248,6 +248,7 @@ func ParseClashProviders(yamlBuf []byte) ([]Provider, error) {
 // ParseClashRules 从 Clash/mihomo YAML 配置中提取 rules 规则行。
 // 与 ParseClashProxies 同构：直接取原始字符串列表，不做字段归一化。
 // 配置里没有 rules 时返回 nil（不是错误）——绝大多数订阅没有内置规则。
+// 底层能力：供后续 SQLite 持久化导入扫描复用，不在转换路径上隐式调用。
 func ParseClashRules(yamlBuf []byte) ([]string, error) {
 	var cfg struct {
 		Rules []string `yaml:"rules"`

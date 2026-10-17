@@ -112,6 +112,7 @@ type Decoded struct {
 	// Providers Clash YAML 里的 proxy-providers 定义；分享链接来源恒为空。
 	Providers []model.Provider
 	// Rules Clash YAML 里的 rules 规则行；分享链接来源恒为空。
+	// 底层能力：供后续 SQLite 持久化导入扫描复用，不在转换路径上隐式合并。
 	Rules []string
 }
 
