@@ -23,6 +23,7 @@ const usageText = `subforge - 订阅转换 + 分流规则一体化引擎（M1 �
   diff       预览覆盖层对模板默认值的改动
   manifest   规则工厂 manifest 聚合（update/versions/rollback）
   mrs        MRS 离线生成（generate/cached）
+  subscheck  订阅测活（默认关闭，需显式开启）
   serve      启动 HTTP 服务（M1-I5 增量实现）
 
 运行 "subforge <命令> -h" 查看具体命令的参数。
@@ -51,6 +52,8 @@ func main() {
 		err = cmdManifest(os.Args[2:])
 	case "mrs":
 		err = cmdMRS(os.Args[2:])
+	case "subscheck":
+		err = cmdSubsCheck(os.Args[2:])
 	case "serve":
 		err = cmdServe(os.Args[2:])
 	default:
