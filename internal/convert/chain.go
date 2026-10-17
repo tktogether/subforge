@@ -80,7 +80,11 @@ func ResolveGroups(groups []render.Group, names []string) []render.Group {
 // resolveMembers 展开成员项：同一节点被多个模式命中只出现一次，顺序按首次命中。
 func resolveMembers(patterns, names []string, known map[string]bool) []string {
 	if len(patterns) == 0 {
-		return nil
+		// 零成员分组不能渲染成 proxies: []——mihomo 会拒绝加载整份配置。
+		// 与"正则无命中"走同一个兜底：给直连，至少产物可用且行为可预测。
+		// subconverter 对零成员分组是直接丢弃；这里选择保留组名并兜底 DIRECT，
+		// 因为组名往往被后续规则引用，丢组会让规则指向不存在的出站。
+		return []string{"DIRECT"}
 	}
 	out := make([]string, 0, len(patterns))
 	seen := map[string]bool{}

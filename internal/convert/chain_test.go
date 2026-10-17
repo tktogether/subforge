@@ -180,6 +180,22 @@ func TestResolveGroups_ZeroMatchFallsBackToDirect(t *testing.T) {
 	}
 }
 
+// TestResolveGroups_EmptyMemberListFallsBackToDirect 零成员分组也要有成员：
+// 渲染出 proxies: [] 会让 mihomo 拒绝加载整份配置（不是只坏这一个组）。
+// subconverter 对零成员分组是直接丢弃；这里保留组名并兜底 DIRECT，
+// 因为组名常被规则引用，丢组会让规则指向不存在的出站。
+func TestResolveGroups_EmptyMemberListFallsBackToDirect(t *testing.T) {
+	groups := ResolveGroups([]render.Group{
+		{Name: "Empty", Type: "select"},
+		{Name: "Good", Type: "select", Proxies: []string{".*"}},
+	}, []string{"HK-01"})
+	if !sameStrings(groups[0].Proxies, []string{"DIRECT"}) {
+		t.Errorf("零成员组 = %v，want [DIRECT]", groups[0].Proxies)
+	}
+	if !sameStrings(groups[1].Proxies, []string{"HK-01"}) {
+		t.Errorf("正常组 = %v，want [HK-01]", groups[1].Proxies)
+	}
+}
 // TestResolveGroups_LookaroundTolerated 环视断言是 PCRE 写法，剥掉断言后仍要能编译匹配；
 // 剥掉的代价是丢掉"白俄不算俄"这类护栏，匹配范围只会放宽。
 func TestResolveGroups_LookaroundTolerated(t *testing.T) {

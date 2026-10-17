@@ -98,10 +98,13 @@ func groupFromInline(v string) (render.Group, bool) {
 	}
 
 	rest := segs[2:]
-	// 测活地址是最后一个以 http 开头的段，它及之后都属于测活参数。
+	// 测活地址是最后一个"绝对 URL"段，它及之后都属于测活参数。
+	// 判定必须要求 scheme（http:// 或 https://）：成员段常写成正则，
+	// `http.*` 这种以 "http" 开头的成员正则一旦被误判成测活地址，
+	// 它以及它之后的成员（如 []DIRECT）会整段被吞掉，组直接变成零成员。
 	urlIdx := -1
 	for i := len(rest) - 1; i >= 0; i-- {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rest[i])), "http") {
+		if isAbsoluteURL(rest[i]) {
 			urlIdx = i
 			break
 		}
@@ -140,7 +143,15 @@ func groupFromInline(v string) (render.Group, bool) {
 	return g, true
 }
 
-// inlineRules 取全部段落里的内联规则，按段落与条目出现顺序排成一条规则流。
+// isAbsoluteURL 判定一段文本是否是带 scheme 的绝对 URL。
+// 只认 http:// 与 https://：subconverter 的测活地址就是这两种，别的 scheme
+// 在这个位置没有意义，而宽松前缀匹配会误伤以 http 开头的成员正则。
+func isAbsoluteURL(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// inlineRules 取全部段落里的内联规则，按段落与条目顺序排成一条规则流。
 //
 // 直映部分（GEOSITE / GEOIP / FINAL）立刻展开成 mihomo 规则行；引用远程文件的规则集
 // 没法在纯解析阶段展开，作为 RemoteRuleset 登记并把引用位置留在规则流里。

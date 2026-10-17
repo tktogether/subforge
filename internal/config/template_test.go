@@ -552,3 +552,56 @@ func TestTemplate_NilSafe(t *testing.T) {
 		t.Errorf("Merge(nil) = %+v, %v", merged, err)
 	}
 }
+
+// TestSemantics_InlineGroupHTTPMember 成员正则以 "http" 开头时不能被误判成测活地址。
+//
+// 语法是 <组名>`<类型>`<成员>…[`<测活地址>`<参数>]，测活地址只可能是绝对 URL。
+// 早期实现用宽松前缀匹配（strings.HasPrefix(seg, "http")），`http.*` 这种成员正则会
+// 被当成测活地址，它以及它之后的 []DIRECT 整段被吞掉，组直接变零成员。
+func TestSemantics_InlineGroupHTTPMember(t *testing.T) {
+	sem := mustSem(t, "[custom]\n"+
+		"custom_proxy_group=Test`select`http.*`[]DIRECT\n"+
+		"custom_proxy_group=Auto`url-test`.*`https://www.gstatic.com/generate_204`300\n")
+	if len(sem.Groups) != 2 {
+		t.Fatalf("组数 = %d，want 2: %+v", len(sem.Groups), sem.Groups)
+	}
+	got := sem.Groups[0]
+	if len(got.Proxies) != 2 || got.Proxies[0] != "http.*" || got.Proxies[1] != "DIRECT" {
+		t.Errorf("成员 = %v，want [http.* DIRECT]（http.* 是成员正则，不是测活地址）", got.Proxies)
+	}
+	if got.Test != "" {
+		t.Errorf("select 组不应有测活地址，得到 %q", got.Test)
+	}
+	// 真正的测活地址仍要被识别出来。
+	auto := sem.Groups[1]
+	if auto.Test != "https://www.gstatic.com/generate_204" {
+		t.Errorf("测活地址 = %q", auto.Test)
+	}
+	if len(auto.Proxies) != 1 || auto.Proxies[0] != ".*" {
+		t.Errorf("成员 = %v，want [.*]", auto.Proxies)
+	}
+	if auto.Options.Interval != 300 {
+		t.Errorf("测活间隔 = %d，want 300", auto.Options.Interval)
+	}
+}
+
+// TestIsAbsoluteURL 只认 http:// 与 https://。
+func TestIsAbsoluteURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://a/b": true,
+		"http://a":    true,
+		"HTTP://A":    true,
+		" http://a ":  true,
+		"http.*":      false,
+		"http":        false,
+		"https":       false,
+		".*":          false,
+		"":            false,
+	}
+	for in, want := range cases {
+		if got := isAbsoluteURL(in); got != want {
+			t.Errorf("isAbsoluteURL(%q) = %v，want %v", in, got, want)
+		}
+	}
+}
+
