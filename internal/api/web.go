@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,14 +84,40 @@ func (s *Server) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 	if s.logBuf != nil {
 		logs = len(s.logBuf.All())
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{
+	cacheHitRate := 0.0
+	if urlTotal > 0 {
+		cacheHitRate = float64(cached) / float64(urlTotal)
+	}
+	resp := map[string]any{
 		"history": map[string]any{
-			"total":      total,
-			"cachedHits": cached,
-			"urlTotal":   urlTotal,
+			"total":        total,
+			"cachedHits":   cached,
+			"urlTotal":     urlTotal,
+			"cacheHitRate": cacheHitRate,
 		},
 		"logs": logs,
-	})
+	}
+	// 最近一次转换的快照（节点数/分组数/规则数/缓存命中率）。
+	recent := s.historyBuf.Recent(1)
+	if len(recent) > 0 {
+		e := recent[0]
+		lastRate := 0.0
+		if e.URLCount > 0 {
+			lastRate = float64(e.Cached) / float64(e.URLCount)
+		}
+		resp["last"] = map[string]any{
+			"nodes":        e.Nodes,
+			"rawNodes":     e.RawNodes,
+			"groups":       e.Groups,
+			"rules":        e.Rules,
+			"cached":       e.Cached,
+			"urlCount":     e.URLCount,
+			"cacheHitRate": lastRate,
+		}
+	} else {
+		resp["last"] = nil
+	}
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleAPIHistory(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +158,11 @@ func (s *Server) handleAPIRulesets(w http.ResponseWriter, r *http.Request) {
 	if m == nil {
 		m = map[string]string{}
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"rulesets": m})
+	rules := p.Rules
+	if rules == nil {
+		rules = []string{}
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"rulesets": m, "rules": rules})
 }
 
 func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +177,7 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 type apiConvertReq struct {
 	Target   string   `json:"target"`
 	URLs     []string `json:"urls"`
+	Text     string   `json:"text"`
 	Types    []string `json:"types"`
 	Include  []string `json:"include"`
 	Exclude  []string `json:"exclude"`
@@ -161,6 +193,24 @@ func (s *Server) handleAPIConvert(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.fail(w, r, http.StatusBadRequest, err)
 		return
+	}
+	// 文本来源：引擎只吃 URL 与本地文件，把粘贴的文本落到临时文件再交给它。
+	// 请求结束即删除，避免临时目录堆积。
+	var tempFile string
+	if strings.TrimSpace(req.Text) != "" {
+		f, err := os.CreateTemp("", "subforge-text-*")
+		if err == nil {
+			if _, werr := f.WriteString(req.Text); werr == nil {
+				f.Close()
+				tempFile = f.Name()
+			} else {
+				f.Close()
+				_ = os.Remove(f.Name())
+			}
+		}
+	}
+	if tempFile != "" {
+		defer os.Remove(tempFile)
 	}
 	m := map[string][]string{}
 	if req.Target != "" {
@@ -195,6 +245,9 @@ func (s *Server) handleAPIConvert(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusBadRequest, err)
 		return
 	}
+	if tempFile != "" {
+		params.Files = append(params.Files, tempFile)
+	}
 	if params.Target == "" {
 		params.Target = "clash.meta"
 	}
@@ -223,12 +276,40 @@ func (s *Server) handleAPIConvert(w http.ResponseWriter, r *http.Request) {
 			chimw.GetReqID(r.Context()), len(result.Failures),
 			strings.Join(result.Failures, " | "))
 	}
+	// 分组数/规则数按引擎的覆盖链语义统计：模板（含远程规则集展开）优先，
+	// 请求侧未指定时用模板值，再叠加 override 的合并结果。
+	groups, rules := len(params.Groups), len(params.Rules)
+	if tplParams, terr := s.engine.ResolveTemplates(r.Context(), req.Config); terr == nil {
+		if len(params.Groups) == 0 {
+			groups = len(tplParams.Groups)
+		}
+		if len(params.Rules) == 0 {
+			rules = len(tplParams.Rules)
+		}
+		ov := params.Override
+		if len(ov.Groups) > 0 {
+			base := tplParams.Groups
+			if len(params.Groups) > 0 {
+				base = params.Groups
+			}
+			groups = len(config.MergeGroups(base, ov.ToGroups()))
+		}
+		if len(ov.Rules.Prepend) > 0 || len(ov.Rules.Append) > 0 {
+			base := tplParams.Rules
+			if len(params.Rules) > 0 {
+				base = params.Rules
+			}
+			rules = len(config.MergeRules(base, ov.Rules.Prepend, ov.Rules.Append))
+		}
+	}
 	if s.historyBuf != nil {
 		s.historyBuf.Record(HistoryEntry{
 			Target:   params.Target,
 			Format:   result.Format,
 			Nodes:    result.Nodes,
 			RawNodes: result.RawNodes,
+			Groups:   groups,
+			Rules:    rules,
 			Failures: result.Failures,
 			Warnings: result.Warnings,
 			Cached:   countCached(result),

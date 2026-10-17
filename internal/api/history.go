@@ -14,6 +14,8 @@ type HistoryEntry struct {
 	Format   string   `json:"format"`
 	Nodes    int      `json:"nodes"`
 	RawNodes int      `json:"rawNodes"`
+	Groups   int      `json:"groups"`
+	Rules    int      `json:"rules"`
 	Failures []string `json:"failures"`
 	Warnings []string `json:"warnings"`
 	Cached   int      `json:"cached"`

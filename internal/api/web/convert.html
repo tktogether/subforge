@@ -37,6 +37,14 @@
           <label>订阅 URL <span class="hint">每行一条，或分号分隔</span></label>
           <textarea id="cvUrls" rows="4" placeholder="https://a.example/sub&#10;https://b.example/sub"></textarea>
         </div>
+        <div class="field">
+          <label>粘贴文本 <span class="hint">订阅内容，可与 URL 同时使用</span></label>
+          <textarea id="cvText" rows="4" placeholder="粘贴订阅内容（YAML/JSON/分享链接等）"></textarea>
+        </div>
+        <div class="field">
+          <label>本地文件 <span class="hint">选择订阅文件，自动读取为文本</span></label>
+          <input type="file" id="cvFile">
+        </div>
         <div class="field-row">
           <div class="field">
             <label>输出格式</label>

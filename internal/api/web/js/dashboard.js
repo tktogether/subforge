@@ -25,10 +25,13 @@
     SF.api("/api/stats").then(function (s) {
       var box = SF.qs("#statsBox");
       box.innerHTML = "";
+      var last = s.last || {};
+      var cacheRate = (last.cacheHitRate != null) ? (Math.round(last.cacheHitRate * 100) + "%") : "—";
       var items = [
-        ["转换累计", (s.history.total || 0)],
-        ["命中来源", (s.history.cachedHits || 0)],
-        ["URL 累计", (s.history.urlTotal || 0)],
+        ["节点数", (last.nodes != null ? last.nodes : "—")],
+        ["分组数", (last.groups != null ? last.groups : "—")],
+        ["规则数", (last.rules != null ? last.rules : "—")],
+        ["缓存命中率", cacheRate],
         ["日志条数", (s.logs || 0)],
       ];
       items.forEach(function (it) {

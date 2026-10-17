@@ -39,12 +39,19 @@ vendor:
 tidy:
 	$(GO) mod tidy
 
-# 交付矩阵：Linux 服务端 / NAS / 软路由（mipsle softfloat），Windows 开发机
+# 交付矩阵：Linux 服务端 / NAS / 软路由（mipsle、mips 用 softfloat）、Windows 开发机、macOS、FreeBSD。
+# 九个目标都已本地实测通过（CGO_ENABLED=0，纯 Go 无 cgo 依赖，交叉编译不碎）。
+# mipsle/mips 必须带 GOMIPS=softfloat：硬浮点变体在多数家用路由固件上跑不起来。
 cross:
-	CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-amd64   ./cmd/subforge
-	CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-arm64   ./cmd/subforge
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-windows-amd64.exe ./cmd/subforge
-	CGO_ENABLED=0 GOOS=linux  GOARCH=mipsle GOMIPS=softfloat $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-mipsle ./cmd/subforge
+	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-amd64        ./cmd/subforge
+	CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-arm64        ./cmd/subforge
+	CGO_ENABLED=0 GOOS=linux   GOARCH=arm   $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-arm          ./cmd/subforge
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-windows-amd64.exe  ./cmd/subforge
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-darwin-amd64       ./cmd/subforge
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-darwin-arm64       ./cmd/subforge
+	CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-freebsd-amd64      ./cmd/subforge
+	CGO_ENABLED=0 GOMIPS=softfloat GOOS=linux GOARCH=mipsle $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-mipsle ./cmd/subforge
+	CGO_ENABLED=0 GOMIPS=softfloat GOOS=linux GOARCH=mips   $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/subforge-linux-mips   ./cmd/subforge
 
 clean:
 	rm -rf $(BIN_DIR)

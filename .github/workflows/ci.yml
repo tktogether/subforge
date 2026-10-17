@@ -41,13 +41,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Cross builds
+      - name: Cross builds (delivery matrix)
         run: |
           set -e
-          for target in linux/amd64 linux/arm64 windows/amd64; do
+          # 九个交付目标。CGO_ENABLED=0 已由 job 级 env 设定。
+          # mipsle/mips 用 softfloat：硬浮点变体在多数家用路由固件上跑不起来。
+          for target in \
+            linux/amd64 linux/arm64 linux/arm \
+            windows/amd64 darwin/amd64 darwin/arm64 \
+            freebsd/amd64; do
             GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -ldflags="-s -w" -o /dev/null ./cmd/subforge
             echo "ok: $target"
           done
-      - name: mipsle softfloat build (best effort)
-        continue-on-error: true
-        run: GOMIPS=softfloat GOOS=linux GOARCH=mipsle go build -trimpath -o /dev/null ./cmd/subforge
+          for target in linux/mipsle linux/mips; do
+            GOOS=${target%/*} GOARCH=${target#*/} GOMIPS=softfloat go build -trimpath -ldflags="-s -w" -o /dev/null ./cmd/subforge
+            echo "ok: $target (softfloat)"
+          done

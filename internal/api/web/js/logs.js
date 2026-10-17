@@ -38,12 +38,13 @@
     box.className = "logs";
     box.innerHTML = "";
     items.forEach(function (e) {
-      var row = SF.el("div", { class: "log-row lvl-" + levelOf(e.line) });
-      var meta = SF.el("span", { class: "log-meta" });
-      meta.appendChild(SF.el("span", { class: "log-ts" }, e.ts ? e.ts.replace("T", " ").replace("Z", " UTC") : ""));
-      meta.appendChild(SF.el("span", { class: "log-lvl" }, levelOf(e.line).toUpperCase()));
-      row.appendChild(meta);
-      row.appendChild(SF.el("span", { class: "log-line" }, e.line));
+      var lvl = levelOf(e.line);
+      var rowCls = "row" + (lvl === "error" ? " level-err" : lvl === "warn" ? " level-warn" : "");
+      var row = SF.el("div", { class: rowCls });
+      var ts = SF.el("span", { class: "ts" }, e.ts ? e.ts.replace("T", " ").replace("Z", " UTC") : "");
+      row.appendChild(ts);
+      var txt = SF.el("span", { class: "txt" }, e.line);
+      row.appendChild(txt);
       box.appendChild(row);
     });
   }

@@ -33,15 +33,31 @@
 
   function run() {
     state.style.display = "none";
-    SF.api("/api/convert", { method: "POST", body: collect() }).then(function (r) {
-      out.value = r.body || "";
-      fmt.textContent = r.format || "—";
-      nodes.textContent = (r.nodes || 0) + " / " + (r.rawNodes || 0);
-      meta.textContent = r.failures && r.failures.length ? ("来源失败: " + r.failures.join(" | ")) : "全部成功";
-      state.style.display = "block";
-      state.className = r.failures && r.failures.length ? "state" : "state ok";
-      if (!r.failures || !r.failures.length) state.textContent = "转换完成";
-    }).catch(showError);
+    var fileInput = SF.qs("#cvFile");
+    var file = fileInput && fileInput.files && fileInput.files[0];
+    var doRun = function (fileText) {
+      var body = collect();
+      var text = SF.qs("#cvText").value || "";
+      if (fileText) text = text ? (text + "\n" + fileText) : fileText;
+      if (text) body.text = text;
+      SF.api("/api/convert", { method: "POST", body: body }).then(function (r) {
+        out.value = r.body || "";
+        fmt.textContent = r.format || "—";
+        nodes.textContent = (r.nodes || 0) + " / " + (r.rawNodes || 0);
+        meta.textContent = r.failures && r.failures.length ? ("来源失败: " + r.failures.join(" | ")) : "全部成功";
+        state.style.display = "block";
+        state.className = r.failures && r.failures.length ? "state" : "state ok";
+        if (!r.failures || !r.failures.length) state.textContent = "转换完成";
+      }).catch(showError);
+    };
+    if (file) {
+      var reader = new FileReader();
+      reader.onload = function (e) { doRun(e.target.result); };
+      reader.onerror = function () { showError(new Error("文件读取失败")); };
+      reader.readAsText(file);
+    } else {
+      doRun("");
+    }
   }
 
   function renderDiff(lines) {
