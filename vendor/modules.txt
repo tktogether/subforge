@@ -381,6 +381,7 @@ github.com/metacubex/mihomo/common/sockopt
 github.com/metacubex/mihomo/common/structure
 github.com/metacubex/mihomo/common/utils
 github.com/metacubex/mihomo/common/xsync
+github.com/metacubex/mihomo/common/yaml
 github.com/metacubex/mihomo/component/auth
 github.com/metacubex/mihomo/component/ca
 github.com/metacubex/mihomo/component/cidr
@@ -390,11 +391,18 @@ github.com/metacubex/mihomo/component/easytier
 github.com/metacubex/mihomo/component/ech
 github.com/metacubex/mihomo/component/ech/echparser
 github.com/metacubex/mihomo/component/fakeip
+github.com/metacubex/mihomo/component/geodata
+github.com/metacubex/mihomo/component/geodata/memconservative
+github.com/metacubex/mihomo/component/geodata/router
+github.com/metacubex/mihomo/component/geodata/standard
+github.com/metacubex/mihomo/component/geodata/strmatcher
+github.com/metacubex/mihomo/component/http
 github.com/metacubex/mihomo/component/iface
 github.com/metacubex/mihomo/component/iface/anet
 github.com/metacubex/mihomo/component/keepalive
 github.com/metacubex/mihomo/component/loopback
 github.com/metacubex/mihomo/component/memory
+github.com/metacubex/mihomo/component/mmdb
 github.com/metacubex/mihomo/component/mptcp
 github.com/metacubex/mihomo/component/nat
 github.com/metacubex/mihomo/component/pool
@@ -404,18 +412,23 @@ github.com/metacubex/mihomo/component/profile/cachefile
 github.com/metacubex/mihomo/component/proxydialer
 github.com/metacubex/mihomo/component/resolver
 github.com/metacubex/mihomo/component/resolver/hosts
+github.com/metacubex/mihomo/component/resource
 github.com/metacubex/mihomo/component/slowdown
 github.com/metacubex/mihomo/component/sniffer
 github.com/metacubex/mihomo/component/tls
 github.com/metacubex/mihomo/component/trie
+github.com/metacubex/mihomo/component/wildcard
 github.com/metacubex/mihomo/constant
 github.com/metacubex/mihomo/constant/features
 github.com/metacubex/mihomo/constant/provider
 github.com/metacubex/mihomo/constant/sniffer
 github.com/metacubex/mihomo/context
 github.com/metacubex/mihomo/dns
+github.com/metacubex/mihomo/listener/inner
 github.com/metacubex/mihomo/log
 github.com/metacubex/mihomo/ntp
+github.com/metacubex/mihomo/rules/common
+github.com/metacubex/mihomo/rules/provider
 github.com/metacubex/mihomo/transport/anytls
 github.com/metacubex/mihomo/transport/anytls/padding
 github.com/metacubex/mihomo/transport/anytls/pipe
@@ -913,6 +926,9 @@ github.com/oasisprotocol/deoxysii/internal/hardware
 # github.com/openacid/low v0.1.21
 ## explicit; go 1.14
 github.com/openacid/low/bitmap
+# github.com/oschwald/maxminddb-golang v1.12.0
+## explicit; go 1.19
+github.com/oschwald/maxminddb-golang
 # github.com/pierrec/lz4/v4 v4.1.27
 ## explicit; go 1.17
 github.com/pierrec/lz4/v4
@@ -993,6 +1009,9 @@ gitlab.com/yawning/bsaes.git/ct32
 gitlab.com/yawning/bsaes.git/ct64
 gitlab.com/yawning/bsaes.git/ghash
 gitlab.com/yawning/bsaes.git/internal/modes
+# go.yaml.in/yaml/v3 v3.0.5
+## explicit; go 1.16
+go.yaml.in/yaml/v3
 # go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 ## explicit; go 1.14
 go4.org/mem
