@@ -143,23 +143,6 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
-// handleIndex 给出一个可读的服务说明，顺带确认服务活着。
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" {
-		s.writeText(w, http.StatusOK, "text/plain; charset=utf-8",
-			"subforge - 订阅转换 + 分流规则一体化引擎\n\n"+
-				"  GET /sub          转换订阅（query 参数见 /inspect）\n"+
-				"  GET /getruleset   规则集输出（type=1~6，见规则集文档）\n"+
-				"  GET /profile      /sub 的别名\n"+
-				"  GET /render       /sub 的别名\n"+
-				"  GET /version      版本与运行时长\n"+
-				"  GET /healthz      存活探针\n"+
-				"  GET /inspect      回显解析后的参数（排查用）\n")
-		return
-	}
-	s.handleNotFound(w, r)
-}
-
 // handleVersion 返回版本与运行时长。
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{

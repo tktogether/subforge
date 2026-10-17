@@ -195,9 +195,6 @@ func (s *Server) handleAPIConvert(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusBadRequest, err)
 		return
 	}
-	if len(params.URLs) == 0 && len(req.URLs) > 0 {
-		params.URLs = append([]string{}, req.URLs...)
-	}
 	if params.Target == "" {
 		params.Target = "clash.meta"
 	}
