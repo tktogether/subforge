@@ -29,7 +29,7 @@
 | N6 | 成员正则里的 PCRE 环视断言（`(?<=…)` / `(?<!…)` / `(?=…)` / `(?!…)`） | 生效：subconverter 用回溯正则引擎（`regexp2`），断言按真值求值 | 部分对齐：`^(?!.*X).*` 这种整段取反翻译成"不匹配 X"（语义等价）；其余断言直接剥掉，匹配范围只会放宽不会收紧 | 有意差异（Go RE2 无回溯，见下节） |
 | N7 | 分组成员正则命中不了任何节点 | 落 `DIRECT` | 已对齐：落 `DIRECT`。留空或保留正则串都会让 mihomo 报 `proxy group[i]: … not found` 拒绝加载整份配置 | 已对齐 |
 | N8 | 顶层默认项 | `port: 7890` / `socks-port: 7891` / `allow-lan: true` | `mixed-port: 7890` / `allow-lan: false`，另加 `ipv6: false` / `unify-ip: true` / `tcp-concurrent: true` / 内置最小 `dns:` | 有意差异：混合端口是 mihomo 的现代默认写法；`allow-lan: false` 对一台订阅转换服务更安全 |
-| N9 | 上游 `.mrs` 返回非文本字节 | 静默丢弃：产物里 0 条 `DOMAIN` 规则，不留痕迹 | 跳过该规则集并逐条告警，写明 URL 与原因 | 有意差异：可观测优于静默 |
+| N9 | 上游 `.mrs`（mihomo 二进制规则集） | 静默丢弃：产物里 0 条 `DOMAIN` 规则，不留痕迹 | **已对齐**：识别 zstd 魔数后走 MRS 解码（`internal/parse/mrs.go`），域名集合展开成 `DOMAIN` / `DOMAIN-SUFFIX` / `DOMAIN-REGEX`，网段集合展开成 `IP-CIDR` / `IP-CIDR6`；解码结果与 `mihomo convert-ruleset` 逐行一致。解码失败或行为不支持时仍逐条告警 | 已对齐 |
 
 ### N1~N4 对拍记录：Aethersailor `Custom_Clash_Full.ini`
 
@@ -44,7 +44,30 @@
 
 **subconverter 自己的产物不可加载**：那份 93,774 B 的 YAML 里有非法 UTF-8 尾字节（来源是一个 `socks5` 节点的 `username` 字段含二进制垃圾），mihomo 直接 `yaml: invalid trailing UTF-8 octet` 拒绝加载。把它替换成合法字节之后又撞上 `yaml: line 52: did not find expected ',' or '}'`。SubForge 的产物是严格合法 UTF-8，能正常加载。
 
+### N9 说明：MRS 二进制规则集的解码口径
+
+`.mrs` 是 mihomo 的二进制规则集格式（Meta Rule Set），不是文本清单。Aethersailor 的模板里
+`clash-domain:<url>.mrs` 就指向它。解码链路：
+
+| 环节 | 做法 |
+|---|---|
+| 形态识别 | 只认 zstd 帧魔数 `28 b5 2f fd`（MRS 文件整体是 zstd 流），据此与文本规则集分流 |
+| 解压 + 头 | zstd 解压后依次读 `MRS\x01` 魔数、行为字节、条数、扩展段长度 |
+| 载荷 | 行为 0（domain）走内核 `component/trie.ReadDomainSetBin`；行为 1（ipcidr）走 `component/cidr.ReadIpCidrSet`。行为 2（classical）内核也没有二进制形态，直接报错 |
+| 文本化 | 复刻内核 `domainStrategy.DumpMrs`：精确条目与后缀条目成对合并成 `+.<domain>`，再按完整文本排序 |
+| 展开成规则行 | `+.d` / `.d` → `DOMAIN-SUFFIX,d`；`d` → `DOMAIN,d`；`*.d` → `DOMAIN-REGEX,^[^.]+\.d$` |
+
+口径与验证：
+
+- **与内核逐行一致**：`internal/parse/mrs_test.go` 拿真实 `.mrs` 与 `mihomo convert-ruleset domain mrs` 的输出做逐行对拍（992 行），任何解码偏差都会红。
+- **`.d` 略微放宽**：内核语义是"仅子域"，这里映射成 `DOMAIN-SUFFIX` 会连 `d` 本身一起命中。精确表达要 `DOMAIN-REGEX`（线性扫描，几万条规则会明显变慢），而多命中的 `d` 与列表里其余条目同属一份规则集、路由到同一个组，代价可忽略。
+- **`*.d` 用正则精确表达**：单标签通配在 Clash 规则里没有对应形态。
+- **行为不一致仍按文件展开并告警**：模板写 `clash-domain:` 但文件内部是 ipcidr 时，按文件内容展开并告警，不静默按模板名字猜。
+- **引入成本**：新增 vendor 只有 `mihomo/component/cidr`（2 个文件），二进制体积 +301.5 KB（37.78 MB → 38.08 MB）。
+- **实机验证**：8 个 Aethersailor 模板 + 1 个兼容文件的产物全部通过 `mihomo -t`；`Custom_Clash.ini` 引用的 3 份 `.mrs` 共 1012 个域名全部出现在产物里（与内核参考输出逐条比对，0 缺失）。
+
 ### N6 说明：环视断言为什么只能部分对齐
+
 
 Go 的正则引擎是 RE2，为保证线性时间复杂度不做回溯，因此不实现环视断言；subconverter 用的是 `dlclark/regexp2`（回溯引擎），两者对同一份正则的能力集不同。这是引擎选型差异，不是模板兼容漏项。
 

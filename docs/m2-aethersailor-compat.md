@@ -405,3 +405,33 @@ go run ./cmd/subforge convert -file testdata/fixtures/mixed-subscription.txt -co
 **核查结论**：8 个模板 + 1 个兼容文件**零修改、全部转换成功**，模板语义与 subconverter v0.9.0 逐行一致；
 相对 SCE 的唯一功能缺口是 **G1（`.mrs` 规则集不展开）**，需在验收口径中显式登记。
 另发现 2 个未被本批模板触发的真实 bug（**P1** 成员 `http` 前缀误判、**P2** 零成员组渲染成 `proxies: []`），均附最小复现与最小修复建议。
+---
+
+## 附录 B：M2 收尾处理记录（Lead 追加，2026-10-17）
+
+本报告是**核查时点**的记录，结论本身不改。收尾阶段对报告里列出的问题做了如下处置：
+
+| 编号 | 报告结论 | 处置 | 证据 |
+|---|---|---|---|
+| G1 / N9 | `clash-domain:*.mrs` 未展开，每模板丢 2~3 条规则集 | **已修**：按方案 A 接入 MRS 二进制解码（`internal/parse/mrs.go`） | 8 模板 + 1 兼容文件全部 `EXIT=0` 且**告警归零**；产物规则数 78→1096、57→1566、93→1108 |
+| P1 | 成员正则以 `http` 开头被误判成测活地址 | **已修**：`groupFromInline` 只认绝对 URL（`http://` / `https://`） | `_probe-http-member.ini` 现在产出 `Test: [http-node, DIRECT]`，与 subconverter 一致 |
+| P2 | 零成员分组渲染成 `proxies: []` | **已修**：`resolveMembers` 零成员返回 `["DIRECT"]` | `_probe-empty-group2.ini` 的 `Empty` 组现在有 `DIRECT` |
+| O1 | `.mrs` 告警文案有两种措辞 | 不再触发（MRS 已能解码）；真正的内容损坏仍走原告警 | — |
+| O3 | 产物含随机 `User-Agent` | 保留现状；字节级 golden 比对需先归一化该字段 | — |
+
+### G1 修复后的独立验证
+
+1. **解码正确性**：`internal/parse/mrs_test.go` 用真实 `.mrs` 与 `mihomo convert-ruleset domain mrs`
+   的输出逐行对拍（992 行），完全一致；ipcidr 行为另有 `text → mrs → text` 往返对拍。
+2. **域名无缺失**：`Custom_Clash.ini` 引用的 3 份 `.mrs`（`Custom_Direct_Domain` 992 条、
+   `Custom_Proxy_Domain` 17 条、`Steam_CDN_Domain` 3 条，共 1012 个域名）全部出现在产物里，
+   **缺失 0 条**（与内核参考输出逐条比对）。
+3. **实机可加载**：9 份产物全部通过 `mihomo -t`（mihomo v1.19.31 linux/amd64，测试机）。
+4. **引入成本**：新增 vendor 仅 `mihomo/component/cidr`（2 个文件），二进制 +301.5 KB
+   （37.78 MB → 38.08 MB）。
+
+### 验收措辞（修订）
+
+> Aethersailor 8 模板零修改跑通，产物通过 `mihomo -t`；规则集（含 `.mrs` 二进制）全部展开，
+> 与 mihomo v1.19.31 的解码结果逐行一致。相对 subconverter v0.9.0 语义一致；
+> 相对 SCE 的差异只剩 `.d` 后缀条目映射为 `DOMAIN-SUFFIX` 时的极轻微放宽（见 compatibility.md N9）。

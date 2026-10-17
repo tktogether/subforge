@@ -42,12 +42,15 @@ M2 范围：管线引擎 + 分层覆盖 DSL + goja 沙箱 + Collection/Provider 
       YAML 与 INI 双解析；合并语义为"数组追加、标量替换"；`subforge diff` 预览改动
 - [x] M2.3 goja 脚本沙箱 —— `filter.script` / `op.script`，无网络/无文件系统，
       5s 超时 + panic 兜底，语法错误在配置期暴露
+- [x] M2.3b MRS 二进制规则集解码 —— 识别 zstd 魔数，domain/ipcidr 两种行为展开成
+      `DOMAIN`/`DOMAIN-SUFFIX`/`DOMAIN-REGEX`/`IP-CIDR`/`IP-CIDR6`，与内核解码逐行一致
 - [x] M2.4 Provider 透传 —— Clash YAML 的 `proxy-providers` 原样提取并按名去重透传
 - [x] M2.5 Web UI（embed）—— Dashboard / Convert / Rules / Logs 四页 + `/api/*`，
       纯 HTML/CSS/原生 JS 无构建，light/dark 双主题
-- [x] M2.6 Aethersailor 8 模板零修改跑通 —— 全部 `EXIT=0`；
+- [x] M2.6 Aethersailor 8 模板零修改跑通 —— 全部 `EXIT=0` 且**告警归零**；
       与 subconverter v0.9.0 对拍规则/组完全一致（5/5、93/93、5/5、57/57）；
-      与 SCE 的 `.mrs` 规则集展开差异记为 compatibility.md N9；
+      `.mrs` 二进制规则集已能解码展开（与 `mihomo convert-ruleset` 逐行一致），
+      9 份产物全部通过 `mihomo -t`；
       核查报告：[docs/m2-aethersailor-compat.md](docs/m2-aethersailor-compat.md)
 
 M3/M4 的功能（规则工厂、MRS 离线生成、测活、Rule-Bot 闭环等）见设计书路线图。
