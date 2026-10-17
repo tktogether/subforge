@@ -8,6 +8,7 @@ require (
 	github.com/klauspost/compress v1.17.9
 	github.com/metacubex/mihomo v1.19.31
 	github.com/robfig/cron/v3 v3.0.1
+	golang.org/x/crypto v0.33.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -119,7 +120,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
-	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e // indirect
 	golang.org/x/mod v0.20.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
