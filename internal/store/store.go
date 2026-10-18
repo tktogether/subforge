@@ -183,15 +183,57 @@ func (d *DB) DeleteSelfNode(ctx context.Context, id int64) error {
 
 // Rule 是 rules 表的一行。
 type Rule struct {
-	ID         int64     `json:"id"`
-	RuleType   string    `json:"rule_type"`
-	RuleParam  string    `json:"rule_param"`
-	RuleConfig int64     `json:"rule_config"`
-	ResolveDNS bool      `json:"resolve_dns"`
-	Enabled    bool      `json:"enabled"`
-	SortOrder  int       `json:"sort_order"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         int64  `json:"id"`
+	RuleType   string `json:"rule_type"`
+	RuleParam  string `json:"rule_param"`
+	RuleConfig int64  `json:"rule_config"`
+	ResolveDNS bool   `json:"resolve_dns"`
+	Enabled    bool   `json:"enabled"`
+	// —— 上游导入溯源：source 标识来源，raw 保存原始规则行，origin_key 为去重键 ——
+	Source    string    `json:"source"`
+	Raw       string    `json:"raw"`
+	OriginKey string    `json:"origin_key"`
+	SortOrder int       `json:"sort_order"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Script 是 scripts 表的一行：goja 脚本库。
+// 时间列用 INTEGER unix 秒（与 fetch_audit 一致），由 Create/Update 写入。
+type Script struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Code        string    `json:"code"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// Pipeline 是 pipelines 表的一行：有序步骤管线。
+// StepsJSON 原样存字符串，store 不解析步骤语义。
+type Pipeline struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	StepsJSON   string    `json:"steps_json"`
+	Enabled     bool      `json:"enabled"`
+	SortOrder   int       `json:"sort_order"`
+	Source      string    `json:"source"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// RuleProvider 是 rule_providers 表的一行：从订阅导入的远程规则集。
+type RuleProvider struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	RawJSON   string    `json:"raw_json"`
+	Source    string    `json:"source"`
+	Enabled   bool      `json:"enabled"`
+	SortOrder int       `json:"sort_order"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // SubToken 是 sub_tokens 表的一行。
@@ -255,8 +297,8 @@ func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex,
 func (d *DB) GetRule(ctx context.Context, id int64) (*Rule, error) {
 	var r Rule
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, sort_order, created_at, updated_at FROM rules WHERE id = ?", id).
-		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt)
+		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, created_at, updated_at FROM rules WHERE id = ?", id).
+		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +460,55 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("迁移 airports.%s: %w", c.col, err)
 		}
 	}
+	// scripts / pipelines 新表（CREATE TABLE IF NOT EXISTS 幂等）。
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS scripts (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			name        TEXT NOT NULL UNIQUE,
+			description TEXT NOT NULL DEFAULT '',
+			code        TEXT NOT NULL,
+			enabled     INTEGER NOT NULL DEFAULT 1,
+			created_at  INTEGER NOT NULL DEFAULT 0,
+			updated_at  INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS pipelines (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			name        TEXT NOT NULL UNIQUE,
+			description TEXT NOT NULL DEFAULT '',
+			steps_json  TEXT NOT NULL DEFAULT '[]',
+			enabled     INTEGER NOT NULL DEFAULT 1,
+			sort_order  INTEGER NOT NULL DEFAULT 0,
+			source      TEXT NOT NULL DEFAULT 'ui',
+			created_at  INTEGER NOT NULL DEFAULT 0,
+			updated_at  INTEGER NOT NULL DEFAULT 0
+		)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("执行建表: %w", err)
+		}
+	}
+	// rules 溯源列：老库用 ALTER 幂等补齐。
+	for _, c := range []struct{ col, decl string }{
+		{"source", "TEXT NOT NULL DEFAULT ''"},
+		{"raw", "TEXT NOT NULL DEFAULT ''"},
+		{"origin_key", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := addColumnIfMissing(db, "rules", c.col, c.decl); err != nil {
+			return fmt.Errorf("迁移 rules.%s: %w", c.col, err)
+		}
+	}
+	// rule_providers 唯一索引：先按 (source, name) 去重，保留最小 id，避免老库重复行导致建索引失败。
+	if _, err := db.Exec("DELETE FROM rule_providers WHERE id NOT IN (SELECT MIN(id) FROM rule_providers GROUP BY source, name)"); err != nil {
+		return fmt.Errorf("去重 rule_providers: %w", err)
+	}
+	// 部分索引：只约束真正带 origin_key 的导入行；手工规则（origin_key=''）不被约束，允许多行共存。
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_origin ON rules(source, origin_key) WHERE origin_key <> ''"); err != nil {
+		return fmt.Errorf("创建 idx_rules_origin: %w", err)
+	}
+	// 同理：只约束带 source 的导入行；手工 provider（source=''）可共存。
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_rule_providers_source_name ON rule_providers(source, name) WHERE source <> ''"); err != nil {
+		return fmt.Errorf("创建 idx_rule_providers_source_name: %w", err)
+	}
 	return nil
 }
 
@@ -474,4 +565,327 @@ func (d *DB) PruneFetchAudit(ctx context.Context, keep int) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// --- scripts（goja 脚本库）---
+
+// ListScripts 返回所有脚本，按 name 排序。
+func (d *DB) ListScripts(ctx context.Context) ([]Script, error) {
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT id, name, COALESCE(description, ''), code, enabled, created_at, updated_at FROM scripts ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Script{}
+	for rows.Next() {
+		var (
+			s          Script
+			createdSec int64
+			updatedSec int64
+		)
+		if err := rows.Scan(&s.ID, &s.Name, &s.Description, &s.Code, &s.Enabled, &createdSec, &updatedSec); err != nil {
+			return nil, err
+		}
+		s.CreatedAt = time.Unix(createdSec, 0).UTC()
+		s.UpdatedAt = time.Unix(updatedSec, 0).UTC()
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetScript 按 id 返回脚本；不存在时返回 sql.ErrNoRows。
+func (d *DB) GetScript(ctx context.Context, id int64) (Script, error) {
+	var (
+		s          Script
+		createdSec int64
+		updatedSec int64
+	)
+	err := d.db.QueryRowContext(ctx,
+		"SELECT id, name, COALESCE(description, ''), code, enabled, created_at, updated_at FROM scripts WHERE id = ?", id).
+		Scan(&s.ID, &s.Name, &s.Description, &s.Code, &s.Enabled, &createdSec, &updatedSec)
+	if err != nil {
+		return Script{}, err
+	}
+	s.CreatedAt = time.Unix(createdSec, 0).UTC()
+	s.UpdatedAt = time.Unix(updatedSec, 0).UTC()
+	return s, nil
+}
+
+// GetScriptByName 按 name 返回脚本；不存在时返回 sql.ErrNoRows（热路径）。
+func (d *DB) GetScriptByName(ctx context.Context, name string) (Script, error) {
+	var (
+		s          Script
+		createdSec int64
+		updatedSec int64
+	)
+	err := d.db.QueryRowContext(ctx,
+		"SELECT id, name, COALESCE(description, ''), code, enabled, created_at, updated_at FROM scripts WHERE name = ?", name).
+		Scan(&s.ID, &s.Name, &s.Description, &s.Code, &s.Enabled, &createdSec, &updatedSec)
+	if err != nil {
+		return Script{}, err
+	}
+	s.CreatedAt = time.Unix(createdSec, 0).UTC()
+	s.UpdatedAt = time.Unix(updatedSec, 0).UTC()
+	return s, nil
+}
+
+// CreateScript 新增脚本，返回带 ID 的副本。
+func (d *DB) CreateScript(ctx context.Context, s Script) (*Script, error) {
+	now := time.Now().UTC()
+	created := s.CreatedAt
+	if created.IsZero() {
+		created = now
+	}
+	updated := s.UpdatedAt
+	if updated.IsZero() {
+		updated = now
+	}
+	res, err := d.db.ExecContext(ctx,
+		"INSERT INTO scripts (name, description, code, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		s.Name, s.Description, s.Code, s.Enabled, created.Unix(), updated.Unix())
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	got, err := d.GetScript(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &got, nil
+}
+
+// UpdateScript 按 id 更新脚本；RowsAffected==0 返回 sql.ErrNoRows。
+func (d *DB) UpdateScript(ctx context.Context, s Script) error {
+	now := time.Now().UTC()
+	updated := s.UpdatedAt
+	if updated.IsZero() {
+		updated = now
+	}
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE scripts SET name = ?, description = ?, code = ?, enabled = ?, updated_at = ? WHERE id = ?",
+		s.Name, s.Description, s.Code, s.Enabled, updated.Unix(), s.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteScript 按 id 删除脚本；RowsAffected==0 返回 sql.ErrNoRows。
+func (d *DB) DeleteScript(ctx context.Context, id int64) error {
+	res, err := d.db.ExecContext(ctx, "DELETE FROM scripts WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// --- pipelines（有序步骤管线）---
+
+// ListPipelines 返回所有管线，按 sort_order, name 排序。
+func (d *DB) ListPipelines(ctx context.Context) ([]Pipeline, error) {
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT id, name, COALESCE(description, ''), steps_json, enabled, sort_order, COALESCE(source, ''), created_at, updated_at FROM pipelines ORDER BY sort_order, name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Pipeline{}
+	for rows.Next() {
+		var (
+			p          Pipeline
+			createdSec int64
+			updatedSec int64
+		)
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.StepsJSON, &p.Enabled, &p.SortOrder, &p.Source, &createdSec, &updatedSec); err != nil {
+			return nil, err
+		}
+		p.CreatedAt = time.Unix(createdSec, 0).UTC()
+		p.UpdatedAt = time.Unix(updatedSec, 0).UTC()
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetPipeline 按 id 返回管线；不存在时返回 sql.ErrNoRows。
+func (d *DB) GetPipeline(ctx context.Context, id int64) (Pipeline, error) {
+	var (
+		p          Pipeline
+		createdSec int64
+		updatedSec int64
+	)
+	err := d.db.QueryRowContext(ctx,
+		"SELECT id, name, COALESCE(description, ''), steps_json, enabled, sort_order, COALESCE(source, ''), created_at, updated_at FROM pipelines WHERE id = ?", id).
+		Scan(&p.ID, &p.Name, &p.Description, &p.StepsJSON, &p.Enabled, &p.SortOrder, &p.Source, &createdSec, &updatedSec)
+	if err != nil {
+		return Pipeline{}, err
+	}
+	p.CreatedAt = time.Unix(createdSec, 0).UTC()
+	p.UpdatedAt = time.Unix(updatedSec, 0).UTC()
+	return p, nil
+}
+
+// GetPipelineByName 按 name 返回管线；不存在时返回 sql.ErrNoRows。
+func (d *DB) GetPipelineByName(ctx context.Context, name string) (Pipeline, error) {
+	var (
+		p          Pipeline
+		createdSec int64
+		updatedSec int64
+	)
+	err := d.db.QueryRowContext(ctx,
+		"SELECT id, name, COALESCE(description, ''), steps_json, enabled, sort_order, COALESCE(source, ''), created_at, updated_at FROM pipelines WHERE name = ?", name).
+		Scan(&p.ID, &p.Name, &p.Description, &p.StepsJSON, &p.Enabled, &p.SortOrder, &p.Source, &createdSec, &updatedSec)
+	if err != nil {
+		return Pipeline{}, err
+	}
+	p.CreatedAt = time.Unix(createdSec, 0).UTC()
+	p.UpdatedAt = time.Unix(updatedSec, 0).UTC()
+	return p, nil
+}
+
+// CreatePipeline 新增管线，返回带 ID 的副本。
+func (d *DB) CreatePipeline(ctx context.Context, p Pipeline) (*Pipeline, error) {
+	now := time.Now().UTC()
+	created := p.CreatedAt
+	if created.IsZero() {
+		created = now
+	}
+	updated := p.UpdatedAt
+	if updated.IsZero() {
+		updated = now
+	}
+	if p.StepsJSON == "" {
+		p.StepsJSON = "[]"
+	}
+	if p.Source == "" {
+		p.Source = "ui"
+	}
+	res, err := d.db.ExecContext(ctx,
+		"INSERT INTO pipelines (name, description, steps_json, enabled, sort_order, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		p.Name, p.Description, p.StepsJSON, p.Enabled, p.SortOrder, p.Source, created.Unix(), updated.Unix())
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	got, err := d.GetPipeline(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &got, nil
+}
+
+// UpdatePipeline 按 id 更新管线；RowsAffected==0 返回 sql.ErrNoRows。
+func (d *DB) UpdatePipeline(ctx context.Context, p Pipeline) error {
+	now := time.Now().UTC()
+	updated := p.UpdatedAt
+	if updated.IsZero() {
+		updated = now
+	}
+	steps := p.StepsJSON
+	if steps == "" {
+		steps = "[]"
+	}
+	src := p.Source
+	if src == "" {
+		src = "ui"
+	}
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE pipelines SET name = ?, description = ?, steps_json = ?, enabled = ?, sort_order = ?, source = ?, updated_at = ? WHERE id = ?",
+		p.Name, p.Description, steps, p.Enabled, p.SortOrder, src, updated.Unix(), p.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeletePipeline 按 id 删除管线；RowsAffected==0 返回 sql.ErrNoRows。
+func (d *DB) DeletePipeline(ctx context.Context, id int64) error {
+	res, err := d.db.ExecContext(ctx, "DELETE FROM pipelines WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// --- rule_providers（远程规则集）---
+
+// ListRuleProviders 返回所有 rule providers，按 sort_order, name 排序。
+func (d *DB) ListRuleProviders(ctx context.Context) ([]RuleProvider, error) {
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT id, name, raw_json, COALESCE(source, ''), enabled, sort_order, created_at, updated_at FROM rule_providers ORDER BY sort_order, name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RuleProvider{}
+	for rows.Next() {
+		var rp RuleProvider
+		if err := rows.Scan(&rp.ID, &rp.Name, &rp.RawJSON, &rp.Source, &rp.Enabled, &rp.SortOrder, &rp.CreatedAt, &rp.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, rp)
+	}
+	return out, rows.Err()
+}
+
+// UpsertRuleProvider 按 (source, name) 幂等写入。
+func (d *DB) UpsertRuleProvider(ctx context.Context, p RuleProvider) error {
+	now := time.Now().UTC()
+	// 查找已有行
+	var id int64
+	err := d.db.QueryRowContext(ctx,
+		"SELECT id FROM rule_providers WHERE source = ? AND name = ?", p.Source, p.Name).
+		Scan(&id)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	enabled := p.Enabled
+	source := p.Source
+	if source == "" {
+		source = ""
+	}
+	if err == sql.ErrNoRows {
+		_, err = d.db.ExecContext(ctx,
+			"INSERT INTO rule_providers (name, raw_json, source, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			p.Name, p.RawJSON, source, enabled, p.SortOrder, now, now)
+		return err
+	}
+	_, err = d.db.ExecContext(ctx,
+		"UPDATE rule_providers SET raw_json = ?, enabled = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+		p.RawJSON, enabled, p.SortOrder, now, id)
+	return err
 }

@@ -158,3 +158,45 @@ func (m *Manager) refreshOneAirport(ctx context.Context, f *fetch.Fetcher, a Air
 	_ = m.UpdateAirportTraffic(ctx, a.ID, &u, nodeCount, "")
 	return out
 }
+
+// RefreshAirportTrafficByID 只刷新一个机场的流量余额。
+// 机场不存在时返回零值与错误（透传 store 的 sql.ErrNoRows 或 Manager 的中文错误）。
+func (m *Manager) RefreshAirportTrafficByID(ctx context.Context, f *fetch.Fetcher, id int64) (TrafficRefreshResult, error) {
+	if f == nil {
+		return TrafficRefreshResult{}, errors.New("刷新流量需要非 nil 的 fetcher")
+	}
+	a, err := m.GetAirport(ctx, id)
+	if err != nil {
+		return TrafficRefreshResult{}, err
+	}
+	return m.refreshOneAirport(ctx, f, *a), nil
+}
+
+// PreviewTraffic 用已存数据按给定策略试算聚合结果，不落库、不访问网络。
+// 返回 (usage, header, ok, err)：ok=false 表示无可聚合数据或策略为不透传（header 为空串）。
+func (m *Manager) PreviewTraffic(ctx context.Context, s traffic.Strategy) (traffic.Usage, string, bool, error) {
+	airports, err := m.ListAirports(ctx)
+	if err != nil {
+		return traffic.Usage{}, "", false, err
+	}
+	usages := make([]traffic.Usage, 0, len(airports))
+	nodeCounts := make([]int, 0, len(airports))
+	for _, a := range airports {
+		if !a.Enabled || strings.TrimSpace(a.SubscriptionURL) == "" || a.TrafficAt <= 0 {
+			continue
+		}
+		usages = append(usages, traffic.Usage{
+			Upload: a.Upload, Download: a.Download, Total: a.Total, Expire: a.Expire,
+		})
+		nodeCounts = append(nodeCounts, a.NodeCount)
+	}
+	u, ok := traffic.Aggregate(usages, nodeCounts, s)
+	if !ok {
+		return traffic.Usage{}, "", false, nil
+	}
+	h := traffic.FormatWithStrategy(u, s)
+	if h == "" {
+		return u, "", false, nil
+	}
+	return u, h, true, nil
+}

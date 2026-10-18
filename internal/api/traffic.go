@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -80,4 +81,66 @@ func (s *Server) handleAPITrafficRefresh(w http.ResponseWriter, r *http.Request)
 		"ok":      okCount,
 		"fail":    len(results) - okCount,
 	})
+}
+
+// handleAPIAirportRefreshOne 刷新单个机场流量：POST /api/airports/{id}/refresh
+// → 200 {"result":{...}}；机场不存在 → 404；未启用引擎 → 503；非 POST → 405「仅支持 POST」
+func (s *Server) handleAPIAirportRefreshOne(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 POST"))
+		return
+	}
+	if s.engine == nil || s.engine.Fetcher == nil {
+		s.writeAPIError(w, r, http.StatusServiceUnavailable, errors.New("转换引擎未启用"))
+		return
+	}
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+	res, err := m.RefreshAirportTrafficByID(r.Context(), s.engine.Fetcher, id)
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusNotFound, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"result": res})
+}
+
+// handleAPITrafficPreview 试算聚合：GET /api/traffic/preview?strategy=<json>
+// → 200 {"usage":{...},"header":"...","ok":bool}
+func (s *Server) handleAPITrafficPreview(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET"))
+		return
+	}
+	raw := r.URL.Query().Get("strategy")
+	var strat traffic.Strategy
+	if raw == "" {
+		got, err := m.GetTrafficStrategy(r.Context())
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		strat = got
+	} else {
+		if err := json.Unmarshal([]byte(raw), &strat); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("strategy 参数不是合法 JSON"))
+			return
+		}
+		strat = strat.Normalize()
+	}
+	u, h, ok, err := m.PreviewTraffic(r.Context(), strat)
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"usage": u, "header": h, "ok": ok})
 }

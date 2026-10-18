@@ -155,10 +155,12 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/airports", func(r chi.Router) {
 		r.Get("/", s.handleAPIAirports)
 		r.Post("/", s.handleAPIAirports)
+		r.Post("/refresh", s.handleAPITrafficRefresh) // 全部启用机场（静态段优先于 {id}）
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPIAirport)
 			r.Put("/", s.handleAPIAirport)
 			r.Delete("/", s.handleAPIAirport)
+			r.Post("/refresh", s.handleAPIAirportRefreshOne)
 		})
 	})
 	r.Route("/api/groups", func(r chi.Router) {
@@ -197,6 +199,14 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/strategy", s.handleAPITrafficStrategy)
 		r.Put("/strategy", s.handleAPITrafficStrategy)
 		r.Post("/refresh", s.handleAPITrafficRefresh)
+		r.Get("/preview", s.handleAPITrafficPreview)
+	})
+	r.Route("/api/scripts", func(r chi.Router) {
+		r.Get("/", s.handleAPIScripts)
+		r.Post("/", s.handleAPIScripts)
+		r.Get("/{id}", s.handleAPIScript)
+		r.Put("/{id}", s.handleAPIScript)
+		r.Delete("/{id}", s.handleAPIScript)
 	})
 	r.Get("/subscribe", s.handleSubscribe)
 

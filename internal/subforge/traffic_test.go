@@ -478,3 +478,151 @@ func TestRefreshAirportTrafficSkipsDisabledAndEmptyURL(t *testing.T) {
 		t.Fatalf("AirportID = %d, want %d", results[0].AirportID, a2.ID)
 	}
 }
+
+func TestRefreshAirportTrafficByIDNilFetcher(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	_, err := m.RefreshAirportTrafficByID(ctx, nil, 1)
+	if err == nil {
+		t.Fatal("expected error for nil fetcher")
+	}
+	if !strings.Contains(err.Error(), "fetcher") {
+		t.Fatalf("err = %v, want contains fetcher", err)
+	}
+}
+
+func TestRefreshAirportTrafficByIDNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	fetcher := fetch.New(fetch.WithConfig(fetch.Config{UserAgent: "subforge-test", Timeout: 5 * time.Second, Parallel: 4, Retries: 0, Backoff: 0, MaxBody: 64 << 20, Redirects: 3}))
+	_, err := m.RefreshAirportTrafficByID(ctx, fetcher, 999999)
+	if err == nil {
+		t.Fatal("expected error for nonexistent id")
+	}
+}
+
+func TestRefreshAirportTrafficByIDHappy(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	fixture := readFixture(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+		w.Write(fixture)
+	}))
+	t.Cleanup(srv.Close)
+	fetcher := fetch.New(fetch.WithConfig(fetch.Config{UserAgent: "subforge-test", Timeout: 5 * time.Second, Parallel: 4, Retries: 0, Backoff: 0, MaxBody: 64 << 20, Redirects: 3}))
+	a, err := m.AddAirport(ctx, "机场A", srv.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	res, err := m.RefreshAirportTrafficByID(ctx, fetcher, a.ID)
+	if err != nil {
+		t.Fatalf("RefreshAirportTrafficByID: %v", err)
+	}
+	if res.AirportID != a.ID {
+		t.Fatalf("AirportID = %d, want %d", res.AirportID, a.ID)
+	}
+	if !res.OK {
+		t.Fatalf("OK = false, want true; Err = %q", res.Err)
+	}
+	if res.Usage != (traffic.Usage{Upload: 10, Download: 20, Total: 100, Expire: 1700000000}) {
+		t.Fatalf("Usage = %+v, want {10 20 100 1700000000}", res.Usage)
+	}
+	got, err := m.GetAirport(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetAirport: %v", err)
+	}
+	if got.Upload != 10 || got.Download != 20 || got.Total != 100 || got.Expire != 1700000000 {
+		t.Fatalf("traffic = %d/%d/%d/%d, want 10/20/100/1700000000", got.Upload, got.Download, got.Total, got.Expire)
+	}
+}
+
+func TestPreviewTrafficEmptyDB(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	u, h, ok, err := m.PreviewTraffic(ctx, traffic.Strategy{})
+	if err != nil {
+		t.Fatalf("PreviewTraffic err = %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, want false")
+	}
+	if h != "" {
+		t.Fatalf("header = %q, want empty", h)
+	}
+	if u != (traffic.Usage{}) {
+		t.Fatalf("usage = %+v, want zero", u)
+	}
+}
+
+func TestPreviewTrafficOffStrategy(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	fixture := readFixture(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+		w.Write(fixture)
+	}))
+	t.Cleanup(srv.Close)
+	fetcher := fetch.New(fetch.WithConfig(fetch.Config{UserAgent: "subforge-test", Timeout: 5 * time.Second, Parallel: 4, Retries: 0, Backoff: 0, MaxBody: 64 << 20, Redirects: 3}))
+	a, err := m.AddAirport(ctx, "机场A", srv.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	_, _ = m.RefreshAirportTraffic(ctx, fetcher)
+	_ = a
+	strat, _ := traffic.PresetStrategy("off")
+	u, h, ok, err := m.PreviewTraffic(ctx, strat)
+	if err != nil {
+		t.Fatalf("PreviewTraffic err = %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, want false (off preset)")
+	}
+	if h != "" {
+		t.Fatalf("header = %q, want empty", h)
+	}
+	_ = u
+}
+
+func TestPreviewTrafficSumStrategy(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	fixture := readFixture(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+		w.Write(fixture)
+	}))
+	t.Cleanup(srv.Close)
+	fetcher := fetch.New(fetch.WithConfig(fetch.Config{UserAgent: "subforge-test", Timeout: 5 * time.Second, Parallel: 4, Retries: 0, Backoff: 0, MaxBody: 64 << 20, Redirects: 3}))
+	_, err := m.AddAirport(ctx, "机场A", srv.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	_, err = m.RefreshAirportTraffic(ctx, fetcher)
+	if err != nil {
+		t.Fatalf("RefreshAirportTraffic: %v", err)
+	}
+	strat, _ := traffic.PresetStrategy("sum")
+	u, h, ok, err := m.PreviewTraffic(ctx, strat)
+	if err != nil {
+		t.Fatalf("PreviewTraffic err = %v", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, want true")
+	}
+	if h == "" {
+		t.Fatalf("header empty, want non-empty")
+	}
+	if u.Upload != 10 || u.Download != 20 || u.Total != 100 {
+		t.Fatalf("usage = %+v, want 10/20/100 (got %d/%d/%d)", u, u.Upload, u.Download, u.Total)
+	}
+	// 不落库：PreviewTraffic 不应写库（流量字段 unchanged 已由 Refresh 设置，再跑一次 preview 不应变化）
+	u2, h2, ok2, err2 := m.PreviewTraffic(ctx, strat)
+	if err2 != nil {
+		t.Fatalf("PreviewTraffic err = %v", err2)
+	}
+	if !ok2 || h2 != h || u2 != u {
+		t.Fatalf("preview not deterministic: u=%+v/%+v h=%q/%q ok=%v/%v", u, u2, h, h2, ok, ok2)
+	}
+}
