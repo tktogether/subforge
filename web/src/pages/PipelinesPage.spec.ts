@@ -5,6 +5,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import PipelinesPage from './PipelinesPage.vue'
+import { type Pipeline } from '../api/endpoints'
 import { endpoints } from '../api/endpoints'
 
 vi.mock('../api/endpoints', async () => {
@@ -24,7 +25,7 @@ describe('PipelinesPage', () => {
   })
 
   it('onMounted 调用 endpoints.pipelines("") 并把结果渲染成列表（empty 为假）', async () => {
-    pipelinesMock.mockResolvedValue(['pipe-a', 'pipe-b'])
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pipe-a', description: '', steps_json: '[{\"op\":\"filter\"},{\"op\":null}]', enabled: true, sort_order: 0, source: 'ui', read_only: false }, { id: 2, name: 'pipe-b', description: '', steps_json: 'not-json', enabled: true, sort_order: 1, source: 'template', read_only: true }])
 
     const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
@@ -54,9 +55,9 @@ describe('PipelinesPage', () => {
   })
 
   it('请求未完成时 loading 为真，AsyncSection 渲染骨架屏', async () => {
-    let resolveIt: (v: string[]) => void = () => {}
+    let resolveIt: (v: Pipeline[]) => void = () => {}
     pipelinesMock.mockImplementation(
-      () => new Promise<string[]>((resolve) => { resolveIt = resolve }),
+      () => new Promise<Pipeline[]>((resolve) => { resolveIt = resolve }),
     )
 
     const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
@@ -64,7 +65,7 @@ describe('PipelinesPage', () => {
     expect(w.find('[data-testid="async-loading"]').exists()).toBe(true)
     expect(w.find('[data-testid="async-empty"]').exists()).toBe(false)
 
-    resolveIt(['late-pipe'])
+    resolveIt([{ id: 3, name: 'late-pipe', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false }])
     await flushPromises()
     expect(w.find('[data-testid="async-loading"]').exists()).toBe(false)
     expect(w.text()).toContain('late-pipe')
@@ -97,7 +98,7 @@ describe('PipelinesPage', () => {
   it('点击重试按钮再次 load：error 被清空，成功后渲染列表', async () => {
     pipelinesMock
       .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce(['recovered'])
+      .mockResolvedValueOnce([{ id: 4, name: 'recovered', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false }])
 
     const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
     await flushPromises()

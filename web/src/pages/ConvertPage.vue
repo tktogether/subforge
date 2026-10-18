@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { endpoints, type ConvertResponse } from '../api/endpoints'
+import { computed, onMounted, ref } from 'vue'
+import { endpoints, type ConvertResponse, type Pipeline } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
 
 const targets = ref<string[]>([])
-const pipelines = ref<string[]>([])
+const pipelines = ref<Pipeline[]>([])
+const pipelineItems = computed(() => pipelines.value.map((p) => ({ title: p.name + (p.source === 'template' ? ' · 只读' : ''), value: p.name })))
 const selectedTarget = ref('')
 const urls = ref('')
 const text = ref('')
@@ -84,7 +85,7 @@ onMounted(() => {
         <v-textarea v-model="text" label="粘贴文本" rows="3" />
         <v-text-field v-model="include" label="包含正则" />
         <v-text-field v-model="exclude" label="排除正则" />
-        <v-select v-model="pipeline" :items="pipelines" label="管线" />
+        <v-select v-model="pipeline" :items="pipelineItems" label="管线" />
         <v-switch v-model="list" label="输出节点列表" color="primary" />
         <v-btn color="primary" :loading="loading" @click="submit">转换</v-btn>
       </v-card>

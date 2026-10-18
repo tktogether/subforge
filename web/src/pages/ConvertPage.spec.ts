@@ -4,6 +4,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import ConvertPage from './ConvertPage.vue'
+import { type Pipeline } from '../api/endpoints'
 import { endpoints } from '../api/endpoints'
 
 vi.mock('../api/endpoints', () => ({
@@ -20,7 +21,7 @@ let writeTextMock: ReturnType<typeof vi.fn>
 
 interface ConvertPageVm {
   targets: string[]
-  pipelines: string[]
+  pipelines: Pipeline[]
   selectedTarget: string
   urls: string
   text: string
@@ -62,14 +63,14 @@ describe('ConvertPage', () => {
 
   it('onMounted 调用 loadMeta：targets 与 pipelines("") 各被调用，成功时列表填充', async () => {
     vi.mocked(endpoints.targets).mockResolvedValue(['clash', 'singbox'])
-    vi.mocked(endpoints.pipelines).mockResolvedValue(['p1', 'p2'])
+    vi.mocked(endpoints.pipelines).mockResolvedValue([{ id: 1, name: 'p1', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false }, { id: 2, name: 'p2', description: '', steps_json: '[]', enabled: true, sort_order: 1, source: 'template', read_only: true }])
     const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
     const vm = w.vm as unknown as ConvertPageVm
     await flushPromises()
     expect(endpoints.targets).toHaveBeenCalledTimes(1)
     expect(endpoints.pipelines).toHaveBeenCalledWith('')
     expect(vm.targets).toEqual(['clash', 'singbox'])
-    expect(vm.pipelines).toEqual(['p1', 'p2'])
+    expect(vm.pipelines).toEqual([{ id: 1, name: 'p1', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false }, { id: 2, name: 'p2', description: '', steps_json: '[]', enabled: true, sort_order: 1, source: 'template', read_only: true }])
   })
 
   it('loadMeta 抛错时 error 显示 errorMessage(err) 文案（AsyncSection 可读）', async () => {

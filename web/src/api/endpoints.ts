@@ -160,10 +160,69 @@ export interface OkResponse {
   ok: boolean
 }
 
+export interface Script {
+  id: number
+  name: string
+  kind: string
+  code: string
+  enabled: boolean
+}
+
+export interface ScriptInput {
+  name: string
+  kind: string
+  code: string
+  enabled: boolean
+}
+
+export interface ScriptTestResult {
+  ok: boolean
+  kept?: string
+  before?: Record<string, unknown>
+  after?: Record<string, unknown>
+  duration_ms: number
+  error?: string
+}
+
+export interface TaskEntry {
+  JobName: string
+  Success: boolean
+  Err: string
+  StartedAt: string
+  Duration: number
+}
+
+export interface RuleProvider {
+  name: string
+  source: string
+  enabled: boolean
+}
+
+export interface Suggestion {
+  index: number
+  message: string
+}
+
+export interface SettingItem {
+  key: string
+  value: string
+}
+
+export interface Pipeline {
+  id: number
+  name: string
+  description: string
+  steps_json: string
+  enabled: boolean
+  sort_order: number
+  source: 'ui' | 'template'
+  read_only: boolean
+}
+
 export const endpoints = {
   stats: (): Promise<Stats> => api.get<Stats>('/api/stats'),
   history: (): Promise<HistoryEntry[]> => api.get<HistoryEntry[]>('/api/history'),
-  pipelines: (config: string): Promise<string[]> => api.get<string[]>('/api/pipelines', { query: { config } }),
+  pipelines: (config: string): Promise<Pipeline[]> => api.get<Pipeline[]>('/api/pipelines', { query: { config } }),
   targets: (): Promise<string[]> => api.get<string[]>('/api/targets'),
   rulesets: (config: string): Promise<RulesetsResponse> => api.get<RulesetsResponse>('/api/rulesets', { query: { config } }),
   logs: (since: number): Promise<LogsResponse> => api.get<LogsResponse>('/api/logs', { query: { since } }),
@@ -193,6 +252,25 @@ export const endpoints = {
   createSelfNode: (body: SelfNodeInput): Promise<SelfNode> => api.post<{ self_node: SelfNode }>('/api/self-nodes', body).then((r) => r.self_node),
   updateSelfNode: (id: number, body: SelfNodeInput): Promise<OkResponse> => api.put<OkResponse>('/api/self-nodes/' + id, body),
   deleteSelfNode: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/self-nodes/' + id),
+
+  listScripts: (): Promise<Script[]> => api.get<{ scripts: Script[] }>('/api/scripts').then((r) => r.scripts),
+  createScript: (body: ScriptInput): Promise<Script> => api.post<{ script: Script }>('/api/scripts', body).then((r) => r.script),
+  getScript: (id: number): Promise<Script> => api.get<{ script: Script }>('/api/scripts/' + id).then((r) => r.script),
+  updateScript: (id: number, body: ScriptInput): Promise<Script> => api.put<{ script: Script }>('/api/scripts/' + id, body).then((r) => r.script),
+  deleteScript: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/scripts/' + id),
+  testScript: (body: { code: string; kind: string; node?: Record<string, unknown>; timeout?: number }): Promise<ScriptTestResult> =>
+    api.post<ScriptTestResult>('/api/scripts/test', body),
+
+  listTasks: (): Promise<TaskEntry[]> => api.get<{ tasks: TaskEntry[] }>('/api/tasks').then((r) => r.tasks),
+
+  listRuleProviders: (source?: string, enabled?: boolean): Promise<RuleProvider[]> =>
+    api.get<{ rule_providers: RuleProvider[] }>('/api/rule-providers', { query: { source, enabled } }).then((r) => r.rule_providers),
+  listSuggestions: (): Promise<Suggestion[]> => api.get<{ suggestions: Suggestion[] }>('/api/suggestions').then((r) => r.suggestions),
+  confirmSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/confirm', {}),
+  rejectSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/reject', {}),
+
+  listSettings: (): Promise<SettingItem[]> => api.get<{ settings: SettingItem[] }>('/api/settings').then((r) => r.settings),
+  updateSettings: (body: SettingItem[]): Promise<OkResponse> => api.put<OkResponse>('/api/settings', body),
 }
 
 export function subscribeUrl(origin: string, token: string): string {

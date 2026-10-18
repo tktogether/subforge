@@ -313,4 +313,85 @@ describe('subscribeUrl', () => {
   it('subscribeUrl("http://h","a b") → "http://h/subscribe?token=a%20b"', () => {
     expect(subscribeUrl('http://h', 'a b')).toBe('http://h/subscribe?token=a%20b')
   })
+
+})
+
+describe('endpoints fe1', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+  function respond(data: unknown) {
+    return { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(data) }
+  }
+it('listScripts 解包 .scripts', async () => {
+    fetchMock.mockResolvedValue(respond({ scripts: [{ id: 1, name: 's', kind: 'filter', code: 'x', enabled: true }] }))
+    const r = await endpoints.listScripts()
+    expect(r).toEqual([{ id: 1, name: 's', kind: 'filter', code: 'x', enabled: true }])
+  })
+  it('createScript POST /api/scripts 解包 .script', async () => {
+    fetchMock.mockResolvedValue(respond({ script: { id: 2, name: 's2', kind: 'operate', code: 'y', enabled: false } }))
+    const r = await endpoints.createScript({ name: 's2', kind: 'operate', code: 'y', enabled: false })
+    expect(r.id).toBe(2)
+  })
+  it('getScript(3) GET /api/scripts/3 解包 .script', async () => {
+    fetchMock.mockResolvedValue(respond({ script: { id: 3, name: 's3', kind: 'filter', code: 'z', enabled: true } }))
+    const r = await endpoints.getScript(3)
+    expect(r.id).toBe(3)
+  })
+  it('updateScript(4) PUT /api/scripts/4 解包 .script', async () => {
+    fetchMock.mockResolvedValue(respond({ script: { id: 4, name: 's4', kind: 'filter', code: 'w', enabled: true } }))
+    const r = await endpoints.updateScript(4, { name: 's4', kind: 'filter', code: 'w', enabled: true })
+    expect(r.id).toBe(4)
+  })
+  it('deleteScript(5) DELETE /api/scripts/5', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.deleteScript(5)
+    expect(r.ok).toBe(true)
+  })
+  it('testScript POST /api/scripts/test', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, duration_ms: 10 }))
+    const r = await endpoints.testScript({ code: 'x', kind: 'filter' })
+    expect(r.ok).toBe(true)
+  })
+  it('listTasks GET /api/tasks 解包 .tasks', async () => {
+    fetchMock.mockResolvedValue(respond({ tasks: [{ JobName: 'j', Success: true, Err: '', StartedAt: '2020-01-01', Duration: 1 }] }))
+    const r = await endpoints.listTasks()
+    expect(r.length).toBe(1)
+  })
+  it('listRuleProviders GET /api/rule-providers 解包 .rule_providers', async () => {
+    fetchMock.mockResolvedValue(respond({ rule_providers: [{ id: 1, name: 'rp', source: 'local', enabled: true }] }))
+    const r = await endpoints.listRuleProviders()
+    expect(r.length).toBe(1)
+  })
+  it('listSuggestions GET /api/suggestions 解包 .suggestions', async () => {
+    fetchMock.mockResolvedValue(respond({ suggestions: [{ index: 0, name: 'sg' }] }))
+    const r = await endpoints.listSuggestions()
+    expect(r.length).toBe(1)
+  })
+  it('confirmSuggestion(2) POST /api/suggestions/2/confirm', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.confirmSuggestion(2)
+    expect(r.ok).toBe(true)
+  })
+  it('rejectSuggestion(3) POST /api/suggestions/3/reject', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.rejectSuggestion(3)
+    expect(r.ok).toBe(true)
+  })
+  it('listSettings GET /api/settings 解包 .settings', async () => {
+    fetchMock.mockResolvedValue(respond({ settings: [{ key: 'k', value: 'v' }] }))
+    const r = await endpoints.listSettings()
+    expect(r.length).toBe(1)
+  })
+  it('updateSettings PUT /api/settings', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.updateSettings([{ key: 'k', value: 'v' }])
+    expect(r.ok).toBe(true)
+  })
 })
