@@ -3,6 +3,9 @@
 package api
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -405,6 +408,94 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 // 鉴权用订阅令牌（sub_token）而不是服务端访问令牌；因此 server.go 的全局
 // auth 中间件必须豁免 /subscribe，否则 query 上的 sub_token 会被拿去和
 // 服务端令牌比对，永远 401。
+// --- /api/self-nodes ---
+
+func (s *Server) handleAPISelfNodes(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		nodes, err := m.ListSelfNodes(r.Context())
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if nodes == nil {
+			nodes = []subforge.SelfNode{}
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"self_nodes": nodes})
+	case http.MethodPost:
+		var req struct {
+			Link    string `json:"link"`
+			Name    string `json:"name"`
+			Enabled bool   `json:"enabled"`
+		}
+		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if strings.TrimSpace(req.Link) == "" {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("链接不能为空"))
+			return
+		}
+		n, err := m.AddSelfNode(r.Context(), req.Link, req.Name, req.Enabled)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusCreated, map[string]any{"self_node": n})
+	default:
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/POST"))
+	}
+}
+
+func (s *Server) handleAPISelfNode(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		n, err := m.GetSelfNode(r.Context(), id)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusNotFound, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"self_node": n})
+	case http.MethodPut:
+		var req struct {
+			Link    string `json:"link"`
+			Name    string `json:"name"`
+			Enabled bool   `json:"enabled"`
+		}
+		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if strings.TrimSpace(req.Link) == "" {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("链接不能为空"))
+			return
+		}
+		if err := m.UpdateSelfNode(r.Context(), id, req.Link, req.Name, req.Enabled); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	case http.MethodDelete:
+		if err := m.DeleteSelfNode(r.Context(), id); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/PUT/DELETE"))
+	}
+}
+
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
 	if !ok {
@@ -437,8 +528,36 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			urls = append(urls, a.SubscriptionURL)
 		}
 	}
-	if len(urls) == 0 {
-		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有启用的订阅"))
+
+	// 自建节点：每个启用的节点链接写入临时文件，作为 File 来源传给引擎。
+	var selfNodeFiles []string
+	selfNodes, err := m.ListSelfNodes(r.Context())
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	if len(selfNodes) > 0 {
+		tmpDir, err := os.MkdirTemp("", "subforge-self-*")
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		defer os.RemoveAll(tmpDir)
+		for _, n := range selfNodes {
+			if !n.Enabled || strings.TrimSpace(n.Link) == "" {
+				continue
+			}
+			fp := filepath.Join(tmpDir, fmt.Sprintf("self-%d.txt", n.ID))
+			if err := os.WriteFile(fp, []byte(n.Link), 0o600); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+			selfNodeFiles = append(selfNodeFiles, fp)
+		}
+	}
+
+	if len(urls) == 0 && len(selfNodeFiles) == 0 {
+		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有启用的订阅或自建节点"))
 		return
 	}
 
@@ -492,6 +611,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	params := convert.Params{
 		Target: target,
 		URLs:   urls,
+		Files:  selfNodeFiles,
 		Groups: renderGroups,
 		Rules:  renderRules,
 	}

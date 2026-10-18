@@ -52,6 +52,7 @@
     <button class="tab" data-tab="groups" role="tab">代理分组</button>
     <button class="tab" data-tab="rules" role="tab">规则</button>
     <button class="tab" data-tab="tokens" role="tab">令牌</button>
+    <button class="tab" data-tab="self_nodes" role="tab">自建节点</button>
   </div>
 
   <div id="tab-airports" class="tab-panel active">
@@ -83,6 +84,14 @@
       <h2>订阅令牌 <button class="btn primary" id="tokenAdd">+ 生成</button></h2>
       <div id="tokensEditor" class="editor-slot"></div>
       <div id="tokensBox" class="list-box state">加载中…</div>
+    </section>
+  </div>
+
+  <div id="tab-self_nodes" class="tab-panel">
+    <section class="panel">
+      <h2>自建节点 <button class="btn primary" id="selfNodeAdd">+ 新增</button></h2>
+      <div id="selfNodesEditor" class="editor-slot"></div>
+      <div id="selfNodesBox" class="list-box state">加载中…</div>
     </section>
   </div>
 </main>

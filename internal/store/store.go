@@ -82,6 +82,85 @@ type ProxyGroup struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+
+// SelfNode 是 self_nodes 表的一行。
+type SelfNode struct {
+	ID        int64     `json:"id"`
+	Link      string    `json:"link"`
+	Name      string    `json:"name"`
+	Enabled   bool      `json:"enabled"`
+	SortOrder int       `json:"sort_order"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ListSelfNodes 返回所有自建节点。
+func (d *DB) ListSelfNodes(ctx context.Context) ([]SelfNode, error) {
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT id, link, COALESCE(name, ''), enabled, sort_order, created_at, updated_at FROM self_nodes ORDER BY sort_order, id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SelfNode{}
+	for rows.Next() {
+		var n SelfNode
+		if err := rows.Scan(&n.ID, &n.Link, &n.Name, &n.Enabled, &n.SortOrder, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// GetSelfNode 按 id 返回自建节点；不存在时返回 sql.ErrNoRows。
+func (d *DB) GetSelfNode(ctx context.Context, id int64) (*SelfNode, error) {
+	var n SelfNode
+	err := d.db.QueryRowContext(ctx,
+		"SELECT id, link, COALESCE(name, ''), enabled, sort_order, created_at, updated_at FROM self_nodes WHERE id = ?", id).
+		Scan(&n.ID, &n.Link, &n.Name, &n.Enabled, &n.SortOrder, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+// AddSelfNode 新增自建节点。
+func (d *DB) AddSelfNode(ctx context.Context, link, name string, enabled bool) (*SelfNode, error) {
+	res, err := d.db.ExecContext(ctx,
+		"INSERT INTO self_nodes (link, name, enabled, sort_order) VALUES (?, ?, ?, ?)",
+		link, name, enabled, time.Now().UnixNano())
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return d.GetSelfNode(ctx, id)
+}
+
+// UpdateSelfNode 按 id 更新自建节点。
+func (d *DB) UpdateSelfNode(ctx context.Context, id int64, link, name string, enabled bool) error {
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE self_nodes SET link = ?, name = ?, enabled = ?, updated_at = ? WHERE id = ?",
+		link, name, enabled, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteSelfNode 按 id 删除自建节点。
+func (d *DB) DeleteSelfNode(ctx context.Context, id int64) error {
+	_, err := d.db.ExecContext(ctx, "DELETE FROM self_nodes WHERE id = ?", id)
+	return err
+}
+
 // Rule 是 rules 表的一行。
 type Rule struct {
 	ID         int64     `json:"id"`

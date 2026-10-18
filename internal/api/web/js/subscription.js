@@ -5,8 +5,8 @@
   "use strict";
 
   var state = {
-    airports: [], groups: [], rules: [], tokens: [],
-    loaded: { airports: false, groups: false, rules: false, tokens: false },
+    airports: [], groups: [], rules: [], tokens: [], self_nodes: [],
+    loaded: { airports: false, groups: false, rules: false, tokens: false, self_nodes: false },
     confirmTimer: {}
   };
 
@@ -17,7 +17,8 @@
     airports: "/api/airports",
     groups: "/api/groups",
     rules: "/api/rules",
-    tokens: "/api/tokens"
+    tokens: "/api/tokens",
+    self_nodes: "/api/self-nodes"
   };
 
   function $(id) { return document.getElementById(id); }
@@ -90,6 +91,7 @@
     if (kind === "airports") renderAirports();
     else if (kind === "groups") renderGroups();
     else if (kind === "rules") renderRules();
+    else if (kind === "self_nodes") renderSelfNodes();
     else renderTokens();
   }
 
@@ -211,6 +213,24 @@
     paint("tokens", table(["Token", "名称", "创建时间", "操作"], rows));
   }
 
+  function renderSelfNodes() {
+    if (!state.self_nodes.length) {
+      paint("self_nodes", empty("还没有自建节点",
+        "自建节点是你自己的代理链接（SS / VMess / Trojan / Hysteria2 等），和机场订阅混合出现在同一份输出里。",
+        "添加第一个自建节点", function () { openEditor("self_nodes", null); }));
+      return;
+    }
+    var rows = state.self_nodes.map(function (n) {
+      return row([
+        td(n.id, "mono"), td(n.name || ""),
+        td(n.link, "mono url"),
+        td(n.enabled ? "启用" : "停用", n.enabled ? "badge ok" : "badge"),
+        actions("self_nodes", n.id)
+      ]);
+    });
+    paint("self_nodes", table(["ID", "名称", "节点链接", "状态", "操作"], rows));
+  }
+
   // --- 内联编辑器（不使用 prompt / 模态） ------------------------------------
 
   function findById(list, id) {
@@ -330,6 +350,19 @@
         var body = { rule_type: rt.value.trim(), rule_param: rp.value.trim(), rule_config: parseInt(rpol.value, 10) || 0, resolve_dns: rd._input.checked, enabled: re._input.checked };
         if (!body.rule_type || !body.rule_param) { msg.textContent = "规则类型和参数不能为空"; return null; }
         return save("rules", id, body, msg);
+      };
+    } else if (kind === "self_nodes") {
+      var n0 = findById(state.self_nodes, id) || {};
+      var nn = textInput(n0.name, "例：我的香港节点");
+      var nl = urlInput(n0.link, "分享链接：ss:// / vmess:// / trojan:// / hysteria2:// …");
+      var ne = check("参与生成配置", n0.enabled == null ? true : n0.enabled);
+      form.appendChild(field("名称", nn));
+      form.appendChild(field("节点链接", nl));
+      form.appendChild(field("启用", ne));
+      submit = function () {
+        var body = { name: nn.value.trim(), link: nl.value.trim(), enabled: ne._input.checked };
+        if (!body.link) { msg.textContent = "节点链接不能为空"; return null; }
+        return save("self_nodes", id, body, msg);
       };
     } else {
       var tn = textInput("", "例：iPhone / 笔记本");
@@ -504,6 +537,7 @@
     $("groupAdd").addEventListener("click", function () { openEditor("groups", null); });
     $("ruleAdd").addEventListener("click", function () { openEditor("rules", null); });
     $("tokenAdd").addEventListener("click", function () { openEditor("tokens", null); });
+    $("selfNodeAdd").addEventListener("click", function () { openEditor("self_nodes", null); });
   }
 
   function bindSubscribePanel() {
@@ -541,6 +575,7 @@
     load("tokens", true);
     load("airports", true);
     load("groups", true);
+    load("self_nodes", true);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

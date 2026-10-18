@@ -188,6 +188,15 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/", s.handleAPITokens)
 	})
 	r.Delete("/api/tokens/{token}", s.handleAPIToken)
+	r.Route("/api/self-nodes", func(r chi.Router) {
+		r.Get("/", s.handleAPISelfNodes)
+		r.Post("/", s.handleAPISelfNodes)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", s.handleAPISelfNode)
+			r.Put("/", s.handleAPISelfNode)
+			r.Delete("/", s.handleAPISelfNode)
+		})
+	})
 	r.Get("/subscribe", s.handleSubscribe)
 
 	// pprof 端点（仅 debug 模式）

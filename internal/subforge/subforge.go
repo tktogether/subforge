@@ -107,6 +107,36 @@ func (m *Manager) DeleteAirport(ctx context.Context, id int64) error {
 	return err
 }
 
+// --- SelfNode（自建节点）管理 ---
+
+// SelfNode 是一个自建节点。行类型定义在 internal/store。
+type SelfNode = store.SelfNode
+
+// ListSelfNodes 返回所有自建节点。
+func (m *Manager) ListSelfNodes(ctx context.Context) ([]SelfNode, error) {
+	return m.db.ListSelfNodes(ctx)
+}
+
+// GetSelfNode 返回单个自建节点。
+func (m *Manager) GetSelfNode(ctx context.Context, id int64) (*SelfNode, error) {
+	return m.db.GetSelfNode(ctx, id)
+}
+
+// AddSelfNode 新增自建节点。
+func (m *Manager) AddSelfNode(ctx context.Context, link, name string, enabled bool) (*SelfNode, error) {
+	return m.db.AddSelfNode(ctx, link, name, enabled)
+}
+
+// UpdateSelfNode 更新自建节点。
+func (m *Manager) UpdateSelfNode(ctx context.Context, id int64, link, name string, enabled bool) error {
+	return m.db.UpdateSelfNode(ctx, id, link, name, enabled)
+}
+
+// DeleteSelfNode 删除自建节点。
+func (m *Manager) DeleteSelfNode(ctx context.Context, id int64) error {
+	return m.db.DeleteSelfNode(ctx, id)
+}
+
 // --- ProxyGroup（代理分组）管理 ---
 
 // ProxyGroup 是一个代理分组。行类型定义在 internal/store。
