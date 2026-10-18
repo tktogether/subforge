@@ -132,9 +132,10 @@
 
   function setActiveNav() {
     var path = location.pathname;
-    qsa(".nav nav a").forEach(function (a) {
+    qsa(".sidebar-nav a").forEach(function (a) {
       var href = a.getAttribute("href");
       if (href === path || (path === "/" && href === "/")) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
     });
   }
 

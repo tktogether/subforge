@@ -11,35 +11,39 @@
 <script src="/app.js"></script>
 </head>
 <body>
-<header class="nav">
-  <a class="brand" href="/">sub<span>forge</span></a>
-  <nav>
-    <a href="/">Dashboard</a>
-    <a href="/convert">Convert</a>
-    <a href="/rules">Rules</a>
-    <a href="/subscriptions">Subscriptions</a>
-    <a href="/logs">Logs</a>
-  </nav>
-  <div class="spacer"></div>
-  <input id="tokenInput" class="mono" placeholder="token (本地)" style="width:150px">
-  <input id="logFilter" class="mono" placeholder="keyword / level" style="width:180px">
-  <button id="themeToggle" class="theme-toggle">☀</button>
-</header>
-<main class="page">
-  <div class="page-head">
-    <h1>Logs</h1>
-    <p>结构化日志流 · 过滤 · 导出</p>
-  </div>
-  <section class="panel">
-    <h2>流 <span class="hint">每 2 秒轮询新增</span></h2>
-    <div class="logs" id="logBox"></div>
-    <div style="display:flex;gap:8px;margin-top:12px">
-      <button class="btn" id="logExportText">导出文本</button>
-      <button class="btn ghost" id="logExportJson">导出 JSON</button>
-      <button class="btn ghost" id="logClear">清屏</button>
+<div class="app-container">
+  <aside class="sidebar">
+    <div class="sidebar-brand">sub<span>forge</span></div>
+    <nav class="sidebar-nav">
+      <a href="/">Dashboard</a>
+      <a href="/convert">Convert</a>
+      <a href="/rules">Rules</a>
+      <a href="/subscriptions">Subscriptions</a>
+      <a href="/logs">Logs</a>
+    </nav>
+    <div class="sidebar-footer">
+      <input id="tokenInput" class="mono" placeholder="token" style="flex:1;min-width:0">
+      <button id="themeToggle" class="theme-toggle">☀</button>
     </div>
-  </section>
-</main>
+  </aside>
+  <div class="main-content">
+    <div class="toolbar"><h1>Logs</h1><div class="spacer"></div><input id="logFilter" class="mono" placeholder="keyword / level" style="width:180px"></div>
+    <div class="content">
+      <div class="page-head">
+        <p>结构化日志流 · 过滤 · 导出</p>
+      </div>
+      <section class="panel">
+        <h2>流 <span class="hint">每 2 秒轮询新增</span></h2>
+        <div class="logs" id="logBox"></div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn" id="logExportText">导出文本</button>
+          <button class="btn ghost" id="logExportJson">导出 JSON</button>
+          <button class="btn ghost" id="logClear">清屏</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
 <script src="/js/logs.js"></script>
 </body>
 </html>

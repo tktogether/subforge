@@ -11,90 +11,95 @@
 <script src="/app.js"></script>
 </head>
 <body>
-<header class="nav">
-  <a class="brand" href="/">sub<span>forge</span></a>
-  <nav>
-    <a href="/">Dashboard</a>
-    <a href="/convert">Convert</a>
-    <a href="/rules">Rules</a>
-    <a href="/subscriptions">Subscriptions</a>
-    <a href="/logs">Logs</a>
-  </nav>
-  <div class="spacer"></div>
-  <input id="tokenInput" class="mono" type="text" placeholder="token (本地)" style="width:150px">
-  <button id="themeToggle" class="theme-toggle">☀</button>
-</header>
-<main class="page">
-  <div class="page-head">
-    <h1>Subscriptions</h1>
-    <p>自建订阅面 · 订阅源 / 分组 / 规则实时编译成配置</p>
-  </div>
+<div class="app-container">
+  <aside class="sidebar">
+    <div class="sidebar-brand">sub<span>forge</span></div>
+    <nav class="sidebar-nav">
+      <a href="/">Dashboard</a>
+      <a href="/convert">Convert</a>
+      <a href="/rules">Rules</a>
+      <a href="/subscriptions">Subscriptions</a>
+      <a href="/logs">Logs</a>
+    </nav>
+    <div class="sidebar-footer">
+      <input id="tokenInput" class="mono" placeholder="token" style="flex:1;min-width:0">
+      <button id="themeToggle" class="theme-toggle">☀</button>
+    </div>
+  </aside>
+  <div class="main-content">
+    <div class="toolbar"><h1>Subscriptions</h1><div class="spacer"></div></div>
+    <div class="content">
+      <div class="page-head">
+        <p>自建订阅面 · 订阅源 / 自建节点 / 分组 / 规则实时编译成配置</p>
+      </div>
 
-  <section class="panel" id="subPanel">
-    <h2>订阅链接 <span class="hint">订阅源、分组、规则一改，这个链接的内容立刻跟着变</span></h2>
-    <div class="sub-bar">
-      <label class="field field-inline">令牌 <select id="subToken"></select></label>
-      <label class="field field-inline">目标格式 <select id="subTarget"></select></label>
-      <div class="sub-actions">
-        <button class="btn primary" id="subCopy">复制链接</button>
-        <button class="btn" id="subPreview">预览</button>
-        <button class="btn" id="subOpen">新窗口打开</button>
-        <button class="btn ghost" id="subDownload">下载</button>
+      <section class="panel" id="subPanel">
+        <h2>订阅链接 <span class="hint">订阅源、自建节点、分组、规则一改，这个链接的内容立刻跟着变</span></h2>
+        <div class="sub-bar">
+          <label class="field field-inline">令牌 <select id="subToken"></select></label>
+          <label class="field field-inline">目标格式 <select id="subTarget"></select></label>
+          <div class="sub-actions">
+            <button class="btn primary" id="subCopy">复制链接</button>
+            <button class="btn" id="subPreview">预览</button>
+            <button class="btn" id="subOpen">新窗口打开</button>
+            <button class="btn ghost" id="subDownload">下载</button>
+          </div>
+        </div>
+        <code class="link-box mono" id="subURL">—</code>
+        <p class="muted" id="subStatus">预览会把当前数据库状态实时编译一遍，和客户端拉到的完全一致。</p>
+        <pre class="mono-block" id="subPreview"></pre>
+      </section>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="airports" role="tab">订阅源</button>
+        <button class="tab" data-tab="groups" role="tab">代理分组</button>
+        <button class="tab" data-tab="rules" role="tab">规则</button>
+        <button class="tab" data-tab="tokens" role="tab">令牌</button>
+        <button class="tab" data-tab="self_nodes" role="tab">自建节点</button>
+      </div>
+
+      <div id="tab-airports" class="tab-panel active">
+        <section class="panel">
+          <h2>订阅源 <button class="btn primary" id="airportAdd">+ 新增</button></h2>
+          <div id="airportsEditor" class="editor-slot"></div>
+          <div id="airportsBox" class="list-box state">加载中…</div>
+        </section>
+      </div>
+
+      <div id="tab-groups" class="tab-panel">
+        <section class="panel">
+          <h2>代理分组 <button class="btn primary" id="groupAdd">+ 新增</button></h2>
+          <div id="groupsEditor" class="editor-slot"></div>
+          <div id="groupsBox" class="list-box state">加载中…</div>
+        </section>
+      </div>
+
+      <div id="tab-rules" class="tab-panel">
+        <section class="panel">
+          <h2>规则 <button class="btn primary" id="ruleAdd">+ 新增</button></h2>
+          <div id="rulesEditor" class="editor-slot"></div>
+          <div id="rulesBox" class="list-box state">加载中…</div>
+        </section>
+      </div>
+
+      <div id="tab-tokens" class="tab-panel">
+        <section class="panel">
+          <h2>订阅令牌 <button class="btn primary" id="tokenAdd">+ 生成</button></h2>
+          <div id="tokensEditor" class="editor-slot"></div>
+          <div id="tokensBox" class="list-box state">加载中…</div>
+        </section>
+      </div>
+
+      <div id="tab-self_nodes" class="tab-panel">
+        <section class="panel">
+          <h2>自建节点 <button class="btn primary" id="selfNodeAdd">+ 新增</button></h2>
+          <div id="selfNodesEditor" class="editor-slot"></div>
+          <div id="selfNodesBox" class="list-box state">加载中…</div>
+        </section>
       </div>
     </div>
-    <code class="link-box mono" id="subURL">—</code>
-    <p class="muted" id="subStatus">预览会把当前数据库状态实时编译一遍，和客户端拉到的完全一致。</p>
-    <pre class="mono-block" id="subPreview"></pre>
-  </section>
-
-  <div class="tabs" role="tablist">
-    <button class="tab active" data-tab="airports" role="tab">订阅源</button>
-    <button class="tab" data-tab="groups" role="tab">代理分组</button>
-    <button class="tab" data-tab="rules" role="tab">规则</button>
-    <button class="tab" data-tab="tokens" role="tab">令牌</button>
-    <button class="tab" data-tab="self_nodes" role="tab">自建节点</button>
   </div>
-
-  <div id="tab-airports" class="tab-panel active">
-    <section class="panel">
-      <h2>订阅源 <button class="btn primary" id="airportAdd">+ 新增</button></h2>
-      <div id="airportsEditor" class="editor-slot"></div>
-      <div id="airportsBox" class="list-box state">加载中…</div>
-    </section>
-  </div>
-
-  <div id="tab-groups" class="tab-panel">
-    <section class="panel">
-      <h2>代理分组 <button class="btn primary" id="groupAdd">+ 新增</button></h2>
-      <div id="groupsEditor" class="editor-slot"></div>
-      <div id="groupsBox" class="list-box state">加载中…</div>
-    </section>
-  </div>
-
-  <div id="tab-rules" class="tab-panel">
-    <section class="panel">
-      <h2>规则 <button class="btn primary" id="ruleAdd">+ 新增</button></h2>
-      <div id="rulesEditor" class="editor-slot"></div>
-      <div id="rulesBox" class="list-box state">加载中…</div>
-    </section>
-  </div>
-
-  <div id="tab-tokens" class="tab-panel">
-    <section class="panel">
-      <h2>订阅令牌 <button class="btn primary" id="tokenAdd">+ 生成</button></h2>
-      <div id="tokensEditor" class="editor-slot"></div>
-      <div id="tokensBox" class="list-box state">加载中…</div>
-    </section>
-  </div>
-
-  <div id="tab-self_nodes" class="tab-panel">
-    <section class="panel">
-      <h2>自建节点 <button class="btn primary" id="selfNodeAdd">+ 新增</button></h2>
-      <div id="selfNodesEditor" class="editor-slot"></div>
-      <div id="selfNodesBox" class="list-box state">加载中…</div>
-    </section>
-  </div>
-</main>
+</div>
 <script src="/js/subscription.js"></script>
 </body>
 </html>
