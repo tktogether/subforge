@@ -380,3 +380,207 @@ func TestRunUsageOnMissingArgs(t *testing.T) {
 		t.Errorf("stderr 缺少用法说明: %q", stderr.String())
 	}
 }
+
+func TestFuncStatsPercentCoveragegate(t *testing.T) {
+	if got := (FuncStats{Covered: 1, Functions: 2}).Percent(); got != 50 {
+		t.Errorf("Percent() = %v, want 50", got)
+	}
+	if got := (FuncStats{Covered: 0, Functions: 0}).Percent(); got != 0 {
+		t.Errorf("Percent() = %v, want 0", got)
+	}
+	if got := (FuncStats{Covered: 3, Functions: 3}).Percent(); got != 100 {
+		t.Errorf("Percent() = %v, want 100", got)
+	}
+}
+
+func TestDetectModuleCoveragegate(t *testing.T) {
+	t.Run("跳过注释取 module", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("// 注释\nmodule example.com/m\n\ngo 1.26\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		m, err := detectModule(dir)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if m != "example.com/m" {
+			t.Errorf("module = %q, want example.com/m", m)
+		}
+	})
+	t.Run("无 go.mod", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := detectModule(dir)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("无 module 行", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("go 1.26\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := detectModule(dir)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if err.Error() != "go.mod 中未找到 module 行" {
+			t.Errorf("err = %q", err.Error())
+		}
+	})
+}
+
+func TestComputeFuncCoverageNormal(t *testing.T) {
+	tmp := t.TempDir()
+	// a.go
+	aSrc := "package m\n\nfunc CoveredA() int {\n\treturn 1\n}\n\nfunc NotCoveredA() int {\n\treturn 2\n}\n\nfunc CoveredB() int {\n\treturn 3\n}\n"
+	if err := os.MkdirAll(filepath.Join(tmp, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte(aSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bSrc := "package m\n\nfunc NeverHasBlocks() int {\n\treturn 0\n}\n"
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte(bSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSrc := "package sub\n\nfunc CoveredC() int {\n\treturn 1\n}\n"
+	if err := os.WriteFile(filepath.Join(tmp, "sub", "c.go"), []byte(cSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/m\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prof := &Profile{Mode: "atomic", Blocks: []Block{
+		{File: "example.com/m/a.go", StartLine: 4, EndLine: 4, NumStmt: 1, Count: 1},
+		{File: "example.com/m/a.go", StartLine: 8, EndLine: 8, NumStmt: 1, Count: 0},
+		{File: "example.com/m/a.go", StartLine: 12, EndLine: 12, NumStmt: 1, Count: 2},
+		{File: "example.com/m/a.go", StartLine: 20, EndLine: 20, NumStmt: 1, Count: 1},
+		{File: "example.com/m/b.go", StartLine: 10, EndLine: 10, NumStmt: 1, Count: 1},
+		{File: "example.com/m/sub/c.go", StartLine: 4, EndLine: 4, NumStmt: 1, Count: 1},
+	}}
+
+	res, err := ComputeFuncCoverage(prof, tmp, "example.com/m")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res.Total.Functions != 4 {
+		t.Errorf("Functions = %d, want 4", res.Total.Functions)
+	}
+	if res.Total.Covered != 3 {
+		t.Errorf("Covered = %d, want 3", res.Total.Covered)
+	}
+	if len(res.Uncovered) != 1 {
+		t.Fatalf("Uncovered len = %d, want 1", len(res.Uncovered))
+	}
+	if res.Uncovered[0].Func != "NotCoveredA" {
+		t.Errorf("Uncovered[0].Func = %q", res.Uncovered[0].Func)
+	}
+	if res.Uncovered[0].File != "example.com/m/a.go" {
+		t.Errorf("Uncovered[0].File = %q", res.Uncovered[0].File)
+	}
+	// NotCoveredA func keyword at line 7
+	if res.Uncovered[0].Line != 7 {
+		t.Errorf("Uncovered[0].Line = %d, want 7", res.Uncovered[0].Line)
+	}
+
+	if len(res.Packages) != 2 {
+		t.Fatalf("Packages len = %d, want 2", len(res.Packages))
+	}
+	pkgMap := map[string]FuncStats{}
+	for _, p := range res.Packages {
+		pkgMap[p.Package] = p.FuncStats
+	}
+	if v, ok := pkgMap[packageOf("example.com/m/a.go")]; !ok || v.Functions != 3 || v.Covered != 2 {
+		t.Errorf("a.go pkg stats = %+v", v)
+	}
+	if v, ok := pkgMap[packageOf("example.com/m/sub/c.go")]; !ok || v.Functions != 1 || v.Covered != 1 {
+		t.Errorf("c.go pkg stats = %+v", v)
+	}
+}
+
+func TestComputeFuncCoverageBarePaths(t *testing.T) {
+	tmp := t.TempDir()
+	aSrc := "package m\n\nfunc CoveredA() int {\n\treturn 1\n}\n\nfunc NotCoveredA() int {\n\treturn 2\n}\n\nfunc CoveredB() int {\n\treturn 3\n}\n"
+	if err := os.MkdirAll(filepath.Join(tmp, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte(aSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bSrc := "package m\n\nfunc NeverHasBlocks() int {\n\treturn 0\n}\n"
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte(bSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSrc := "package sub\n\nfunc CoveredC() int {\n\treturn 1\n}\n"
+	if err := os.WriteFile(filepath.Join(tmp, "sub", "c.go"), []byte(cSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prof := &Profile{Mode: "atomic", Blocks: []Block{
+		{File: "a.go", StartLine: 4, EndLine: 4, NumStmt: 1, Count: 1},
+		{File: "a.go", StartLine: 8, EndLine: 8, NumStmt: 1, Count: 0},
+		{File: "a.go", StartLine: 12, EndLine: 12, NumStmt: 1, Count: 2},
+		{File: "a.go", StartLine: 20, EndLine: 20, NumStmt: 1, Count: 1},
+		{File: "b.go", StartLine: 10, EndLine: 10, NumStmt: 1, Count: 1},
+		{File: "sub/c.go", StartLine: 4, EndLine: 4, NumStmt: 1, Count: 1},
+	}}
+
+	res, err := ComputeFuncCoverage(prof, tmp, "")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res.Total.Functions != 4 {
+		t.Errorf("Functions = %d, want 4", res.Total.Functions)
+	}
+	if res.Total.Covered != 3 {
+		t.Errorf("Covered = %d, want 3", res.Total.Covered)
+	}
+}
+
+func TestComputeFuncCoverageParseFail(t *testing.T) {
+	tmp := t.TempDir()
+	prof := &Profile{Mode: "atomic", Blocks: []Block{
+		{File: "example.com/m/missing.go", StartLine: 1, EndLine: 1, NumStmt: 1, Count: 1},
+	}}
+	res, err := ComputeFuncCoverage(prof, tmp, "example.com/m")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "解析源文件") {
+		t.Errorf("err = %q", err.Error())
+	}
+	if res != nil {
+		t.Errorf("res = %+v, want nil", res)
+	}
+}
+
+func TestComputeFuncCoverageExcludesMain(t *testing.T) {
+	tmp := t.TempDir()
+	mainSrc := "package main\n\nfunc main() {}\n\nfunc helper() int { return 1 }\n"
+	if err := os.WriteFile(filepath.Join(tmp, "main.go"), []byte(mainSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/m2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prof := &Profile{Mode: "atomic", Blocks: []Block{
+		{File: "example.com/m2/main.go", StartLine: 3, EndLine: 3, NumStmt: 1, Count: 0},
+		{File: "example.com/m2/main.go", StartLine: 5, EndLine: 5, NumStmt: 1, Count: 0},
+	}}
+
+	res, err := ComputeFuncCoverage(prof, tmp, "example.com/m2")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res.Total.Functions != 1 {
+		t.Errorf("Functions = %d, want 1", res.Total.Functions)
+	}
+	if len(res.Uncovered) != 1 {
+		t.Fatalf("Uncovered len = %d, want 1", len(res.Uncovered))
+	}
+	if res.Uncovered[0].Func != "helper" {
+		t.Errorf("Uncovered[0].Func = %q, want helper", res.Uncovered[0].Func)
+	}
+}

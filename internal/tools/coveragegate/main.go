@@ -20,10 +20,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,22 +82,55 @@ type Result struct {
 	Packages []PackageStats `json:"packages"`
 }
 
+// FuncStats 是函数计数。
+type FuncStats struct {
+	Functions int `json:"functions"`
+	Covered   int `json:"covered"`
+}
+
+// Percent 返回函数覆盖率百分比。
+func (s FuncStats) Percent() float64 {
+	return PercentOf(s.Covered, s.Functions)
+}
+
+// FuncRef 是一个未覆盖的函数引用。
+type FuncRef struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Func string `json:"func"`
+}
+
+// PackageFuncStats 是单个包的函数聚合结果。
+type PackageFuncStats struct {
+	Package string `json:"package"`
+	FuncStats
+}
+
+// FuncResult 是函数覆盖的聚合结果。
+type FuncResult struct {
+	Uncovered []FuncRef
+	Total     FuncStats
+	Packages  []PackageFuncStats
+}
+
 // Report 是 -json 的机器可读输出。
 type Report struct {
-	Mode     string         `json:"mode"`
-	Min      float64        `json:"min"`
-	Percent  float64        `json:"percent"`
-	Passed   bool           `json:"passed"`
-	ExitCode int            `json:"exit_code"`
-	Total    Stats          `json:"total"`
-	Packages []PackageStats `json:"packages"`
+	Mode               string             `json:"mode"`
+	Min                float64            `json:"min"`
+	Percent            float64            `json:"percent"`
+	Passed             bool               `json:"passed"`
+	ExitCode           int                `json:"exit_code"`
+	Total              Stats              `json:"total"`
+	Packages           []PackageStats     `json:"packages"`
+	MinFunc            *float64           `json:"min_func,omitempty"`
+	FuncPercent        float64            `json:"func_percent"`
+	FuncTotal          FuncStats          `json:"func_total"`
+	FuncPackages       []PackageFuncStats `json:"func_packages"`
+	UncoveredFunctions []FuncRef          `json:"uncovered_functions"`
+	PassedFunc         bool               `json:"passed_func"`
 }
 
 // percentEpsilon 是门禁比较的容差（单位：百分点）。
-// 它只用于吸收浮点舍入误差——例如 1/3 实测为 33.33333333333333%，
-// 而 100.0/3.0 为 33.333333333333336%，两者数学上相等。
-// 1e-9 个百分点远小于「一条语句」所能造成的最小覆盖率变化（约 100/语句数），
-// 因此不会放过任何真实的不达标。
 const percentEpsilon = 1e-9
 
 // GatePass 是纯函数形式的阈值比较：实测百分比是否达标（带浮点容差）。
@@ -111,8 +148,6 @@ func GateDecision(covered, total int, minPercent float64) int {
 }
 
 // ParseProfile 解析 Go coverage profile 文本。
-// 首行为 "mode: set|count|atomic"，其后每行为
-// <file>:<startLine>.<startCol>,<endLine>.<endCol> <numStmt> <count>。
 func ParseProfile(r io.Reader) (*Profile, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -249,6 +284,127 @@ func Aggregate(p *Profile) *Result {
 	return res
 }
 
+// ComputeFuncCoverage 计算函数覆盖率。
+func ComputeFuncCoverage(prof *Profile, root, module string) (*FuncResult, error) {
+	fileSet := map[string]struct{}{}
+	for _, b := range prof.Blocks {
+		fileSet[b.File] = struct{}{}
+	}
+	files := make([]string, 0, len(fileSet))
+	for f := range fileSet {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+
+	res := &FuncResult{}
+	byPkg := make(map[string]*FuncStats)
+
+	for _, f := range files {
+		var disk string
+		if strings.HasPrefix(f, module+"/") {
+			disk = filepath.Join(root, strings.TrimPrefix(f, module+"/"))
+		} else {
+			disk = filepath.Join(root, f)
+		}
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, disk, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("解析源文件 %q 失败: %w", disk, err)
+		}
+		var fileBlocks []Block
+		for _, b := range prof.Blocks {
+			if b.File == f {
+				fileBlocks = append(fileBlocks, b)
+			}
+		}
+		for _, decl := range node.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			// 无接收者的 func main 是进程入口，进程内无法被测试覆盖；
+			// cmd/ 与 pkg/ 已被门禁范围排除（plan §4.4），工具包里的 CLI 入口同理。
+			if fd.Recv == nil && fd.Name.Name == "main" {
+				continue
+			}
+			start := fset.Position(fd.Pos()).Line
+			end := fset.Position(fd.End()).Line
+			var funcBlocks []Block
+			for _, b := range fileBlocks {
+				if b.StartLine >= start && b.EndLine <= end {
+					funcBlocks = append(funcBlocks, b)
+				}
+			}
+			if len(funcBlocks) == 0 {
+				continue
+			}
+			res.Total.Functions++
+			covered := false
+			for _, b := range funcBlocks {
+				if b.Count > 0 {
+					covered = true
+					break
+				}
+			}
+			if covered {
+				res.Total.Covered++
+			} else {
+				res.Uncovered = append(res.Uncovered, FuncRef{File: f, Line: start, Func: fd.Name.Name})
+			}
+			pkg := packageOf(f)
+			s := byPkg[pkg]
+			if s == nil {
+				s = &FuncStats{}
+				byPkg[pkg] = s
+			}
+			s.Functions++
+			if covered {
+				s.Covered++
+			}
+		}
+	}
+
+	names := make([]string, 0, len(byPkg))
+	for n := range byPkg {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		a, c := byPkg[names[i]], byPkg[names[j]]
+		if a.Covered*c.Functions != c.Covered*a.Functions {
+			return a.Covered*c.Functions < c.Covered*a.Functions
+		}
+		return names[i] < names[j]
+	})
+	for _, n := range names {
+		res.Packages = append(res.Packages, PackageFuncStats{Package: n, FuncStats: *byPkg[n]})
+	}
+
+	sort.Slice(res.Uncovered, func(i, j int) bool {
+		if res.Uncovered[i].File != res.Uncovered[j].File {
+			return res.Uncovered[i].File < res.Uncovered[j].File
+		}
+		if res.Uncovered[i].Line != res.Uncovered[j].Line {
+			return res.Uncovered[i].Line < res.Uncovered[j].Line
+		}
+		return res.Uncovered[i].Func < res.Uncovered[j].Func
+	})
+	return res, nil
+}
+
+func detectModule(root string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		}
+	}
+	return "", errors.New("go.mod 中未找到 module 行")
+}
+
 func formatPercent(p float64) string {
 	return strconv.FormatFloat(p, 'f', 1, 64)
 }
@@ -265,7 +421,7 @@ func VerdictLine(pct, min float64) string {
 	return fmt.Sprintf("覆盖率 %s%% 低于门禁 %s%%", formatPercent(pct), formatGate(min))
 }
 
-func formatText(res *Result, min float64, topN int) string {
+func formatText(res *Result, min float64, topN int, funcRes *FuncResult, hasMinFunc bool, minFuncPercent float64, topFuncN int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "coveragegate: mode=%s 包数=%d\n", res.Mode, len(res.Packages))
 	b.WriteString("按包（目录）聚合的语句覆盖率:\n")
@@ -285,6 +441,44 @@ func formatText(res *Result, min float64, topN int) string {
 	}
 	fmt.Fprintf(&b, "总计: 覆盖率 %s%% (%d/%d 语句)\n", formatPercent(res.Total.Percent()), res.Total.Covered, res.Total.Statements)
 	b.WriteString(VerdictLine(res.Total.Percent(), min) + "\n")
+
+	if funcRes != nil {
+		fmt.Fprintf(&b, "函数覆盖: %d/%d = %s%%\n", funcRes.Total.Covered, funcRes.Total.Functions, formatPercent(funcRes.Total.Percent()))
+		uncovered := funcRes.Uncovered
+		shown := uncovered
+		if len(shown) > 50 {
+			shown = shown[:50]
+		}
+		if len(uncovered) > 0 {
+			b.WriteString("未覆盖的函数（最多列 50 条）:\n")
+			for _, u := range shown {
+				fmt.Fprintf(&b, "  %s:%d: %s\n", u.File, u.Line, u.Func)
+			}
+			if len(uncovered) > 50 {
+				fmt.Fprintf(&b, "  ...（还有 %d 个未列出）\n", len(uncovered)-50)
+			}
+		}
+		pkgs := funcRes.Packages
+		nf := topFuncN
+		if nf <= 0 || nf > len(pkgs) {
+			nf = len(pkgs)
+		}
+		if nf > 0 {
+			fmt.Fprintf(&b, "函数覆盖率最低的 %d 个包:\n", nf)
+			for i := 0; i < nf; i++ {
+				p := pkgs[i]
+				fmt.Fprintf(&b, "  %6s%%  %s  (%d/%d 函数)\n", formatPercent(p.Percent()), p.Package, p.Covered, p.Functions)
+			}
+		}
+		if hasMinFunc {
+			pct := funcRes.Total.Percent()
+			if GatePass(pct, minFuncPercent) {
+				fmt.Fprintf(&b, "函数覆盖率 %s%% ≥ 门禁 %s%%\n", formatPercent(pct), formatGate(minFuncPercent))
+			} else {
+				fmt.Fprintf(&b, "函数覆盖率 %s%% 低于门禁 %s%%\n", formatPercent(pct), formatGate(minFuncPercent))
+			}
+		}
+	}
 	return b.String()
 }
 
@@ -295,6 +489,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	minStr := fset.String("min", "", "覆盖率门禁百分比，支持小数（必填，如 80 或 80.5）")
 	asJSON := fset.Bool("json", false, "以 JSON 输出机器可读报告")
 	topN := fset.Int("top", 5, "打印覆盖率最低的 N 个包（<=0 表示全部）")
+	minFuncStr := fset.String("min-func", "", "函数覆盖率门禁百分比（为空表示不做函数门禁）")
+	topFuncN := fset.Int("top-func", 5, "打印函数覆盖率最低的 N 个包（<=0 表示全部）")
+	rootDir := fset.String("root", ".", "源码根目录（go.mod 所在目录）")
+	moduleStr := fset.String("module", "", "模块前缀（默认从 <root>/go.mod 读取）")
 	fset.Usage = func() {
 		fmt.Fprint(stderr, "用法: coveragegate -profile coverage.out -min 80 [-json] [-top 5]\n\n")
 		fset.PrintDefaults()
@@ -323,6 +521,32 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	var minFuncPercent float64
+	hasMinFunc := false
+	if strings.TrimSpace(*minFuncStr) != "" {
+		v, err := strconv.ParseFloat(strings.TrimSpace(*minFuncStr), 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			fmt.Fprintf(stderr, "错误: -min-func %q 不是合法的小数百分比\n", *minFuncStr)
+			return 2
+		}
+		if v < 0 || v > 100 {
+			fmt.Fprintf(stderr, "错误: -min-func %s 超出合法范围 [0,100]\n", formatGate(v))
+			return 2
+		}
+		minFuncPercent = v
+		hasMinFunc = true
+	}
+
+	module := *moduleStr
+	if hasMinFunc && module == "" {
+		m, err := detectModule(*rootDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "错误: 无法读取模块前缀: %v\n", err)
+			return 2
+		}
+		module = m
+	}
+
 	f, err := os.Open(*profilePath)
 	if err != nil {
 		fmt.Fprintf(stderr, "错误: 无法打开 profile %q: %v\n", *profilePath, err)
@@ -338,6 +562,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	res := Aggregate(prof)
 	code := GateDecision(res.Total.Covered, res.Total.Statements, minPercent)
 
+	var funcRes *FuncResult
+	if hasMinFunc {
+		fr, err := ComputeFuncCoverage(prof, *rootDir, module)
+		if err != nil {
+			fmt.Fprintf(stderr, "错误: %v\n", err)
+			return 2
+		}
+		funcRes = fr
+		funcCode := GateDecision(funcRes.Total.Covered, funcRes.Total.Functions, minFuncPercent)
+		if funcCode != 0 {
+			code = 1
+		}
+	}
+
 	if *asJSON {
 		report := Report{
 			Mode:     res.Mode,
@@ -348,6 +586,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 			Total:    res.Total,
 			Packages: res.Packages,
 		}
+		if hasMinFunc {
+			mf := minFuncPercent
+			report.MinFunc = &mf
+			report.FuncPercent = funcRes.Total.Percent()
+			report.FuncTotal = funcRes.Total
+			report.FuncPackages = funcRes.Packages
+			report.UncoveredFunctions = funcRes.Uncovered
+			report.PassedFunc = GatePass(funcRes.Total.Percent(), minFuncPercent)
+		} else {
+			report.FuncPackages = []PackageFuncStats{}
+			report.UncoveredFunctions = []FuncRef{}
+			report.PassedFunc = true
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(&report); err != nil {
@@ -357,7 +608,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	fmt.Fprint(stdout, formatText(res, minPercent, *topN))
+	fmt.Fprint(stdout, formatText(res, minPercent, *topN, funcRes, hasMinFunc, minFuncPercent, *topFuncN))
 	return code
 }
 
