@@ -1,17 +1,17 @@
 // Package subforge 提供订阅管理的业务逻辑。
 //
 // 对标 sub-poly 的 D1 数据模型，用 SQLite 持久化订阅、规则、分组等。
+//
+// 订阅产物不在数据层生成：每次请求由 HTTP 层把这里读到的 DB 当前状态映射成
+// internal/convert.Params，交给 convert.Engine.Run 实时渲染，配置永不落盘静态文件。
 package subforge
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/tktogether/subforge/internal/fetch"
-	"github.com/tktogether/subforge/internal/parse"
 	"github.com/tktogether/subforge/internal/store"
 )
 
@@ -38,26 +38,21 @@ func (m *Manager) DB() *store.DB { return m.db }
 // --- Airport（订阅）管理 ---
 
 // Airport 是一个订阅源。
-type Airport struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	SubscriptionURL string    `json:"subscription_url"`
-	Remarks         string    `json:"remarks"`
-	Enabled         bool      `json:"enabled"`
-	SortOrder       int       `json:"sort_order"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-}
+//
+// 行类型（含 JSON 标签）统一定义在 internal/store，这里用别名保持 subforge 的公开名字，
+// 避免同一张表在两层各有一份结构体、字段各自漂移。
+type Airport = store.Airport
 
 // ListAirports 返回所有订阅。
+// remarks 列可为 NULL，用 COALESCE 兜底，避免扫描时报 "converting NULL to string"。
 func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, name, subscription_url, remarks, enabled, sort_order, created_at, updated_at FROM airports ORDER BY sort_order, id")
+		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, created_at, updated_at FROM airports ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Airport
+	out := []Airport{}
 	for rows.Next() {
 		var a Airport
 		if err := rows.Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder, &a.CreatedAt, &a.UpdatedAt); err != nil {
@@ -72,7 +67,7 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 func (m *Manager) GetAirport(ctx context.Context, id int64) (*Airport, error) {
 	var a Airport
 	err := m.db.Raw().QueryRowContext(ctx,
-		"SELECT id, name, subscription_url, remarks, enabled, sort_order, created_at, updated_at FROM airports WHERE id = ?", id).
+		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, created_at, updated_at FROM airports WHERE id = ?", id).
 		Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("订阅 %d 不存在", id)
@@ -114,28 +109,19 @@ func (m *Manager) DeleteAirport(ctx context.Context, id int64) error {
 
 // --- ProxyGroup（代理分组）管理 ---
 
-// ProxyGroup 是一个代理分组。
-type ProxyGroup struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Regex     string    `json:"regex"`
-	URL       string    `json:"url"`
-	Interval  int       `json:"interval"`
-	SortOrder int       `json:"sort_order"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
+// ProxyGroup 是一个代理分组。行类型定义在 internal/store。
+type ProxyGroup = store.ProxyGroup
 
 // ListProxyGroups 返回所有代理分组。
+// regex / url / interval 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, name, type, regex, url, interval, sort_order, created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ProxyGroup
+	out := []ProxyGroup{}
 	for rows.Next() {
 		var g ProxyGroup
 		if err := rows.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.CreatedAt, &g.UpdatedAt); err != nil {
@@ -173,28 +159,19 @@ func (m *Manager) DeleteProxyGroup(ctx context.Context, id int64) error {
 
 // --- Rule（规则）管理 ---
 
-// Rule 是一条分流规则。
-type Rule struct {
-	ID         int64     `json:"id"`
-	RuleType   string    `json:"rule_type"`
-	RuleParam  string    `json:"rule_param"`
-	RuleConfig int64     `json:"rule_config"`
-	ResolveDNS bool      `json:"resolve_dns"`
-	Enabled    bool      `json:"enabled"`
-	SortOrder  int       `json:"sort_order"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
+// Rule 是一条分流规则。行类型定义在 internal/store。
+type Rule = store.Rule
 
 // ListRules 返回所有规则。
+// rule_param 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, created_at, updated_at FROM rules ORDER BY sort_order, id")
+		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, sort_order, created_at, updated_at FROM rules ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Rule
+	out := []Rule{}
 	for rows.Next() {
 		var r Rule
 		if err := rows.Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt); err != nil {
@@ -232,12 +209,8 @@ func (m *Manager) DeleteRule(ctx context.Context, id int64) error {
 
 // --- SubToken（订阅令牌）管理 ---
 
-// SubToken 是一个订阅令牌。
-type SubToken struct {
-	Token     string    `json:"token"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-}
+// SubToken 是一个订阅令牌。行类型定义在 internal/store。
+type SubToken = store.SubToken
 
 // CreateSubToken 新增订阅令牌。
 func (m *Manager) CreateSubToken(ctx context.Context, token, name string) error {
@@ -265,137 +238,106 @@ func (m *Manager) DeleteSubToken(ctx context.Context, token string) error {
 	return err
 }
 
-// GenerateSubscription 生成订阅内容。
-// 从数据库读取所有启用的订阅，拉取并合并，应用分组和规则，输出 YAML。
-func (m *Manager) GenerateSubscription(ctx context.Context) (string, error) {
-	// 1. 加载所有启用的订阅
+// --- 分组 / 规则 / 令牌的单项读写（HTTP 层 GET/PUT 依赖，SQL 见 internal/store）---
+
+// ListSubTokens 返回所有订阅令牌。
+func (m *Manager) ListSubTokens(ctx context.Context) ([]SubToken, error) {
+	return m.db.ListSubTokens(ctx)
+}
+
+// GetProxyGroup 返回单个代理分组。
+func (m *Manager) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
+	g, err := m.db.GetProxyGroup(ctx, id)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("代理分组 %d 不存在", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return g, nil
+}
+
+// UpdateProxyGroup 更新代理分组。
+func (m *Manager) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex, url string, interval int) error {
+	if err := m.db.UpdateProxyGroup(ctx, id, name, gtype, regex, url, interval); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("代理分组 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
+}
+
+// GetRule 返回单条规则。
+func (m *Manager) GetRule(ctx context.Context, id int64) (*Rule, error) {
+	r, err := m.db.GetRule(ctx, id)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("规则 %d 不存在", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// UpdateRule 更新单条规则。
+func (m *Manager) UpdateRule(ctx context.Context, id int64, ruleType, ruleParam string, ruleConfig int64, resolveDNS, enabled bool) error {
+	if err := m.db.UpdateRule(ctx, id, ruleType, ruleParam, ruleConfig, resolveDNS, enabled); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("规则 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
+}
+
+// --- 订阅编译输入 ---
+
+// SubscriptionInput 是一次订阅编译所需的 DB 当前状态快照。
+//
+// 它只是"编译输入"而不是产物：HTTP 层的 /subscribe 把 Airports 映射成
+// convert.Params.URLs、Groups 映射成 render.Group、Rules 映射成规则行，
+// 再交给 convert.Engine.Run 实时渲染。全程不落盘静态配置文件。
+type SubscriptionInput struct {
+	Airports []Airport    `json:"airports"`
+	Groups   []ProxyGroup `json:"groups"`
+	Rules    []Rule       `json:"rules"`
+}
+
+// GenerateSubscription 读取一次订阅编译所需的 DB 当前状态（仅启用中的订阅）。
+//
+// Deprecated: 订阅生成不再属于数据层。配置由 HTTP 层在每次 /subscribe 请求时，
+// 用 internal/convert 的 Params + Engine.Run 按 DB 当前状态实时编译。
+// 本方法因此不再返回 YAML 文本，改为返回结构化编译输入；仓库内已无调用方。
+//
+// 旧实现手写字符串拼 YAML，有三个真 bug（不要恢复）：
+//  1. 每个节点只输出 name/type/server/port，其余协议字段全丢；
+//  2. 代理组的 proxies 恒为 []，分组等于空组；
+//  3. 规则行只有 TYPE,PARAM，缺第三列策略。
+//
+// 另外它用 p["port"].(int) 断言端口，而解析出来的端口是 float64，
+// 断言失败直接 panic。该断言已彻底删除，本包不再有任何会 panic 的类型断言。
+func (m *Manager) GenerateSubscription(ctx context.Context) (*SubscriptionInput, error) {
 	airports, err := m.ListAirports(ctx)
 	if err != nil {
-		return "", fmt.Errorf("加载订阅列表失败: %w", err)
+		return nil, fmt.Errorf("加载订阅列表失败: %w", err)
 	}
-
-	var enabledAirports []Airport
+	enabled := []Airport{}
 	for _, a := range airports {
 		if a.Enabled {
-			enabledAirports = append(enabledAirports, a)
+			enabled = append(enabled, a)
 		}
 	}
-	if len(enabledAirports) == 0 {
-		return "", fmt.Errorf("没有启用的订阅")
-	}
-
-	// 2. 加载代理分组
 	groups, err := m.ListProxyGroups(ctx)
 	if err != nil {
-		return "", fmt.Errorf("加载代理分组失败: %w", err)
+		return nil, fmt.Errorf("加载代理分组失败: %w", err)
 	}
-
-	// 3. 加载规则
 	rules, err := m.ListRules(ctx)
 	if err != nil {
-		return "", fmt.Errorf("加载规则失败: %w", err)
+		return nil, fmt.Errorf("加载规则失败: %w", err)
 	}
-
-	// 4. 拉取并合并 proxies
-	fetcher := fetch.New()
-	var allProxies []map[string]any
-
-	var sources []fetch.Source
-	for _, a := range enabledAirports {
-		sources = append(sources, fetch.Source{
-			Name: a.Name,
-			URL:  a.SubscriptionURL,
-		})
-	}
-
-	results, err := fetcher.Fetch(ctx, sources)
-	if err != nil {
-		return "", fmt.Errorf("拉取订阅失败: %w", err)
-	}
-	for i, result := range results {
-		if result.Err != nil {
-			// 记录错误但继续
-			continue
-		}
-		dec, err := parse.DecodeSource(result.Content)
-		if err != nil {
-			continue
-		}
-		a := enabledAirports[i]
-		for _, p := range dec.Nodes {
-			// 添加备注前缀
-			if a.Remarks != "" {
-				if name, ok := p["name"].(string); ok {
-					p["name"] = a.Remarks + " " + name
-				}
-			}
-			allProxies = append(allProxies, p)
-		}
-	}
-
-	if len(allProxies) == 0 {
-		return "", fmt.Errorf("没有获取到任何节点")
-	}
-
-	// 5. 构建 YAML
-	var buf strings.Builder
-	buf.WriteString("proxies:\n")
-	for _, p := range allProxies {
-		buf.WriteString("- ")
-		// 简化的 YAML 输出
-		if name, ok := p["name"].(string); ok {
-			buf.WriteString("name: " + yamlEscape(name) + "\n")
-		}
-		if typ, ok := p["type"].(string); ok {
-			buf.WriteString("  type: " + typ + "\n")
-		}
-		if server, ok := p["server"].(string); ok {
-			buf.WriteString("  server: " + yamlEscape(server) + "\n")
-		}
-		if port, ok := p["port"].(int); ok {
-			buf.WriteString(fmt.Sprintf("  port: %d\n", port))
-		}
-		// 其他字段...
-		buf.WriteString("\n")
-	}
-
-	// 6. 应用分组
-	buf.WriteString("proxy-groups:\n")
-	for _, g := range groups {
-		buf.WriteString("- name: " + yamlEscape(g.Name) + "\n")
-		buf.WriteString("  type: " + g.Type + "\n")
-		if g.Regex != "" {
-			buf.WriteString("  regex: " + yamlEscape(g.Regex) + "\n")
-		}
-		if g.URL != "" {
-			buf.WriteString("  url: " + yamlEscape(g.URL) + "\n")
-		}
-		if g.Interval > 0 {
-			buf.WriteString(fmt.Sprintf("  interval: %d\n", g.Interval))
-		}
-		buf.WriteString("  proxies: []\n")
-		buf.WriteString("\n")
-	}
-
-	// 7. 应用规则
-	buf.WriteString("rules:\n")
-	for _, r := range rules {
-		if r.Enabled {
-			buf.WriteString("- " + r.RuleType + "," + r.RuleParam + "\n")
-		}
-	}
-
-	return buf.String(), nil
+	return &SubscriptionInput{Airports: enabled, Groups: groups, Rules: rules}, nil
 }
-
-// yamlEscape 转义 YAML 字符串中的特殊字符。
-func yamlEscape(s string) string {
-	if strings.ContainsAny(s, ":\n\t") {
-		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-	}
-	return s
-}
-
 
 // getConfig 从 config 表读取配置值。
 func (m *Manager) getConfig(ctx context.Context, key string) (string, error) {
@@ -414,4 +356,3 @@ func (m *Manager) setConfig(ctx context.Context, key, value string) error {
 		key, value)
 	return err
 }
-

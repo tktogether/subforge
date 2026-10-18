@@ -117,7 +117,9 @@ func (s *Server) Routes() http.Handler {
 	r.Use(chimw.RequestID)
 	r.Use(requestLogger(s.logger))
 	r.Use(chimw.Recoverer)
-	r.Use(auth(s.cfg.Token))
+	// /subscribe 用订阅令牌（sub_token）自鉴权，必须豁免全局访问令牌校验：
+	// middleware.go 的 presented() 会把 query 上的 token 当服务端令牌比对，不豁免则永远 401。
+	r.Use(authExceptSubscribe(s.cfg.Token))
 	r.Use(chimw.Timeout(s.cfg.Timeout))
 	r.Use(responseHeaders(s.cfg.Name))
 
@@ -206,6 +208,26 @@ func (s *Server) Routes() http.Handler {
 
 	r.NotFound(s.handleNotFound)
 	return r
+}
+
+// authExceptSubscribe 包装全局 auth，只对 /subscribe 例外。
+//
+// /subscribe 用订阅令牌（sub_token）鉴权，而 auth 校验的是服务端访问令牌；
+// middleware.go 的 presented() 优先级为 Authorization > X-Token > query token，
+// 所以 /subscribe?token=<sub_token> 会被拿去和服务端令牌比对，永远 401。
+// 这里按精确路径豁免，其余路由鉴权强度不变。
+func authExceptSubscribe(tokenFor func() string) func(http.Handler) http.Handler {
+	guarded := auth(tokenFor)
+	return func(next http.Handler) http.Handler {
+		inner := guarded(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/subscribe" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			inner.ServeHTTP(w, r)
+		})
+	}
 }
 
 // handleVersion 返回 subconverter 形态的纯文本版本串。

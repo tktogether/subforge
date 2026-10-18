@@ -5,20 +5,32 @@
 //
 // 覆盖三件事：
 //  1. 页面/静态资源真的能取到、Content-Type 与前端判断一致；
-//  2. 前端契约（DOM id、fetch 路径）与后端路由表/HTML 对齐；
-//  3. /api/targets、/api/diff、/api/convert 的行为契约。
+//  2. 前端契约（DOM id、fetch 路径）与后端路由表/HTML 对齐——五个页面（含
+//     /subscriptions 的 subscription.html + js/subscription.js）都在扫描范围内；
+//  3. /api/targets、/api/diff、/api/convert、订阅管理 CRUD 与 /subscribe 的行为契约。
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/fetch"
+	"github.com/tktogether/subforge/internal/render"
+	"github.com/tktogether/subforge/internal/render/clashmeta"
+	"github.com/tktogether/subforge/internal/render/registry"
+	"github.com/tktogether/subforge/internal/subforge"
 )
 
 // --- 小工具 ---
@@ -63,9 +75,86 @@ func uiReadWeb(t *testing.T, name string) string {
 	return string(buf)
 }
 
+// uiDoJSON 发一个带 JSON body 的请求（覆盖 uiPostJSON 到不了的 PUT/DELETE）。
+func uiDoJSON(t *testing.T, ts *httptest.Server, method, path, body string) (int, http.Header, string) {
+	t.Helper()
+	req, err := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	buf, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取 %s 响应: %v", path, err)
+	}
+	return resp.StatusCode, resp.Header, string(buf)
+}
+
+// uiSubServer 起一个启用了订阅管理（临时 SQLite）的服务。
+// /api/airports 等 CRUD 与 /subscribe 只有在 SetSubManager 之后才真正可用，否则一律 503；
+// Engine 的组装沿用 server_test.go:newTestServer，额外注入一个临时库的 Manager。
+func uiSubServer(t *testing.T) (*httptest.Server, *subforge.Manager) {
+	return uiSubServerCfg(t, nil)
+}
+
+// uiSubServerCfg 与 uiSubServer 同源，额外允许调用方改 Config（例如打开访问令牌鉴权）。
+func uiSubServerCfg(t *testing.T, cfgMod func(*Config)) (*httptest.Server, *subforge.Manager) {
+	t.Helper()
+	mgr, err := subforge.NewManager(filepath.Join(t.TempDir(), "subforge.db"))
+	if err != nil {
+		t.Fatalf("打开临时 SQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	fetcher := fetch.New(fetch.WithConfig(fetch.Config{
+		UserAgent: "subforge-test", Timeout: 5 * time.Second,
+		Parallel: 4, Retries: 0, Backoff: 0, MaxBody: 64 << 20, Redirects: 3,
+	}))
+	cfg := Config{
+		Engine: &convert.Engine{
+			Fetcher: fetcher,
+			RendererFor: func(target string) (render.Renderer, error) {
+				return registry.Lookup(target, clashmeta.Options{MixedPort: 7890})
+			},
+			Profile: render.Profile{Name: "test", Version: "test-version"},
+		},
+		Logger:  quietLogger(),
+		Timeout: 5 * time.Second,
+	}
+	if cfgMod != nil {
+		cfgMod(&cfg)
+	}
+	srv := New(cfg)
+	srv.SetSubManager(mgr)
+	ts := httptest.NewServer(srv.Routes())
+	t.Cleanup(ts.Close)
+	return ts, mgr
+}
+
+// uiAssertJSONError 断言错误响应是统一形状：Content-Type JSON 且带非空 error 字段。
+func uiAssertJSONError(t *testing.T, what, body string, hdr http.Header) {
+	t.Helper()
+	if got := hdr.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Errorf("%s Content-Type = %q，错误体应是 JSON", what, got)
+	}
+	var e struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &e); err != nil || e.Error == "" {
+		t.Errorf("%s 错误体缺少 error 字段: %q（err=%v）", what, body, err)
+	}
+}
+
 // --- 页面 ---
 
-// TestWebUI_Pages 四个页面都必须 200、text/html，并带各自的标志性 DOM 标记。
+// TestWebUI_Pages 五个页面都必须 200、text/html，并带各自的标志性 DOM 标记。
 // 标记取自 web/js/*.js 里 SF.qs("#...") 的实际取值：缺任何一个，页面脚本在
 // DOMContentLoaded 里就会抛 TypeError，而服务端仍然返回 200——只看状态码看不出来。
 func TestWebUI_Pages(t *testing.T) {
@@ -88,6 +177,11 @@ func TestWebUI_Pages(t *testing.T) {
 		}},
 		{"/logs", "SubForge · Logs", []string{
 			`id="logBox"`, `id="logFilter"`, `id="logExportJson"`, `src="/js/logs.js"`,
+		}},
+		{"/subscriptions", "SubForge · Subscriptions", []string{
+			`id="airportsBox"`, `id="groupsBox"`, `id="rulesBox"`, `id="tokensBox"`,
+			`id="airportAdd"`, `id="groupAdd"`, `id="ruleAdd"`, `id="tokenAdd"`,
+			`src="/js/subscription.js"`,
 		}},
 	}
 	for _, c := range cases {
@@ -130,6 +224,7 @@ func TestWebUI_StaticAssets(t *testing.T) {
 		{"/js/convert.js", "application/javascript; charset=utf-8"},
 		{"/js/rules.js", "application/javascript; charset=utf-8"},
 		{"/js/logs.js", "application/javascript; charset=utf-8"},
+		{"/js/subscription.js", "application/javascript; charset=utf-8"},
 	}
 	bodies := map[string]string{}
 	for _, c := range cases {
@@ -348,11 +443,20 @@ func TestWebUI_ConvertValidation(t *testing.T) {
 // --- 前端契约：DOM id 与 fetch 路径 ---
 
 var (
-	uiQSSel   = regexp.MustCompile(`SF\.qs\(\s*"#([A-Za-z0-9_-]+)"`)
-	uiGetByID = regexp.MustCompile(`getElementById\(\s*"([A-Za-z0-9_-]+)"`)
-	uiAPIPath = regexp.MustCompile(`SF\.api\(\s*"(/[^"]*)"`)
-	uiIDAttr  = regexp.MustCompile(`id="([A-Za-z0-9_-]+)"`)
+	uiQSSel          = regexp.MustCompile(`SF\.qs\(\s*"#([A-Za-z0-9_-]+)"`)
+	uiGetByID        = regexp.MustCompile(`getElementById\(\s*"([A-Za-z0-9_-]+)"`)
+	uiAPIPath        = regexp.MustCompile(`SF\.api\(\s*"(/[^"]*)"`)
+	uiAPIPathLiteral = regexp.MustCompile(`["\'](/(?:api|subscribe)[A-Za-z0-9_/.,?=&%:-]*)["\']`)
+	uiIDAttr         = regexp.MustCompile(`id="([A-Za-z0-9_-]+)"`)
 )
+
+// uiTrimQuery 去掉路径上的 query，只留路由部分。
+func uiTrimQuery(p string) string {
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		return p[:i]
+	}
+	return p
+}
 
 // uiIDs 从正则子匹配里取第 1 组。
 func uiIDs(matches [][]string) []string {
@@ -372,6 +476,7 @@ func TestWebUI_DomIDsMatchScripts(t *testing.T) {
 		{"convert.html", "js/convert.js"},
 		{"rules.html", "js/rules.js"},
 		{"logs.html", "js/logs.js"},
+		{"subscription.html", "js/subscription.js"},
 	}
 	appIDs := uiIDs(uiGetByID.FindAllStringSubmatch(uiReadWeb(t, "app.js"), -1))
 	if len(appIDs) == 0 {
@@ -406,17 +511,23 @@ func TestWebUI_ScriptAPIPathsAreRouted(t *testing.T) {
 	seen := map[string]bool{}
 	for _, s := range []string{"app.js", "js/dashboard.js", "js/convert.js", "js/rules.js", "js/logs.js"} {
 		for _, m := range uiAPIPath.FindAllStringSubmatch(uiReadWeb(t, s), -1) {
-			p := m[1]
-			if i := strings.IndexByte(p, '?'); i >= 0 {
-				p = p[:i]
-			}
-			seen[p] = true
+			seen[uiTrimQuery(m[1])] = true
 		}
+	}
+	// js/subscription.js 是第 5 页：早期版本自带 api(method, path) 助手直接 fetch(path)，
+	// 不经过 SF.api，只靠 uiAPIPath 会整页漏扫；这里同时收 SF.api 与字面量两种写法。
+	subSrc := uiReadWeb(t, "js/subscription.js")
+	for _, m := range uiAPIPath.FindAllStringSubmatch(subSrc, -1) {
+		seen[uiTrimQuery(m[1])] = true
+	}
+	for _, m := range uiAPIPathLiteral.FindAllStringSubmatch(subSrc, -1) {
+		seen[uiTrimQuery(m[1])] = true
 	}
 	// 期望集合写死：既防“提取不到”时静默通过，也锁住前端用到的端点清单。
 	for _, want := range []string{
 		"/api/targets", "/api/stats", "/api/history", "/api/pipelines",
 		"/api/rulesets", "/api/logs", "/api/convert", "/api/diff",
+		"/api/airports", "/api/groups", "/api/rules", "/api/tokens",
 	} {
 		if !seen[want] {
 			t.Errorf("前端脚本未引用 %s（契约漂移：端点被删或改名）", want)
@@ -502,5 +613,464 @@ func TestWebUI_JSONEndpointShapes(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(body), &lg); err != nil {
 		t.Errorf("/api/logs 缺少 logs 数组: %v\n%s", err, body)
+	}
+}
+
+// --- 第 5 页 /subscriptions 与 /subscribe ---
+
+// TestWebUI_SubscriptionScriptUsesNoPromptOrInlineHandlers 是第 5 页的验收点。
+//
+// 修复前的 subscription.js 用 prompt() 收集字段，并把 onclick="editAirport(...)"
+// 拼进 innerHTML，而 editAirport/editGroup/editRule 从未定义——点一下就是
+// ReferenceError，内联处理器还会被 CSP 拦。修复后用 SF.api + 事件绑定代替，
+// 本用例锁住这个结果。
+func TestWebUI_SubscriptionScriptUsesNoPromptOrInlineHandlers(t *testing.T) {
+	js := uiReadWeb(t, "js/subscription.js")
+	if strings.TrimSpace(js) == "" {
+		t.Fatal("js/subscription.js 为空")
+	}
+	if i := strings.Index(js, "prompt("); i >= 0 {
+		t.Errorf("subscription.js 仍在用 prompt()（偏移 %d）：同步弹窗既不可测也不该出现在订阅管理里", i)
+	}
+	if m := regexp.MustCompile(`\bon(?:click|change|input|submit)\s*=`).FindString(js); m != "" {
+		t.Errorf("subscription.js 仍有内联事件处理器 %q：拼进 innerHTML 依赖全局函数名且被 CSP 拦", m)
+	}
+}
+
+// TestWebUI_SubscriptionCRUDShapes 第 5 页 /subscriptions 用的 CRUD 端点必须按冻结
+// 契约返回包装对象（{"airport":...} / {"group":...} / {"rule":...} / {"token":...}），
+// 失败一律 JSON {"error":...}。修复前这些处理器回显裸对象、GET/PUT /{id} 直接 405、
+// GET /api/tokens 硬编码空数组——脚本读 r.data.airport 只会得到 undefined。
+//
+// POST 未约定 200/201，这里只要求 2xx；字段集合之外的额外字段不算违约。
+func TestWebUI_SubscriptionCRUDShapes(t *testing.T) {
+	ts, _ := uiSubServer(t)
+
+	// --- /api/airports ---
+	status, _, body := uiPostJSON(t, ts, "/api/airports",
+		`{"name":"机场A","subscription_url":"http://127.0.0.1:1/sub","remarks":"备注","enabled":true}`)
+	if status < 200 || status >= 300 {
+		t.Fatalf("POST /api/airports 状态 = %d，应为 2xx，body=%s", status, body)
+	}
+	var aCreate struct {
+		Airport struct {
+			ID              int64  `json:"id"`
+			Name            string `json:"name"`
+			SubscriptionURL string `json:"subscription_url"`
+			Remarks         string `json:"remarks"`
+			Enabled         bool   `json:"enabled"`
+		} `json:"airport"`
+	}
+	mustJSON(t, body, &aCreate)
+	if aCreate.Airport.ID == 0 || aCreate.Airport.Name != "机场A" ||
+		aCreate.Airport.SubscriptionURL != "http://127.0.0.1:1/sub" || !aCreate.Airport.Enabled {
+		t.Fatalf("POST /api/airports 返回体不符契约: %s", body)
+	}
+	airportID := aCreate.Airport.ID
+
+	status, _, body = uiGet(t, ts, "/api/airports")
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/airports 状态 = %d，body=%s", status, body)
+	}
+	var aList struct {
+		Airports []map[string]any `json:"airports"`
+	}
+	mustJSON(t, body, &aList)
+	if len(aList.Airports) != 1 {
+		t.Fatalf("GET /api/airports 应返回 1 条，实际 %d: %s", len(aList.Airports), body)
+	}
+	for _, k := range []string{"id", "name", "subscription_url", "remarks", "enabled", "sort_order"} {
+		if _, ok := aList.Airports[0][k]; !ok {
+			t.Errorf("GET /api/airports 元素缺少 %q: %s", k, body)
+		}
+	}
+
+	status, _, body = uiGet(t, ts, fmt.Sprintf("/api/airports/%d", airportID))
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/airports/{id} 状态 = %d，body=%s", status, body)
+	}
+	var aGet struct {
+		Airport struct {
+			ID int64 `json:"id"`
+		} `json:"airport"`
+	}
+	mustJSON(t, body, &aGet)
+	if aGet.Airport.ID != airportID {
+		t.Errorf("GET /api/airports/{id} 返回 id=%d，期望 %d: %s", aGet.Airport.ID, airportID, body)
+	}
+
+	status, _, body = uiDoJSON(t, ts, http.MethodPut, fmt.Sprintf("/api/airports/%d", airportID),
+		`{"name":"机场B","subscription_url":"http://127.0.0.1:2/sub","remarks":"","enabled":false}`)
+	if status < 200 || status >= 300 {
+		t.Fatalf("PUT /api/airports/{id} 状态 = %d，body=%s", status, body)
+	}
+	var aPut struct {
+		Airport struct {
+			Name    string `json:"name"`
+			Enabled bool   `json:"enabled"`
+		} `json:"airport"`
+	}
+	mustJSON(t, body, &aPut)
+	if aPut.Airport.Name != "机场B" || aPut.Airport.Enabled {
+		t.Errorf("PUT /api/airports/{id} 未生效: %s", body)
+	}
+
+	status, _, body = uiDoJSON(t, ts, http.MethodDelete, fmt.Sprintf("/api/airports/%d", airportID), "")
+	if status < 200 || status >= 300 {
+		t.Fatalf("DELETE /api/airports/{id} 状态 = %d，body=%s", status, body)
+	}
+	var okAirport struct {
+		OK bool `json:"ok"`
+	}
+	mustJSON(t, body, &okAirport)
+	if !okAirport.OK {
+		t.Errorf("DELETE /api/airports/{id} 应返回 {\"ok\":true}: %s", body)
+	}
+
+	// --- /api/groups ---
+	status, _, body = uiPostJSON(t, ts, "/api/groups",
+		`{"name":"AutoSelect","type":"select","regex":".*","url":"http://www.gstatic.com/generate_204","interval":300}`)
+	if status < 200 || status >= 300 {
+		t.Fatalf("POST /api/groups 状态 = %d，应为 2xx，body=%s", status, body)
+	}
+	var gCreate struct {
+		Group struct {
+			ID       int64  `json:"id"`
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Regex    string `json:"regex"`
+			URL      string `json:"url"`
+			Interval int    `json:"interval"`
+		} `json:"group"`
+	}
+	mustJSON(t, body, &gCreate)
+	if gCreate.Group.ID == 0 || gCreate.Group.Name != "AutoSelect" ||
+		gCreate.Group.Type != "select" || gCreate.Group.Interval != 300 {
+		t.Fatalf("POST /api/groups 返回体不符契约: %s", body)
+	}
+	groupID := gCreate.Group.ID
+
+	status, _, body = uiGet(t, ts, "/api/groups")
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/groups 状态 = %d，body=%s", status, body)
+	}
+	var gList struct {
+		Groups []map[string]any `json:"groups"`
+	}
+	mustJSON(t, body, &gList)
+	if len(gList.Groups) != 1 {
+		t.Fatalf("GET /api/groups 应返回 1 条，实际 %d: %s", len(gList.Groups), body)
+	}
+	for _, k := range []string{"id", "name", "type", "regex", "url", "interval"} {
+		if _, ok := gList.Groups[0][k]; !ok {
+			t.Errorf("GET /api/groups 元素缺少 %q: %s", k, body)
+		}
+	}
+
+	status, _, body = uiGet(t, ts, fmt.Sprintf("/api/groups/%d", groupID))
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/groups/{id} 状态 = %d，body=%s", status, body)
+	}
+	var gGet struct {
+		Group struct {
+			ID int64 `json:"id"`
+		} `json:"group"`
+	}
+	mustJSON(t, body, &gGet)
+	if gGet.Group.ID != groupID {
+		t.Errorf("GET /api/groups/{id} 返回 id=%d，期望 %d: %s", gGet.Group.ID, groupID, body)
+	}
+
+	status, _, body = uiDoJSON(t, ts, http.MethodPut, fmt.Sprintf("/api/groups/%d", groupID),
+		`{"name":"AutoSelect2","type":"url-test","regex":".*","url":"http://www.gstatic.com/generate_204","interval":60}`)
+	if status < 200 || status >= 300 {
+		t.Fatalf("PUT /api/groups/{id} 状态 = %d，body=%s", status, body)
+	}
+	var gPut struct {
+		Group struct {
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Interval int    `json:"interval"`
+		} `json:"group"`
+	}
+	mustJSON(t, body, &gPut)
+	if gPut.Group.Name != "AutoSelect2" || gPut.Group.Type != "url-test" || gPut.Group.Interval != 60 {
+		t.Errorf("PUT /api/groups/{id} 未生效: %s", body)
+	}
+
+	// --- /api/rules ---
+	status, _, body = uiPostJSON(t, ts, "/api/rules",
+		fmt.Sprintf(`{"rule_type":"DOMAIN-SUFFIX","rule_param":"example.com","rule_config":%d,"resolve_dns":true,"enabled":true}`, groupID))
+	if status < 200 || status >= 300 {
+		t.Fatalf("POST /api/rules 状态 = %d，应为 2xx，body=%s", status, body)
+	}
+	var rCreate struct {
+		Rule struct {
+			ID         int64  `json:"id"`
+			RuleType   string `json:"rule_type"`
+			RuleParam  string `json:"rule_param"`
+			RuleConfig int64  `json:"rule_config"`
+			ResolveDNS bool   `json:"resolve_dns"`
+			Enabled    bool   `json:"enabled"`
+		} `json:"rule"`
+	}
+	mustJSON(t, body, &rCreate)
+	if rCreate.Rule.ID == 0 || rCreate.Rule.RuleType != "DOMAIN-SUFFIX" ||
+		rCreate.Rule.RuleParam != "example.com" || rCreate.Rule.RuleConfig != groupID ||
+		!rCreate.Rule.ResolveDNS || !rCreate.Rule.Enabled {
+		t.Fatalf("POST /api/rules 返回体不符契约: %s", body)
+	}
+	ruleID := rCreate.Rule.ID
+
+	status, _, body = uiGet(t, ts, "/api/rules")
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/rules 状态 = %d，body=%s", status, body)
+	}
+	var rList struct {
+		Rules []map[string]any `json:"rules"`
+	}
+	mustJSON(t, body, &rList)
+	if len(rList.Rules) != 1 {
+		t.Fatalf("GET /api/rules 应返回 1 条，实际 %d: %s", len(rList.Rules), body)
+	}
+	for _, k := range []string{"id", "rule_type", "rule_param", "rule_config", "resolve_dns", "enabled", "sort_order"} {
+		if _, ok := rList.Rules[0][k]; !ok {
+			t.Errorf("GET /api/rules 元素缺少 %q: %s", k, body)
+		}
+	}
+	if _, ok := rList.Rules[0]["rule_config"].(float64); !ok {
+		t.Errorf("GET /api/rules 的 rule_config 必须是数字（目标 group id），实际 %T: %s", rList.Rules[0]["rule_config"], body)
+	}
+
+	status, _, body = uiGet(t, ts, fmt.Sprintf("/api/rules/%d", ruleID))
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/rules/{id} 状态 = %d，body=%s", status, body)
+	}
+	var rGet struct {
+		Rule struct {
+			ID int64 `json:"id"`
+		} `json:"rule"`
+	}
+	mustJSON(t, body, &rGet)
+	if rGet.Rule.ID != ruleID {
+		t.Errorf("GET /api/rules/{id} 返回 id=%d，期望 %d: %s", rGet.Rule.ID, ruleID, body)
+	}
+
+	status, _, body = uiDoJSON(t, ts, http.MethodPut, fmt.Sprintf("/api/rules/%d", ruleID),
+		fmt.Sprintf(`{"rule_type":"GEOIP","rule_param":"CN","rule_config":%d,"resolve_dns":false,"enabled":false}`, groupID))
+	if status < 200 || status >= 300 {
+		t.Fatalf("PUT /api/rules/{id} 状态 = %d，body=%s", status, body)
+	}
+	var rPut struct {
+		Rule struct {
+			RuleType   string `json:"rule_type"`
+			RuleParam  string `json:"rule_param"`
+			ResolveDNS bool   `json:"resolve_dns"`
+			Enabled    bool   `json:"enabled"`
+		} `json:"rule"`
+	}
+	mustJSON(t, body, &rPut)
+	if rPut.Rule.RuleType != "GEOIP" || rPut.Rule.RuleParam != "CN" || rPut.Rule.ResolveDNS || rPut.Rule.Enabled {
+		t.Errorf("PUT /api/rules/{id} 未生效: %s", body)
+	}
+
+	// --- /api/tokens ---
+	status, _, body = uiPostJSON(t, ts, "/api/tokens", `{"name":"手机订阅"}`)
+	if status < 200 || status >= 300 {
+		t.Fatalf("POST /api/tokens 状态 = %d，应为 2xx，body=%s", status, body)
+	}
+	var tCreate struct {
+		Token struct {
+			Token     string `json:"token"`
+			Name      string `json:"name"`
+			CreatedAt string `json:"created_at"`
+		} `json:"token"`
+	}
+	mustJSON(t, body, &tCreate)
+	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(tCreate.Token.Token) {
+		t.Errorf("POST /api/tokens 留空 token 时服务端应生成 32 位 hex，实际 %q: %s", tCreate.Token.Token, body)
+	}
+	if tCreate.Token.Name != "手机订阅" {
+		t.Errorf("POST /api/tokens 返回的 name = %q，期望 手机订阅: %s", tCreate.Token.Name, body)
+	}
+	generated := tCreate.Token.Token
+
+	status, _, body = uiPostJSON(t, ts, "/api/tokens", `{"name":"固定令牌","token":"fixed-token-1"}`)
+	if status < 200 || status >= 300 {
+		t.Fatalf("POST /api/tokens(指定 token) 状态 = %d，body=%s", status, body)
+	}
+	var tFixed struct {
+		Token struct {
+			Token string `json:"token"`
+		} `json:"token"`
+	}
+	mustJSON(t, body, &tFixed)
+	if tFixed.Token.Token != "fixed-token-1" {
+		t.Errorf("POST /api/tokens 指定 token 时应原样返回，实际 %q: %s", tFixed.Token.Token, body)
+	}
+
+	status, _, body = uiGet(t, ts, "/api/tokens")
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/tokens 状态 = %d，body=%s", status, body)
+	}
+	var tList struct {
+		Tokens []struct {
+			Token     string `json:"token"`
+			Name      string `json:"name"`
+			CreatedAt string `json:"created_at"`
+		} `json:"tokens"`
+	}
+	mustJSON(t, body, &tList)
+	if len(tList.Tokens) != 2 {
+		t.Fatalf("GET /api/tokens 应返回 2 条，实际 %d: %s", len(tList.Tokens), body)
+	}
+	found := false
+	for _, tok := range tList.Tokens {
+		if tok.Token == generated {
+			found = true
+		}
+		if tok.Token == "" || tok.CreatedAt == "" {
+			t.Errorf("GET /api/tokens 元素缺少 token/created_at: %s", body)
+		}
+	}
+	if !found {
+		t.Errorf("GET /api/tokens 未包含刚生成的令牌 %q: %s", generated, body)
+	}
+
+	status, _, body = uiDoJSON(t, ts, http.MethodDelete, "/api/tokens/fixed-token-1", "")
+	if status < 200 || status >= 300 {
+		t.Fatalf("DELETE /api/tokens/{token} 状态 = %d，body=%s", status, body)
+	}
+	var okToken struct {
+		OK bool `json:"ok"`
+	}
+	mustJSON(t, body, &okToken)
+	if !okToken.OK {
+		t.Errorf("DELETE /api/tokens/{token} 应返回 {\"ok\":true}: %s", body)
+	}
+
+	// --- 统一 JSON 错误 ---
+	for _, p := range []string{"/api/airports/999999", "/api/groups/999999", "/api/rules/999999"} {
+		status, hdr, body := uiGet(t, ts, p)
+		if status != http.StatusNotFound {
+			t.Errorf("GET %s 状态 = %d，应为 404，body=%s", p, status, body)
+			continue
+		}
+		uiAssertJSONError(t, "GET "+p, body, hdr)
+	}
+	for _, p := range []string{"/api/airports", "/api/groups", "/api/rules", "/api/tokens"} {
+		status, hdr, body := uiPostJSON(t, ts, p, "{oops")
+		if status != http.StatusBadRequest {
+			t.Errorf("POST %s 坏 body 状态 = %d，应为 400，body=%s", p, status, body)
+			continue
+		}
+		uiAssertJSONError(t, "POST "+p, body, hdr)
+	}
+
+	// 收尾：删除规则与分组，顺带验证 DELETE 契约。
+	status, _, body = uiDoJSON(t, ts, http.MethodDelete, fmt.Sprintf("/api/rules/%d", ruleID), "")
+	if status < 200 || status >= 300 {
+		t.Fatalf("DELETE /api/rules/{id} 状态 = %d，body=%s", status, body)
+	}
+	var okRule struct {
+		OK bool `json:"ok"`
+	}
+	mustJSON(t, body, &okRule)
+	if !okRule.OK {
+		t.Errorf("DELETE /api/rules/{id} 应返回 {\"ok\":true}: %s", body)
+	}
+	status, _, body = uiDoJSON(t, ts, http.MethodDelete, fmt.Sprintf("/api/groups/%d", groupID), "")
+	if status < 200 || status >= 300 {
+		t.Fatalf("DELETE /api/groups/{id} 状态 = %d，body=%s", status, body)
+	}
+	var okGroup struct {
+		OK bool `json:"ok"`
+	}
+	mustJSON(t, body, &okGroup)
+	if !okGroup.OK {
+		t.Errorf("DELETE /api/groups/{id} 应返回 {\"ok\":true}: %s", body)
+	}
+}
+
+// TestWebUI_SubscribeLiveCompile /subscribe 必须每次请求按 DB 当前状态实时编译出配置：
+// 用临时 SQLite 插入一条 airport + 一个 group + 一条 rule，断言产物包含 group 名，
+// 且 rule 行是 TYPE,PARAM,POLICY 三列（POLICY = rule_config 指向的 group 名），
+// resolve_dns 为真时追加 ,no-resolve；rule_config=0 落成 DIRECT。
+//
+// 只断言"行内三列"这一语义，不断言 YAML 缩进/换行等排版细节。
+func TestWebUI_SubscribeLiveCompile(t *testing.T) {
+	ts, mgr := uiSubServer(t)
+	ctx := context.Background()
+
+	// 本地夹具当上游（12 个节点，见 server_test.go:fixtureURL），不依赖外网。
+	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true); err != nil {
+		t.Fatalf("插入 airport: %v", err)
+	}
+	group, err := mgr.AddProxyGroup(ctx, "AutoSelect", "select", ".*", "", 0)
+	if err != nil {
+		t.Fatalf("插入 group: %v", err)
+	}
+	if _, err := mgr.AddRule(ctx, "DOMAIN-SUFFIX", "example.com", group.ID, true, true); err != nil {
+		t.Fatalf("插入 rule: %v", err)
+	}
+	if _, err := mgr.AddRule(ctx, "GEOIP", "CN", 0, false, true); err != nil {
+		t.Fatalf("插入 DIRECT rule: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+		t.Fatalf("插入 sub token: %v", err)
+	}
+
+	status, hdr, body := uiGet(t, ts, "/subscribe?token=sub-token-1&target=clash.meta")
+	if status != http.StatusOK {
+		t.Fatalf("/subscribe 状态 = %d，应为 200，body=%s", status, body)
+	}
+	// 实时编译的配置是文本，不是 JSON：SF.api 按 Content-Type 分支解析。
+	if ct := hdr.Get("Content-Type"); strings.Contains(ct, "application/json") {
+		t.Errorf("/subscribe Content-Type = %q，应为配置文本而不是 JSON", ct)
+	}
+	if !strings.Contains(body, "AutoSelect") {
+		t.Errorf("/subscribe 产物缺少分组名 AutoSelect:\n%s", body)
+	}
+	// rule 行 = TYPE,PARAM,POLICY；policy 必须解析成 rule_config 指向的 group 名。
+	if !strings.Contains(body, "DOMAIN-SUFFIX,example.com,AutoSelect,no-resolve") {
+		t.Errorf("/subscribe 产物缺少规则行 DOMAIN-SUFFIX,example.com,AutoSelect,no-resolve:\n%s", body)
+	}
+	// rule_config=0 → DIRECT。
+	if !strings.Contains(body, "GEOIP,CN,DIRECT") {
+		t.Errorf("/subscribe 产物缺少规则行 GEOIP,CN,DIRECT:\n%s", body)
+	}
+}
+
+// TestWebUI_SubscribeBypassesAccessToken 锁住 /subscribe 的鉴权边界。
+//
+// 服务端配了访问令牌时，页面与 /api/* 都要 Bearer；但 /subscribe 用的是订阅令牌
+// （sub_token），若被全局 auth 拦下，客户端永远拿到 401——这正是修复前的行为：
+// middleware.go 的 presented() 会把 query 上的 token 拿去和服务端令牌比对。
+func TestWebUI_SubscribeBypassesAccessToken(t *testing.T) {
+	const access = "access-token-1"
+	ts, mgr := uiSubServerCfg(t, func(cfg *Config) {
+		cfg.Token = func() string { return access }
+	})
+	ctx := context.Background()
+
+	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "", true); err != nil {
+		t.Fatalf("插入 airport: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+		t.Fatalf("插入 sub token: %v", err)
+	}
+
+	// 不带访问令牌访问 /api/*：仍然必须 401（证明全局鉴权没有被削弱）。
+	if status, _, _ := uiGet(t, ts, "/api/airports"); status != http.StatusUnauthorized {
+		t.Errorf("GET /api/airports 无令牌状态 = %d，应为 401", status)
+	}
+	// /subscribe 带订阅令牌：必须 200，不能被访问令牌校验拦成 401。
+	status, _, body := uiGet(t, ts, "/subscribe?token=sub-token-1")
+	if status != http.StatusOK {
+		t.Fatalf("/subscribe 带订阅令牌状态 = %d，应为 200，body=%s", status, body)
+	}
+	// 错的订阅令牌：404（订阅令牌校验的语义），不是 401。
+	if status, _, _ := uiGet(t, ts, "/subscribe?token=nope"); status != http.StatusNotFound {
+		t.Errorf("/subscribe 错误订阅令牌状态 = %d，应为 404", status)
 	}
 }
