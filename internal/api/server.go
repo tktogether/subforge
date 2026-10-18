@@ -124,6 +124,7 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/", s.handleDashboard)
 	r.Get("/convert", s.handlePage("convert.html"))
 	r.Get("/rules", s.handlePage("rules.html"))
+	r.Get("/subscriptions", s.handlePage("subscription.html"))
 	r.Get("/logs", s.handlePage("logs.html"))
 
 	r.Get("/app.css", s.handleAsset("app.css"))

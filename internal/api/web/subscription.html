@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubForge · Subscriptions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js"></script>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="/">sub<span>forge</span></a>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/convert">Convert</a>
+    <a href="/rules">Rules</a>
+    <a href="/subscriptions">Subscriptions</a>
+    <a href="/logs">Logs</a>
+  </nav>
+  <div class="spacer"></div>
+  <input id="tokenInput" class="mono" placeholder="token (本地)" style="width:150px">
+  <button id="themeToggle" class="theme-toggle">☀</button>
+</header>
+<main class="page">
+  <div class="page-head">
+    <h1>Subscriptions</h1>
+    <p>订阅管理 · 代理分组 · 规则 · 令牌</p>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="airports">订阅</button>
+    <button class="tab" data-tab="groups">分组</button>
+    <button class="tab" data-tab="rules">规则</button>
+    <button class="tab" data-tab="tokens">令牌</button>
+  </div>
+
+  <div id="tab-airports" class="tab-panel active">
+    <section class="panel">
+      <h2>订阅列表 <button class="btn primary" id="airportAdd">+ 新增</button></h2>
+      <div id="airportsBox" class="state">加载中…</div>
+    </section>
+  </div>
+
+  <div id="tab-groups" class="tab-panel">
+    <section class="panel">
+      <h2>代理分组 <button class="btn primary" id="groupAdd">+ 新增</button></h2>
+      <div id="groupsBox" class="state">加载中…</div>
+    </section>
+  </div>
+
+  <div id="tab-rules" class="tab-panel">
+    <section class="panel">
+      <h2>规则 <button class="btn primary" id="ruleAdd">+ 新增</button></h2>
+      <div id="rulesBox" class="state">加载中…</div>
+    </section>
+  </div>
+
+  <div id="tab-tokens" class="tab-panel">
+    <section class="panel">
+      <h2>订阅令牌 <button class="btn primary" id="tokenAdd">+ 生成</button></h2>
+      <div id="tokensBox" class="state">加载中…</div>
+    </section>
+  </div>
+</main>
+<script src="/js/subscription.js"></script>
+</body>
+</html>
