@@ -503,7 +503,7 @@
 
   function preview() {
     var url = subscribeURL();
-    var out = $("subPreview");
+    var out = $("subPreviewOut");
     var status = $("subStatus");
     var btn = $("subPreview");
     if (!url) { status.className = "badge err"; status.textContent = "先生成一个订阅令牌"; return; }
@@ -572,7 +572,7 @@
     });
     $("subDownload").addEventListener("click", function () {
       var url = subscribeURL();
-      var out = $("subPreview");
+      var out = $("subPreviewOut");
       if (!url) return;
       if (out && out.textContent) {
         SF.downloadText("subforge-" + currentTarget() + ".yaml", out.textContent);
