@@ -80,7 +80,6 @@ func cmdVersion(args []string) error {
 	return nil
 }
 
-
 func buildSetting(bi *debug.BuildInfo, key string) string {
 	for _, s := range bi.Settings {
 		if s.Key == key {

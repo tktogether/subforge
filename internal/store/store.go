@@ -82,7 +82,6 @@ type ProxyGroup struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-
 // SelfNode 是 self_nodes 表的一行。
 type SelfNode struct {
 	ID        int64     `json:"id"`

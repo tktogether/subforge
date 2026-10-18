@@ -3,14 +3,14 @@
 package api
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 

@@ -65,8 +65,8 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var (
-		listen, token, cacheDir, dataDir, name, configFile  string
-		mixedPort, timeoutSeconds, shutdownSeconds int
+		listen, token, cacheDir, dataDir, name, configFile string
+		mixedPort, timeoutSeconds, shutdownSeconds         int
 	)
 	fs.StringVar(&listen, "listen", "127.0.0.1:25500", "监听地址")
 	fs.StringVar(&token, "token", "", "访问令牌（空表示不鉴权）")
