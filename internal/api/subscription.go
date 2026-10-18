@@ -238,6 +238,13 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 
 // --- /api/rules ---
 
+// ruleView 是 GET /api/rules 的响应视图：在 store.Rule 基础上追加 group_name（由 rule_config 经
+// ListProxyGroups 映射得到；映射不上或 rule_config=0 时为空字符串）。
+type ruleView struct {
+	subforge.Rule
+	GroupName string `json:"group_name"`
+}
+
 func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
 	if !ok {
@@ -250,10 +257,18 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
-		if rules == nil {
-			rules = []subforge.Rule{}
+		// 分组名映射：一次查询，循环里只查 map。
+		groupNameByID := map[int64]string{}
+		if groups, gerr := m.ListProxyGroups(r.Context()); gerr == nil {
+			for _, g := range groups {
+				groupNameByID[g.ID] = g.Name
+			}
 		}
-		s.writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
+		views := make([]ruleView, 0, len(rules))
+		for _, ru := range rules {
+			views = append(views, ruleView{Rule: ru, GroupName: groupNameByID[ru.RuleConfig]})
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"rules": views})
 	case http.MethodPost:
 		var req struct {
 			RuleType   string `json:"rule_type"`

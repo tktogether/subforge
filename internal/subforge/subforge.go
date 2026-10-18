@@ -225,7 +225,7 @@ type Rule = store.Rule
 // rule_param 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, sort_order, created_at, updated_at FROM rules ORDER BY sort_order, id")
+		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, created_at, updated_at FROM rules ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	out := []Rule{}
 	for rows.Next() {
 		var r Rule
-		if err := rows.Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -603,3 +603,38 @@ func TestGetConfig(t *testing.T) {
 		t.Fatalf("want hello got %q", v)
 	}
 }
+
+// TestListRulesPreservesSourceRawOriginKey 确保 ListRules 把 source/raw/origin_key 三列原样扫出，
+// 包含中文、逗号与连续空白等特殊字符。
+func TestListRulesPreservesSourceRawOriginKey(t *testing.T) {
+	m := newTestManager(t)
+	ctx := context.Background()
+
+	src := "airport:HK"
+	raw := "DOMAIN-SUFFIX,example.com,目标分组, no-resolve"
+	origin := "DOMAIN-SUFFIX, example.com, 目标分组 , no-resolve" // 与 raw 不同，验证原样保留
+	_, err := m.DB().Raw().ExecContext(ctx,
+		"INSERT INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, source, raw, origin_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"DOMAIN-SUFFIX", "example.com", 0, true, 0, 1, src, raw, origin)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	rules, err := m.ListRules(ctx)
+	if err != nil {
+		t.Fatalf("ListRules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("len(rules) = %d, want 1", len(rules))
+	}
+	got := rules[0]
+	if got.Source != src {
+		t.Errorf("Source = %q, want %q", got.Source, src)
+	}
+	if got.Raw != raw {
+		t.Errorf("Raw = %q, want %q", got.Raw, raw)
+	}
+	if got.OriginKey != origin {
+		t.Errorf("OriginKey = %q, want %q", got.OriginKey, origin)
+	}
+}
