@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
-    "build:only": "vite build",
+    "build": "vue-tsc --noEmit && vite build && node scripts/ensure-dist-placeholder.mjs",
+    "build:only": "vite build && node scripts/ensure-dist-placeholder.mjs",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",

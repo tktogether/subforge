@@ -11,6 +11,8 @@ export default defineConfig({
   },
   build: {
     outDir: fileURLToPath(new URL('../internal/api/web/dist', import.meta.url)),
+    // emptyOutDir=true 会连 internal/api/web/dist/.gitkeep 一起删，导致 go:embed 失败；
+    // 构建脚本尾部的 scripts/ensure-dist-placeholder.mjs 负责把它补回来。不要改成 false。
     emptyOutDir: true,
     // 单二进制内嵌：不生成 sourcemap，减少体积。
     sourcemap: false,
