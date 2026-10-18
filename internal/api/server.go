@@ -16,6 +16,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/subforge"
 )
 
 // Config 是启动一个 Server 需要的全部信息。
@@ -39,6 +40,9 @@ type Config struct {
 	StartedAt time.Time
 	// Name 服务标识，写入响应头。
 	Name string
+	// DataDir 数据目录；用于订阅管理的 SQLite 数据库。
+	// 为空时不启用订阅管理。
+	DataDir string
 }
 
 // Server 是 HTTP 服务。
@@ -50,6 +54,7 @@ type Server struct {
 	http       *http.Client
 	logBuf     *LogBuffer
 	historyBuf *HistoryBuffer
+	subManager *subforge.Manager
 }
 
 // 默认请求超时：上游订阅偶尔很慢，但一个请求不该挂住连接池。
@@ -96,6 +101,12 @@ func New(cfg Config) *Server {
 	}
 }
 
+// SetSubManager 注入订阅管理器。
+// 由调用方在创建 Server 后调用，避免在 New 里引入可选依赖。
+func (s *Server) SetSubManager(m *subforge.Manager) {
+	s.subManager = m
+}
+
 // Routes 返回挂好全部中间件与路由的 handler。
 //
 // 路径名对齐 subconverter：/sub 是主入口，/profile 与 /render 是常见别名，
@@ -140,6 +151,41 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/convert", s.handleAPIConvert)
 		r.Post("/diff", s.handleAPIDiff)
 	})
+
+	// 订阅管理路由
+	r.Route("/api/airports", func(r chi.Router) {
+		r.Get("/", s.handleAPIAirports)
+		r.Post("/", s.handleAPIAirports)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", s.handleAPIAirport)
+			r.Put("/", s.handleAPIAirport)
+			r.Delete("/", s.handleAPIAirport)
+		})
+	})
+	r.Route("/api/groups", func(r chi.Router) {
+		r.Get("/", s.handleAPIGroups)
+		r.Post("/", s.handleAPIGroups)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", s.handleAPIGroup)
+			r.Put("/", s.handleAPIGroup)
+			r.Delete("/", s.handleAPIGroup)
+		})
+	})
+	r.Route("/api/rules", func(r chi.Router) {
+		r.Get("/", s.handleAPIRules)
+		r.Post("/", s.handleAPIRules)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", s.handleAPIRule)
+			r.Put("/", s.handleAPIRule)
+			r.Delete("/", s.handleAPIRule)
+		})
+	})
+	r.Route("/api/tokens", func(r chi.Router) {
+		r.Get("/", s.handleAPITokens)
+		r.Post("/", s.handleAPITokens)
+	})
+	r.Delete("/api/tokens/{token}", s.handleAPIToken)
+	r.Get("/subscribe", s.handleSubscribe)
 
 	r.NotFound(s.handleNotFound)
 	return r
