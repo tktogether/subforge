@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/tktogether/subforge/internal/render/clashmeta"
 	"github.com/tktogether/subforge/internal/render/registry"
 	"github.com/tktogether/subforge/internal/runtime"
+	"github.com/tktogether/subforge/internal/subforge"
 	"github.com/tktogether/subforge/internal/template"
 )
 
@@ -38,6 +40,7 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   -timeout    上游请求与单请求超时秒数（默认 30）
   -shutdown   收到停止信号后的优雅关闭秒数（默认 10）
   -cache-dir  上游内容磁盘缓存目录（默认不缓存）
+  -data-dir   订阅管理数据目录（SQLite，默认不启用）
   -name      写入产物注释头的配置名（启动时固定）
 
 配置文件 [subforge] 段落:
@@ -62,12 +65,13 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var (
-		listen, token, cacheDir, name, configFile  string
+		listen, token, cacheDir, dataDir, name, configFile  string
 		mixedPort, timeoutSeconds, shutdownSeconds int
 	)
 	fs.StringVar(&listen, "listen", "127.0.0.1:25500", "监听地址")
 	fs.StringVar(&token, "token", "", "访问令牌（空表示不鉴权）")
 	fs.StringVar(&cacheDir, "cache-dir", "", "上游内容磁盘缓存目录（默认不缓存）")
+	fs.StringVar(&dataDir, "data-dir", "", "订阅管理数据目录（SQLite，默认不启用）")
 	fs.StringVar(&name, "name", "", "写入产物注释头的配置名")
 	fs.StringVar(&configFile, "config", "", "INI 配置文件，改动后自动热重载")
 	fs.IntVar(&mixedPort, "mixed-port", config.DefaultMixedPort, "clash.meta 输出的 mixed-port")
@@ -119,7 +123,18 @@ func cmdServe(args []string) error {
 		Timeout: timeout,
 		Name:    "subforge",
 		Logger:  log.Default(),
+		DataDir: dataDir,
 	})
+
+	if dataDir != "" {
+		mgr, err := subforge.NewManager(filepath.Join(dataDir, "subforge.db"))
+		if err != nil {
+			return fmt.Errorf("初始化订阅管理: %w", err)
+		}
+		defer mgr.Close()
+		srv.SetSubManager(mgr)
+		fmt.Fprintf(os.Stderr, "订阅管理已启用: %s\n", dataDir)
+	}
 
 	httpServer := &http.Server{
 		Addr:              listen,

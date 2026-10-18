@@ -35,3 +35,6 @@ Thumbs.db
 # 兼容性测试环境临时文件（subconverter 二进制、测试输出）
 .compat/bin/
 .compat/out/
+
+# Linux binary for test machine
+subforge-linux-amd64
