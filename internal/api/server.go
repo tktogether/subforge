@@ -16,6 +16,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/scheduler"
 	"github.com/tktogether/subforge/internal/subforge"
 )
 
@@ -55,6 +56,7 @@ type Server struct {
 	logBuf     *LogBuffer
 	historyBuf *HistoryBuffer
 	subManager *subforge.Manager
+	scheduler  *scheduler.Scheduler
 }
 
 // 默认请求超时：上游订阅偶尔很慢，但一个请求不该挂住连接池。
@@ -107,6 +109,9 @@ func (s *Server) SetSubManager(m *subforge.Manager) {
 	s.subManager = m
 }
 
+// SetScheduler 注入定时调度器，供 GET /api/tasks 读取执行历史。
+func (s *Server) SetScheduler(sch *scheduler.Scheduler) { s.scheduler = sch }
+
 // Routes 返回挂好全部中间件与路由的 handler。
 //
 // 路径名对齐 subconverter：/sub 是主入口，/profile 与 /render 是常见别名，
@@ -156,11 +161,14 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/", s.handleAPIAirports)
 		r.Post("/", s.handleAPIAirports)
 		r.Post("/refresh", s.handleAPITrafficRefresh) // 全部启用机场（静态段优先于 {id}）
+		r.Post("/check", s.handleAPICheck)
+		r.Get("/check/last", s.handleAPICheckLast)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPIAirport)
 			r.Put("/", s.handleAPIAirport)
 			r.Delete("/", s.handleAPIAirport)
 			r.Post("/refresh", s.handleAPIAirportRefreshOne)
+			r.Post("/import-rules", s.handleAPIImportRules)
 		})
 	})
 	r.Route("/api/groups", func(r chi.Router) {
@@ -175,6 +183,7 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/rules", func(r chi.Router) {
 		r.Get("/", s.handleAPIRules)
 		r.Post("/", s.handleAPIRules)
+		r.Post("/bulk", s.handleAPIRulesBulk)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPIRule)
 			r.Put("/", s.handleAPIRule)
@@ -204,9 +213,38 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/scripts", func(r chi.Router) {
 		r.Get("/", s.handleAPIScripts)
 		r.Post("/", s.handleAPIScripts)
+		r.Post("/test", s.handleAPIScriptsTest)
 		r.Get("/{id}", s.handleAPIScript)
 		r.Put("/{id}", s.handleAPIScript)
 		r.Delete("/{id}", s.handleAPIScript)
+	})
+	r.Route("/api/tasks", func(r chi.Router) {
+		r.Get("/", s.handleAPITasks)
+	})
+	r.Route("/api/alert-channels", func(r chi.Router) {
+		r.Get("/", s.handleAPIAlertChannels)
+		r.Put("/", s.handleAPIAlertChannels)
+		r.Post("/test", s.handleAPIAlertChannelTest)
+	})
+	r.Get("/api/rule-providers", s.handleAPIRuleProviders)
+	r.Get("/api/suggestions", s.handleAPISuggestions)
+	r.Post("/api/suggestions/{index}/confirm", s.handleAPIConfirmSuggestion)
+	r.Post("/api/suggestions/{index}/reject", s.handleAPIRejectSuggestion)
+	r.Get("/api/rule-sources", s.handleAPIRuleSources)
+	r.Post("/api/rule-sources/update", s.handleAPIRuleSourcesUpdate)
+	r.Post("/api/rule-sources/rollback", s.handleAPIRuleSourcesRollback)
+	r.Post("/api/rule-sources/mrs", s.handleAPIRuleSourcesMRS)
+	r.Route("/api/settings", func(r chi.Router) {
+		r.Get("/", s.handleAPISettings)
+		r.Put("/", s.handleAPISettings)
+	})
+	r.Route("/api/template", func(r chi.Router) {
+		r.Get("/", s.handleAPITemplate)
+		r.Put("/", s.handleAPITemplate)
+	})
+	r.Route("/api/override", func(r chi.Router) {
+		r.Get("/", s.handleAPIOverride)
+		r.Put("/", s.handleAPIOverride)
 	})
 	r.Get("/subscribe", s.handleSubscribe)
 

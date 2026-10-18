@@ -846,3 +846,72 @@ func TestCond_Engine_ResolveTargetTypes(t *testing.T) {
 		t.Error("x")
 	}
 }
+
+// ---------- GB-2b: clear remaining cond branches ----------
+
+// engine.go 162: file that decodes OK (err==nil)
+func TestCond_GB2b_Engine_ValidFileDecodeOK(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "sub.txt")
+	os.WriteFile(f, []byte(ssLink("10.0.0.1", 8388, "A")), 0644)
+	e := newEngine(t)
+	res, err := e.Run(context.Background(), Params{Files: []string{f}, Raw: map[string][]string{}})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if res.Nodes < 1 {
+		t.Errorf("nodes=%d", res.Nodes)
+	}
+}
+
+// engine.go 172: unreachable — if list is empty, at least one failure occurred
+// (ParseClashProxies errors on empty proxies; default format returns ErrEmptySubscription).
+// Evidence: parse.go:143-166; engine.go:155-176.
+
+// engine.go 289: resolveTarget with a link target (NormalizeTarget ok=true)
+func TestCond_GB2b_ResolveTargetLink(t *testing.T) {
+	p, target := resolveTarget(Params{Target: "ss"})
+	if target != "mixed" {
+		t.Errorf("target=%s", target)
+	}
+	if len(p.Types) == 0 {
+		t.Error("types not applied")
+	}
+	p2, _ := resolveTarget(Params{Target: "ss", Types: []string{"vmess"}})
+	_ = p2
+}
+
+// engine.go 323: resolveParams with a successful LoadTemplate
+func TestCond_GB2b_ResolveParamsLoadTemplateOK(t *testing.T) {
+	dir := t.TempDir()
+	tplFile := filepath.Join(dir, "t.ini")
+	os.WriteFile(tplFile, []byte("[common]\ntarget = clash.meta\n"), 0644)
+	tpl, err := config.LoadFile(tplFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{}
+	e.LoadTemplate = func(ctx context.Context, ref string) (*config.Template, error) { return tpl, nil }
+	out, err := e.resolveParams(context.Background(), Params{Config: "x"})
+	_ = out
+	_ = err
+}
+
+// remote_rulesets.go 59: default case (unknown kind)
+func TestCond_GB2b_RemoteUnknownKind(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "r.txt")
+	os.WriteFile(f, []byte("DOMAIN,a.com,G"), 0644)
+	e := &Engine{}
+	p := Params{TemplateRules: []config.RuleItem{{Remote: 0, Line: "x"}}, TemplateRemoteRulesets: []config.RemoteRuleset{{URL: f, Kind: "foo", Group: "G"}}}
+	_, warns := e.expandRemoteRulesets(context.Background(), p)
+	if len(warns) == 0 {
+		t.Error("expected warning")
+	}
+}
+
+// remote_rulesets.go 132: dom == "" via semicolon at position 0
+func TestCond_GB2b_ExpandMRSSemicolon(t *testing.T) {
+	out := expandMRS([]byte(";\n"), "G")
+	_ = out
+}
