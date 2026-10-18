@@ -80,6 +80,16 @@ type Provider struct {
 	Raw map[string]any
 }
 
+// RuleProvider 是一个 mihomo rule-provider 定义（规则集来源）。
+// Raw 是 rule-provider 配置的原始 map，与 Provider.Raw 同构：原样透传，
+// 不丢扩展字段（type / behavior / url / path / interval / format / proxy…）。
+type RuleProvider struct {
+	// Name rule-provider 名，rules 段里通过 RULE-SET,<name>,<policy> 引用它。
+	Name string
+	// Raw 原始配置 map，渲染的唯一事实源。
+	Raw map[string]any
+}
+
 // NodeList 是一组节点；顺序敏感（渲染结果受顺序影响）。
 type NodeList []Node
 
@@ -257,4 +267,34 @@ func ParseClashRules(yamlBuf []byte) ([]string, error) {
 		return nil, fmt.Errorf("解析 YAML: %w", err)
 	}
 	return cfg.Rules, nil
+}
+
+// ParseClashRuleProviders 从 Clash/mihomo YAML 配置中提取 rule-providers 定义。
+// 与 ParseClashProviders 同构：直接取原始 map，不做字段归一化，原样透传给渲染器。
+// 配置里没有 rule-providers 时返回 nil（不是错误）——绝大多数订阅没有 rule-provider。
+// 顺序按 rule-provider 名字典序固定，保证渲染产物确定性。
+func ParseClashRuleProviders(yamlBuf []byte) ([]RuleProvider, error) {
+	var cfg struct {
+		RuleProviders map[string]map[string]any `yaml:"rule-providers"`
+	}
+	if err := yaml.Unmarshal(yamlBuf, &cfg); err != nil {
+		return nil, fmt.Errorf("解析 YAML: %w", err)
+	}
+	if len(cfg.RuleProviders) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(cfg.RuleProviders))
+	for n := range cfg.RuleProviders {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]RuleProvider, 0, len(names))
+	for _, n := range names {
+		raw := cfg.RuleProviders[n]
+		if raw == nil {
+			raw = map[string]any{}
+		}
+		out = append(out, RuleProvider{Name: n, Raw: raw})
+	}
+	return out, nil
 }

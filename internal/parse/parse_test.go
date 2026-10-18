@@ -148,3 +148,41 @@ func BenchmarkConvertAndValidate1000(b *testing.B) {
 		}
 	}
 }
+
+// TestDecodeSource_RuleProviders Clash YAML 来源同时解出节点与 rule-providers。
+func TestDecodeSource_RuleProviders(t *testing.T) {
+	yaml := []byte("rule-providers:\n  myrule:\n    type: http\n    behavior: domain\n    url: https://example.com/rule.yaml\nproxies:\n  - name: n1\n    type: ss\n    server: a.example.com\n    port: \"8388\"\n    cipher: aes-256-gcm\n    password: p1\n")
+	d, err := DecodeSource(yaml)
+	if err != nil {
+		t.Fatalf("DecodeSource: %v", err)
+	}
+	if len(d.Nodes) != 1 {
+		t.Fatalf("节点数 = %d, want 1", len(d.Nodes))
+	}
+	if len(d.RuleProviders) != 1 || d.RuleProviders[0].Name != "myrule" {
+		t.Fatalf("ruleprovider = %+v", d.RuleProviders)
+	}
+	if d.RuleProviders[0].Raw["url"] != "https://example.com/rule.yaml" {
+		t.Errorf("ruleprovider url 未保留: %v", d.RuleProviders[0].Raw["url"])
+	}
+	if len(d.Warnings) != 0 {
+		t.Errorf("Warnings = %v, want empty", d.Warnings)
+	}
+}
+
+// TestDecodeSource_LinksNoRuleProviders 分享链接来源没有 rule-provider 概念。
+func TestDecodeSource_LinksNoRuleProviders(t *testing.T) {
+	d, err := DecodeSource(readFixture(t, "mixed-subscription.txt"))
+	if err != nil {
+		t.Fatalf("DecodeSource: %v", err)
+	}
+	if len(d.Nodes) == 0 {
+		t.Fatal("应解析出节点")
+	}
+	if d.RuleProviders != nil {
+		t.Errorf("链接来源不应有 rule-provider: %v", d.RuleProviders)
+	}
+	if d.Warnings != nil {
+		t.Errorf("链接来源 Warnings 应为 nil: %v", d.Warnings)
+	}
+}

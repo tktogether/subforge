@@ -105,7 +105,7 @@ func Sniff(buf []byte) (SniffResult, error) {
 	return SniffResult{}, fmt.Errorf("无法识别订阅内容形态（前 64 字节: %q）", preview(b))
 }
 
-// Decoded 是一次来源解码的完整结果：节点 + 透传的 proxy-provider 定义 + 内置规则。
+// Decoded 是一次来源解码的完整结果：节点 + 透传的 proxy-provider 定义 + 内置规则 + rule-provider 定义。
 type Decoded struct {
 	// Nodes 解析出的节点（原始 config map）。
 	Nodes []map[string]any
@@ -114,6 +114,10 @@ type Decoded struct {
 	// Rules Clash YAML 里的 rules 规则行；分享链接来源恒为空。
 	// 底层能力：供后续 SQLite 持久化导入扫描复用，不在转换路径上隐式合并。
 	Rules []string
+	// RuleProviders Clash YAML 里的 rule-providers 定义；分享链接来源恒为空。
+	RuleProviders []model.RuleProvider
+	// Warnings 解析告警（如 rule-providers 提取失败）；非阻断。
+	Warnings []string
 }
 
 // DecodeSubscription 把订阅原文解析为节点列表（原始 config map），自动识别
@@ -143,7 +147,13 @@ func DecodeSource(buf []byte) (Decoded, error) {
 		providers, _ := model.ParseClashProviders(sniff.Decoded)
 		// 内置规则同样不该拖垮节点：规则是附加项，提取失败只记 nil。
 		rules, _ := model.ParseClashRules(sniff.Decoded)
-		return Decoded{Nodes: proxies, Providers: providers, Rules: rules}, nil
+		// rule-providers 是附加项：解析失败只记告警，不拖垮节点。
+		ruleProviders, err := model.ParseClashRuleProviders(sniff.Decoded)
+		var warnings []string
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("解析 rule-providers 失败: %v", err))
+		}
+		return Decoded{Nodes: proxies, Providers: providers, Rules: rules, RuleProviders: ruleProviders, Warnings: warnings}, nil
 	default:
 		nodes, err := convert.ConvertsV2Ray(sniff.Decoded)
 		if err != nil {
