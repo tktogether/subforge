@@ -35,6 +35,10 @@ export interface Rule {
   resolve_dns: boolean
   enabled: boolean
   sort_order: number
+  source?: string
+  raw?: string
+  origin_key?: string
+  group_name?: string
 }
 
 export interface SubToken {
@@ -193,19 +197,52 @@ export interface TaskEntry {
 }
 
 export interface RuleProvider {
+  id: number
   name: string
+  raw_json: string
   source: string
   enabled: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SuggestionAnomaly {
+  Type: string
+  Message: string
+  Source: string
+  Timestamp: string
+  Raw: string
 }
 
 export interface Suggestion {
-  index: number
-  message: string
+  Anomaly: SuggestionAnomaly
+  Action: string
+  Rule: string
+  Reason: string
+  AutoApply: boolean
 }
 
 export interface SettingItem {
   key: string
   value: string
+}
+
+export interface RuleSource {
+  name: string
+  url: string
+  format: string
+  dir: string
+  versions: string[]
+  latest: string
+}
+
+export interface RuleSourceUpdateResult {
+  source: string
+  version: string
+  path: string
+  from_cache: boolean
+  err: string
 }
 
 export interface Pipeline {
@@ -265,9 +302,20 @@ export const endpoints = {
 
   listRuleProviders: (source?: string, enabled?: boolean): Promise<RuleProvider[]> =>
     api.get<{ rule_providers: RuleProvider[] }>('/api/rule-providers', { query: { source, enabled } }).then((r) => r.rule_providers),
+  bulkRules: (body: { ids?: number[]; source?: string; enabled: boolean }): Promise<{ updated: number }> =>
+    api.post<{ updated: number }>('/api/rules/bulk', body),
   listSuggestions: (): Promise<Suggestion[]> => api.get<{ suggestions: Suggestion[] }>('/api/suggestions').then((r) => r.suggestions),
   confirmSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/confirm', {}),
   rejectSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/reject', {}),
+  applySuggestions: (): Promise<{ applied: number }> => api.post<{ applied: number }>('/api/suggestions/apply', {}),
+  listRuleSources: (): Promise<{ manifest_path: string; sources: RuleSource[] }> =>
+    api.get<{ manifest_path: string; sources: RuleSource[] }>('/api/rule-sources'),
+  updateRuleSources: (): Promise<{ results: RuleSourceUpdateResult[] }> =>
+    api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update', {}),
+  rollbackRuleSource: (name: string): Promise<{ path: string }> =>
+    api.post<{ path: string }>('/api/rule-sources/rollback', { name }),
+  generateMRS: (name: string, behavior: string): Promise<{ path: string; bytes: number }> =>
+    api.post<{ path: string; bytes: number }>('/api/rule-sources/mrs', { name, behavior }),
 
   listSettings: (): Promise<SettingItem[]> => api.get<{ settings: SettingItem[] }>('/api/settings').then((r) => r.settings),
   updateSettings: (body: SettingItem[]): Promise<OkResponse> => api.put<OkResponse>('/api/settings', body),

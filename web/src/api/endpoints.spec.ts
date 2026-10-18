@@ -394,4 +394,49 @@ it('listScripts 解包 .scripts', async () => {
     const r = await endpoints.updateSettings([{ key: 'k', value: 'v' }])
     expect(r.ok).toBe(true)
   })
+
+  it('bulkRules POST /api/rules/bulk', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, updated: 3 }))
+    const r = await endpoints.bulkRules({ ids: [1, 2], enabled: true })
+    expect(r.updated).toBe(3)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules/bulk', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('applySuggestions POST /api/suggestions/apply', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, applied: 2 }))
+    const r = await endpoints.applySuggestions()
+    expect(r.applied).toBe(2)
+    expect(fetchMock).toHaveBeenCalledWith('/api/suggestions/apply', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('listRuleSources GET /api/rule-sources 解包', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, manifest_path: '/m', sources: [{ name: 's1' }] }))
+    const r = await endpoints.listRuleSources()
+    expect(r.manifest_path).toBe('/m')
+    expect(r.sources).toHaveLength(1)
+  })
+
+  it('updateRuleSources POST /api/rule-sources/update', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, results: [{ name: 's1', status: 'ok' }] }))
+    const r = await endpoints.updateRuleSources()
+    expect(r.results).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/update', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('rollbackRuleSource POST /api/rule-sources/rollback body {name}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, path: '/rb/v1' }))
+    const r = await endpoints.rollbackRuleSource('s1')
+    expect(r.path).toBe('/rb/v1')
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual({ name: 's1' })
+  })
+
+  it('generateMRS POST /api/rule-sources/mrs body {name,behavior}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, path: '/p/v1.mrs', bytes: 1024 }))
+    const r = await endpoints.generateMRS('s1', 'ipcidr')
+    expect(r.path).toBe('/p/v1.mrs')
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual({ name: 's1', behavior: 'ipcidr' })
+  })
+
 })
