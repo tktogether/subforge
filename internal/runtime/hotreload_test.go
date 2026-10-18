@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -116,13 +117,30 @@ func TestWatch_InitialAndChange(t *testing.T) {
 	}
 
 	write(t, p, "[common]\ntoken = two\n")
-	select {
-	case second := <-got:
-		if second != "[common]\ntoken = two\n" {
-			t.Errorf("变更回调内容 = %q", second)
+
+	// os.WriteFile 是 truncate + write，非原子：轮询可能在写入过程中读到截断/写了一半的内容。
+	// 因此不能只看「第一次回调」，要循环等到完整新内容；中间值只允许是旧内容或新内容的前缀，
+	// 其它值说明回调拿到了不该出现的内容（真 bug，不能掩盖）。
+	const (
+		oldContent  = "[common]\ntoken = one\n"
+		wantContent = "[common]\ntoken = two\n"
+	)
+	deadline := time.After(2 * time.Second)
+waitForChange:
+	for {
+		select {
+		case v := <-got:
+			switch {
+			case v == wantContent:
+				break waitForChange
+			case v == oldContent || strings.HasPrefix(wantContent, v):
+				// 中间态（截断/半写），继续等完整新内容。
+			default:
+				t.Errorf("变更回调内容 = %q（既不是旧内容，也不是新内容的前缀）", v)
+			}
+		case <-deadline:
+			t.Fatal("修改文件后 2 秒内未回调出完整新内容")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("修改文件后未触发回调")
 	}
 
 	cancel()
