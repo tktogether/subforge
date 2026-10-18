@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -99,20 +98,12 @@ func (s *Server) handleAPIHistory(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, rows)
 }
 
+// handleAPIPipelines 是 GET /api/pipelines 的入口。plan §4.1 要求合并 DB + 模板两条来源，
+// 实现放在 pipelines.go（handleAPIPipelinesMerged）；这里保留函数名与路由表不动，
+// 避免与既有 BUG-3 回归用例（web_ui_test.go:469）的直接调用点冲突。
+// 模板加载失败仍按 502 写出，不吞错。
 func (s *Server) handleAPIPipelines(w http.ResponseWriter, r *http.Request) {
-	// 模板加载失败必须报出来：吞掉错误会让 Rules/Convert 页把"config 写错"
-	// 显示成"模板里没有命名管线"，用户会去翻一个根本没错的地方。
-	p, err := s.engine.ResolveTemplates(r.Context(), r.URL.Query().Get("config"))
-	if err != nil {
-		s.fail(w, r, http.StatusBadGateway, err)
-		return
-	}
-	names := make([]string, 0, len(p.Pipelines))
-	for name := range p.Pipelines {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	s.writeJSON(w, http.StatusOK, names)
+	s.handleAPIPipelinesMerged(w, r)
 }
 
 func (s *Server) handleAPITargets(w http.ResponseWriter, r *http.Request) {
