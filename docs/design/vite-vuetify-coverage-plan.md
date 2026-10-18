@@ -17,16 +17,18 @@
 
 1. **换栈**：删掉 `internal/api/web/` 下的手写 HTML/CSS/JS，前端改为 Vite + Vue 3 + Vuetify + TypeScript 工程，源码在 `web/`，构建产物回灌给 Go embed。
 2. **门禁 A = 函数覆盖率（function coverage）= 100%**：每个函数至少被执行一次。前端由 `vitest run --coverage` 的 `functions` 阈值强制；后端由 `internal/tools/coveragegate -min-func 100` 强制。
-3. **门禁 B = 条件覆盖率（condition coverage）= 80%**：每个布尔条件的真值/假值都要被取到，达标线 80%。前端由 `vitest run --coverage` 的 `branches` 阈值强制（V8 的 branches 即条件/分支覆盖）；后端由 `internal/tools/condgate` 判定（§4.2 说明为什么不用 gobco 直接当门禁）。
+3. **门禁 B = 条件覆盖率（condition coverage）= 80%**：每个布尔条件的真值/假值都要被取到，达标线 80%。前端由 `vitest run --coverage` 的 `branches` 阈值强制（V8 的 branches 即条件/分支覆盖）；后端由 `internal/tools/condgate` 判定，且**分两层跑**：**快层**（`-engine=profile`，判定覆盖近似）每次提交跑、可反复跑；**准层**（`-engine=gobco`，gobco 真条件覆盖）在大验收点跑（§4.2）。
 
 **两个指标都加在前端和后端上**，即 2 × 2 = 4 个判定：
 
 | 侧 | A：函数覆盖 100% | B：条件覆盖 80% |
 | --- | --- | --- |
 | **前端**（`web/`，Vue/TS） | `coverage.thresholds.functions: 100` | `coverage.thresholds.branches: 80` |
-| **后端**（`./internal/...`，Go） | `coveragegate -min-func 100` | `condgate -min 80` |
+| **后端**（`./internal/...`，Go） | `coveragegate -min-func 100` | 快层 `condgate -engine=profile -min 80`（每次提交）<br>准层 `condgate -engine=gobco -min 80`（大验收点，留档） |
 
 > 语句覆盖与行覆盖**不作为门禁**（上位指令只点名函数与条件两项），但仍然输出报告作为定位工具。是否需要补设阈值见附录 B 开放点 8。
+>
+> **两条纪律**（2026-10-18 定）：① 快层可以反复跑，准层必须跑——任何「宣布达标」的时刻都必须用准层数字；② 两个引擎的分数**不可直接比较**，记录时必须标注引擎与命令原文。
 ### 0.2 指标口径的来源（含一次修正）
 
 记录两次修订，避免后来者按旧版理解施工：
@@ -35,7 +37,7 @@
 | --- | --- | --- | --- |
 | 第一版 | m15836「前后端加覆盖率门禁 A100% B 80%」 | A = 前端、B = 后端；前端四项覆盖率全 100%，后端语句覆盖 80% | **已作废** |
 | 第二版 | m16017「是A层和B层」 | 确认 A/B 是「层」，但仍落地成前端层/后端层 | **已作废** |
-| **本版** | **m16037「函数覆盖A 条件覆盖 B」** | **A = 函数覆盖率 100%、B = 条件覆盖率 80%，两个指标同时施加于前端与后端** | **生效** |
+| **本版** | **m16037「函数覆盖A 条件覆盖 B」** | **A = 函数覆盖率 100%、B = 条件覆盖率 80%，两个指标同时施加于前端与后端**；后端条件覆盖分快层 / 准层两层执行（§4.2） | **生效** |
 
 ### 0.2b 四个覆盖率名词在本计划里的确切含义
 
@@ -480,10 +482,17 @@ Go 标准工具链**只有语句覆盖**，没有条件覆盖。唯一现成的�
 | 与 vendor 的关系 | gobco 把包复制到临时目录并重建依赖，**绕过本仓库的 `vendor/`** | 离线 / 内网 CI 会失败 |
 | 机器可读输出 | `-stats <file>` 写 JSON；`-branch` 切换分支覆盖；`-list-all` 列出全部条件 | 可被包装 |
 
-**选型决定**：
+**选型决定（双层，2026-10-18 定）**：
 
-- **每次提交的门禁 B（后端）= 自研 `internal/tools/condgate`**，用 Go 覆盖 profile + AST 做**判定覆盖（decision coverage）**。纯标准库（`go/parser` + `go/ast`），与门禁 A 共用同一次 `go test -coverprofile`，秒级完成、不碰网络、走 vendor。
-- **`gobco` 降级为 nightly 的精确校验**（逐包运行，结果不阻塞提交）。它是**唯一真正测量条件覆盖**的工具，所以不能删——只是它的耗时不可界定、无阈值语义、且绕过 `vendor/` 需要网络，不适合每次提交。
+| 层 | 何时跑 | 引擎 | 语义 | 耗时 |
+| --- | --- | --- | --- | --- |
+| **快层** | 每次提交、本地反复跑（改一行就能跑一次） | `condgate -engine=profile` | 判定覆盖**近似**（profile + AST） | 秒级、走 vendor、不碰网络 |
+| **准层** | 大验收点：P10 收口 / P11 流水线接线后 / 发版前 / nightly | `condgate -engine=gobco` | **真条件覆盖**（gobco v1.3.4 逐包） | 单包 0.8 s ~ > 4 min，总计不可界定；需要网络与完整 env |
+
+两条硬纪律：
+
+1. **快层可以反复跑，准层必须跑**。日常迭代用快层拿即时反馈；任何「宣布达标」的时刻（P10 完成、CI 接线完成、发版）都必须用准层的数字，不能用快层数字顶替。
+2. **两个引擎的分数不可直接比较**（见下表），任何记录必须标注引擎与命令原文。混着报数等于没有数。
 
 > 这是本计划**唯一一处「门禁指标是近似值」**的地方。如果上位要求的是 gobco 意义上的严格条件覆盖，必须接受「CI 增加十几分钟到几十分钟、且需要网络」——这个取舍见附录 B 开放点 9，**由人拍板，不由实现者偷偷决定**。
 
@@ -504,13 +513,16 @@ Go 标准工具链**只有语句覆盖**，没有条件覆盖。唯一现成的�
 
 | 项 | 规格 |
 | --- | --- |
-| 入口 | `go run ./internal/tools/condgate -profile coverage.out -min 80 [-top N] [-json]` |
+| 入口 | `condgate -engine=profile -profile coverage.out -min 80 [-top N] [-json]`（快层）<br>`condgate -engine=gobco -packages ./internal/... -min 80 [-top N] [-json]`（准层） |
+| `-engine` | `profile`（默认）：解析 profile + AST，判定覆盖近似；`gobco`：逐包调用 `gobco.exe`，解析 `Condition coverage: N/M` 并聚合。**两个引擎共用同一套阈值判定、输出格式与退出码** |
 | 输入 | `go test -coverprofile=... -covermode=atomic` 的 profile（`set` / `count` 同样可用，三者都保留「块是否被执行」） |
 | 算法 | ① 解析 profile 得到每个文件的块区间与计数 → ② `go/parser` 解析源文件 → ③ 对每个 `IfStmt` / `ForStmt` / `RangeStmt` / `SwitchStmt` 定位真臂与假臂对应的块 → ④ 两臂计数都 > 0 记 1，否则记 0 |
 | 输出 | 文本：`条件覆盖: <covered>/<total> = <pct>%`，随后列未覆盖判定（`file:line:col: 条件 "..." 只走过真值`）；`-json` 输出机器可读结果 |
 | 退出码 | `0` 达标 / `1` 低于门禁 / `2` 参数、profile 或源码解析错误 |
 | 自身测试 | ≥ 90%——它是门禁工具，测试不能比被测物还松 |
-| 与 coveragegate 的关系 | 两个独立命令、同一份 profile；不合并，避免一个工具的 bug 同时污染两个门禁 |
+| 与 coveragegate 的关系 | 两个独立命令；快层与门禁 A 共用同一份 profile，不合并，避免一个工具的 bug 同时污染两个门禁 |
+| 准层的前置条件 | `gobco.exe` 在 PATH（`go install github.com/rillig/gobco@v1.3.4`）；必须显式注入 USERPROFILE / HOME / GOPATH / GOMODCACHE / GOCACHE / ComSpec，否则内层 `go test` 会挂起；**逐包串行**（多包一次调用会 panic） |
+| 准层的产物 | 每包一行 `pkg exit=N cov=X/Y Ts` + 汇总 `条件覆盖(gobco): <covered>/<total> = <pct>%`，写入 `gobco-condition.txt` 随 CI artifact 上传 |
 
 ### 4.4 门禁口径与排除项（A、B 共用）
 
@@ -561,7 +573,13 @@ go vet ./...
 go test -coverprofile=coverage.out -covermode=atomic ./internal/...
 go tool cover -func=coverage.out | Select-Object -Last 1                          # 人工对照（语句）
 go run ./internal/tools/coveragegate -profile coverage.out -min 80 -min-func 100   # 门禁 A + 语句参考
-go run ./internal/tools/condgate -profile coverage.out -min 80 -top 20             # 门禁 B（快速预检）
+go run ./internal/tools/condgate -engine=profile -profile coverage.out -min 80 -top 20   # 门禁 B 快层（可反复跑）
+```
+
+**大验收点**（P10 收口 / CI 接线后 / 发版前 / nightly）追加准层，**以它的数字为准**：
+
+```
+go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80 -top 20 > gobco-condition.txt
 ```
 
 > **Windows 注意**：PowerShell 会把 `-coverprofile=coverage.out` 拆成两个参数，报 `FAIL .out [setup failed]`。必须用 `cmd /c` 脚本或 Node `execFileSync('go', [argv...])` 直接传参，不要把这条命令贴进 pwsh。
@@ -761,7 +779,8 @@ go run ./internal/tools/condgate -profile coverage.out -min 80 -top 20          
 | pnpm 缓存 | `actions/cache` 缓存 `~/.pnpm-store`，key 用 `pnpm-lock.yaml` 的 hash | 安装从 11 s 降到 2 s 级 |
 | 覆盖率产物 | `web` job 上传 `web/coverage/` 为 artifact（失败时用于定位） | 门禁失败必须能立刻看到是哪个文件 |
 | `test` job 依赖 `web` | `needs: web` + `actions/download-artifact` 取 `web/dist` 放到 `internal/api/web/dist` | **否则 `//go:embed all:web/dist` 编译失败**（见 §6.1） |
-| 新增 `coverage` job | `needs: web` → `go test -coverprofile=coverage.out -covermode=atomic ./internal/...` → `coveragegate -profile coverage.out -min 80 -min-func 100` → `condgate -profile coverage.out -min 80` | 后端门禁 A（函数 100%）与门禁 B（条件 80%）；两个工具共用同一份 profile |
+| 新增 `coverage` job | `needs: web` → `go test -coverprofile=coverage.out -covermode=atomic ./internal/...` → `coveragegate -profile coverage.out -min 80 -min-func 100` → `condgate -engine=profile -profile coverage.out -min 80` | 后端门禁 A（函数 100%）与门禁 B 快层；两个工具共用同一份 profile、秒级 |
+| 新增 `condition-nightly` job | `schedule`（每日）+ `workflow_dispatch` → 装 gobco v1.3.4 → `condgate -engine=gobco -packages ./internal/... -min 80` → 上传 `gobco-condition.txt` | 门禁 B **准层**：真条件覆盖。**不阻塞 PR**（耗时不可界定），但红了必须开 issue |
 | 交叉编译矩阵 | `needs: web` | 同上，embed 目录必须先存在 |
 | vendored 模式 | 保持 `-mod=vendor` | 本仓库已 vendor，不要动 |
 
@@ -811,7 +830,19 @@ jobs:
         with: { name: web-dist, path: internal/api/web/dist }
       - run: go test -coverprofile=coverage.out -covermode=atomic ./internal/...
       - run: go run ./internal/tools/coveragegate -profile coverage.out -min 80 -min-func 100 -top-func 20
-      - run: go run ./internal/tools/condgate -profile coverage.out -min 80 -top 20
+      - run: go run ./internal/tools/condgate -engine=profile -profile coverage.out -min 80 -top 20
+
+  condition-nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go install github.com/rillig/gobco@v1.3.4
+      - run: go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80 -top 20 | tee gobco-condition.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: gobco-condition, path: gobco-condition.txt }
 ```
 
 ### 7.2 Makefile 目标
@@ -862,8 +893,8 @@ jobs:
 | **P7** 交互页 | 转换 / 订阅 / 日志 | 同上 | `feat(web): 转换/订阅/日志页` |
 | **P8** Go 接线 | `internal/api/embed.go` `internal/api/server.go` 路由改造 + `internal/api/web/dist/.gitkeep` + .gitignore 放行 | `go build ./...`（需先 `web-build`） | `feat(api): 接入 Vite 产物（embed + SPA fallback）` |
 | **P9** 删旧前端 + 改测试 | 删除 `internal/api/web/` 旧资源；改写 `web_ui_test.go` `web_extra_test.go` `subweb_compat_test.go` `server_test.go` | `go test ./internal/api/...` | `refactor(api): 移除旧手写前端并改写页面测试` |
-| **P10** 后端补测（门禁 A 函数 100% + 门禁 B 条件 80%） | 按 §4.5 清单补测：重点是 `internal/store`（0%→100% 函数）与 `internal/subforge`（0%→100% 函数），其余包补齐剩余零覆盖函数；同时扩 `coveragegate` 的 `-min-func`、新建 `condgate` | `go test -coverprofile=coverage.out ./internal/...` + `coveragegate -min 80 -min-func 100` + `condgate -min 80` | `test: 后端函数覆盖 100% + 条件覆盖 ≥80%（门禁 A/B）` |
-| **P11** CI + Makefile | `.github/workflows/ci.yml` 新增 web / coverage job，test 与交叉编译加 `needs: web`；Makefile 目标 | 本地跑 `verify` 全绿 | `ci: 前后端函数/条件覆盖率双门禁 + Vite 构建接入流水线` |
+| **P10** 后端补测（门禁 A 函数 100% + 门禁 B 条件 80%） | 按 §4.5 清单补测：重点是 `internal/store`（0%→100% 函数）与 `internal/subforge`（0%→100% 函数），其余包补齐剩余零覆盖函数；同时扩 `coveragegate` 的 `-min-func`、新建 `condgate`（两个引擎）。**迭代期反复跑快层；收口时跑准层** | 迭代：`coveragegate -min 80 -min-func 100` + `condgate -engine=profile -min 80`；**收口**：`condgate -engine=gobco -packages ./internal/... -min 80` | `test: 后端函数覆盖 100% + 条件覆盖 ≥80%（门禁 A/B）` |
+| **P11** CI + Makefile | `.github/workflows/ci.yml` 新增 web / coverage / condition-nightly job，test 与交叉编译加 `needs: web`；Makefile 目标 | 本地跑 `verify` 全绿；**接线完成后跑一次准层并留档** | `ci: 前后端函数/条件覆盖率双门禁 + Vite 构建接入流水线` |
 | **P12** 文档收口 | 更新 `README.md` 的构建说明；`docs/design/web-ui-rewrite-plan.md` §5/§6 加一行指向本文件 | 人工核对 | `docs: 更新构建与门禁说明` |
 
 > P1–P7 是纯前端，P8–P9 是 Go 接线，P10 是后端补测，P11 是流水线。**P10 可以与前端的 P5–P7 并行**（互不碰文件），但提交必须分开，否则一次提交混两类改动、回滚粒度变粗。
@@ -880,7 +911,7 @@ jobs:
 | `v-data-table` 的插槽在测试里不渲染 | 中 | ResourcePage 行内按钮测不到 | 用 `mount` + 真实 Vuetify 插件（不是 `shallow`）；断言用 `data-testid` | 若仍不行，把行内按钮改为独立列渲染而非插槽 |
 | 后端条件覆盖 80% 在补测后因重构回落 | 中 | CI 红 | 目标定 85%（§4.6），留 5 点余量 | 补测即可，不降阈值 |
 | 后端函数覆盖 100% 是硬边界、无余量 | 高 | 任何新增未测函数立刻 CI 红 | 纪律：新增函数必须同时新增测试；PR 模板写明 | 无——这条不允许降阈值 |
-| gobco 逐包重建依赖、绕过 vendor | 中 | 离线 / 内网 CI 失败 | 见 §4.2：默认用 condgate，gobco 仅作 nightly 精确校验 | 改用 condgate |
+| gobco 逐包重建依赖、绕过 vendor | 中 | 准层在离线 / 内网 CI 失败 | 准层只在 nightly 与人工验收点跑；快层永远可用。CI 里显式注入全部 env | 准层临时降级为手动本地跑，但**必须留档**，不能静默跳过 |
 | 前端只 gate 函数与条件，语句 / 行覆盖不设阈值 | 中 | 可能留下大段未执行的行 | 报告仍然输出并上传 artifact，review 时人工看 | 需要时再补阈值（附录 B 开放点 8） |
 | 覆盖率被「为测而测」的仪式测试灌水 | 中 | 门禁失去意义 | 每个新增测试必须断言行为（返回值/状态/副作用），不允许只有 `expect(true).toBe(true)` | code review 拒绝 |
 | 旧页面测试改写时丢防线 | 中 | 回归漏网 | §6.3 的「保留原则」：只改与旧前端强耦合的断言 | 从 git 历史取回被删用例 |
@@ -902,7 +933,8 @@ jobs:
 | 4 | 后端构建与静态检查 | `go build ./...` `go vet ./...` 均 exit 0 |
 | 5 | 后端单测全绿 | `go test ./...` 无 FAIL |
 | 6 | **门禁 A：后端函数覆盖 100%** | `coveragegate -min-func 100` 输出 `PASS` 且退出码 0 |
-| 6b | **门禁 B：后端条件覆盖 ≥80%（目标 85%）** | `condgate -min 80`（严格模式用 gobco 聚合）退出码 0 |
+| 6b | **门禁 B 快层：后端判定覆盖 ≥80%（目标 85%）** | `condgate -engine=profile -min 80` 退出码 0（每次提交都要） |
+| 6c | **门禁 B 准层：后端真条件覆盖 ≥80%** | `condgate -engine=gobco -packages ./internal/... -min 80` 退出码 0 + `gobco-condition.txt` 留档（**大验收点必须**：P10 收口 / CI 接线后 / 发版前） |
 | 7 | SPA 路由可用 | 二进制启动后 `curl -i http://127.0.0.1:8080/airports` 返回 200 + `<div id="app">` |
 | 8 | 静态资源 Content-Type 正确 | `curl -i .../assets/<hash>.js` 返回 `application/javascript` |
 | 9 | 不存在的资源返回 404 而不是 HTML | `curl -i .../assets/nope.js` 返回 404 |
@@ -935,7 +967,7 @@ jobs:
 | 6 | 脚本页 / 任务页是否在本轮实现 | 否，用占位（§5.1） | 二者后端已存在，属前序 plan §3.6 / §4 的范围 |
 | 7 | 后端条件覆盖目标是否定 85% | 是（§4.6） | 影响 P10 工作量约 +10% |
 | 8 | 前端是否也给 lines / statements 设阈值 | 本计划不设（§3.1），只输出报告 | 设了会与函数 / 条件门禁重复；需要时再加 |
-| 9 | 后端门禁 B 是否接受 condgate 的判定覆盖近似 | 见 §4.2：默认接受并明示差异；严格条件覆盖需 gobco 逐包（慢、绕 vendor） | 若上位要求严格 gobco 语义，改用 gobco 聚合脚本 |
+| 9 | ~~后端门禁 B 是否接受 condgate 的判定覆盖近似~~ **已定（2026-10-18，用户指令）：快层（profile 近似）多次跑、准层（gobco 真条件覆盖）在大验收点跑** | 见 §4.2 双层表与两条纪律 | 准层不阻塞 PR，但大验收点必须留档 |
 
 ---
 
