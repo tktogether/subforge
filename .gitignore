@@ -46,4 +46,5 @@ subforge-linux-amd64
 
 # CI 覆盖率产物
 coverage.out
-gobco-condition.txt
+# 准层 gobco 产物（condgate 的 gobco 引擎输出，含分片中间文件）
+gobco-*

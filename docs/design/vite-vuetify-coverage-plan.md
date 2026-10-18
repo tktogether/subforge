@@ -952,7 +952,21 @@ jobs:
 - 门禁 A：`go run ./internal/tools/coveragegate -profile coverage.out -min 80 -min-func 100` → **函数 794/794 = 100%**，`uncovered_functions=null`；语句 92.51%
 - 门禁 B 快层：`go run ./internal/tools/condgate -engine=profile -profile coverage.out -min 80` → **条件 1955/2304 = 84.85%**，exit 0（阈值 80%）
 - 前端：`vue-tsc --noEmit` 0 错误；`vitest run` **33 files / 319 tests** 全绿；全量覆盖率 **函数/行/语句 100%、分支 98.2%**
-- 门禁 B 准层：`go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80` → 结果见仓库根 `gobco-condition.txt`，该文件不入库（Lead 后台跑，数字以该文件为准，本小节不编造）
+- **6c 准层（真条件覆盖，gobco 引擎）**：实测 **4553/5484 = 83.023%** >= 80% 阈值 → 通过。
+  偏离说明：单进程全量 `condgate -engine=gobco -packages ./internal/... -min 80` 在本机（i5-13490F，10 核/16 逻辑核）
+  跑 80+ 分钟仍无输出（condgate 只在全部包跑完后一次性打印汇总），故改为 6 片并行 + 聚合；
+  gobco 逐包可加（total = 2 x len(entries) 之和、covered = 每条条件 (TrueCount>0)+(FalseCount>0) 之和），
+  6 个不相交子集的 covered/total 相加等于全量。分片数字见下表。
+
+  | 片 | 包 | covered/total | percent |
+  | --- | --- | --- | --- |
+  | 1 | api, buildinfo, model, mrs, parse | 1124/1392 | 80.747% |
+  | 2 | config, convert, fetch, manifest, mcp | 993/1126 | 88.188% |
+  | 3 | render, render/clashmeta, render/lineform, render/mellow, render/registry | 475/572 | 83.042% |
+  | 4 | render/sharelink, render/singbox, render/sssub, rulebot, ruleset | 563/660 | 85.303% |
+  | 5 | runtime, scheduler, store, subforge, subscheck | 468/586 | 79.863% |
+  | 6 | template, tools/condgate, tools/coveragegate, traffic, transform | 930/1148 | 81.010% |
+  | **聚合** | 30 个包 | **4553/5484** | **83.023%** |
 
 说明：本机无 `make`，用 `scripts/verify.cmd` 等价替代（已实测 exit 0）；CI 的 `condition-nightly` job 跑的就是上面那条准层命令。
 ---
