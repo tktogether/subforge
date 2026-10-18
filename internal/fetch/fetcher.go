@@ -35,15 +35,18 @@ func label(s Source) string {
 
 // Result 是单个来源的拉取结果。
 type Result struct {
-	Source    Source
-	Content   []byte            // 拉取到的原文
-	Sniff     parse.SniffResult // 内容形态识别结果（失败时为零值）
-	HTTPCode  int
-	Etag      string
-	Modified  time.Time
-	FromCache bool
-	Size      int
-	Err       error
+	Source   Source
+	Content  []byte            // 拉取到的原文
+	Sniff    parse.SniffResult // 内容形态识别结果（失败时为零值）
+	HTTPCode int
+	Etag     string
+	Modified time.Time
+	// SubscriptionUserinfo 是上游 subscription-userinfo 响应头原文（upload/download/total/expire）。
+	// 缓存命中（304）或上游未提供时为空字符串；调用方不得用空值覆盖已采集到的流量数据。
+	SubscriptionUserinfo string
+	FromCache            bool
+	Size                 int
+	Err                  error
 }
 
 // PermanentError 标记不可重试的错误（资源下线、鉴权失败等）。
@@ -257,13 +260,14 @@ func (f *Fetcher) fetchOnce(ctx context.Context, src Source) (Result, error) {
 // finish 附加形态识别结果；识别失败返回错误（原文仍保留在 Result.Content 中）。
 func (f *Fetcher) finish(src Source, body []byte, fromCache bool, resp *http.Response) (Result, error) {
 	res := Result{
-		Source:    src,
-		Content:   body,
-		HTTPCode:  resp.StatusCode,
-		Etag:      resp.Header.Get("Etag"),
-		Modified:  parseModified(resp),
-		FromCache: fromCache,
-		Size:      len(body),
+		Source:               src,
+		Content:              body,
+		HTTPCode:             resp.StatusCode,
+		Etag:                 resp.Header.Get("Etag"),
+		Modified:             parseModified(resp),
+		SubscriptionUserinfo: resp.Header.Get("Subscription-Userinfo"),
+		FromCache:            fromCache,
+		Size:                 len(body),
 	}
 	sniff, err := parse.Sniff(body)
 	res.Sniff = sniff

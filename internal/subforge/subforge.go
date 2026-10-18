@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tktogether/subforge/internal/store"
+	"github.com/tktogether/subforge/internal/traffic"
 )
 
 // Manager 是订阅管理的业务入口。
@@ -47,7 +48,9 @@ type Airport = store.Airport
 // remarks 列可为 NULL，用 COALESCE 兜底，避免扫描时报 "converting NULL to string"。
 func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, created_at, updated_at FROM airports ORDER BY sort_order, id")
+		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
+			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
+			"created_at, updated_at FROM airports ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +58,9 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 	out := []Airport{}
 	for rows.Next() {
 		var a Airport
-		if err := rows.Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
+			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr,
+			&a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -67,8 +72,12 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 func (m *Manager) GetAirport(ctx context.Context, id int64) (*Airport, error) {
 	var a Airport
 	err := m.db.Raw().QueryRowContext(ctx,
-		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, created_at, updated_at FROM airports WHERE id = ?", id).
-		Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder, &a.CreatedAt, &a.UpdatedAt)
+		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
+			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
+			"created_at, updated_at FROM airports WHERE id = ?", id).
+		Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
+			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr,
+			&a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("订阅 %d 不存在", id)
 	}
@@ -104,6 +113,26 @@ func (m *Manager) UpdateAirport(ctx context.Context, id int64, name, subscriptio
 // DeleteAirport 删除订阅。
 func (m *Manager) DeleteAirport(ctx context.Context, id int64) error {
 	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM airports WHERE id = ?", id)
+	return err
+}
+
+// UpdateAirportTraffic 回写一次流量采集结果。
+//
+// u != nil：覆盖 upload/download/total/expire/node_count/traffic_at，并清空 traffic_err；
+// u == nil：只写 traffic_err（errMsg 为空即清空），**保留上一次成功采集的流量值**——
+// 缓存命中（304）或上游临时故障时，不能让下游客户端看到的余额被清零。
+func (m *Manager) UpdateAirportTraffic(ctx context.Context, id int64, u *traffic.Usage, nodeCount int, errMsg string) error {
+	now := time.Now()
+	if u != nil {
+		_, err := m.db.Raw().ExecContext(ctx,
+			"UPDATE airports SET upload = ?, download = ?, total = ?, expire = ?, "+
+				"node_count = ?, traffic_at = ?, traffic_err = '', updated_at = ? WHERE id = ?",
+			u.Upload, u.Download, u.Total, u.Expire, nodeCount, now.Unix(), now, id)
+		return err
+	}
+	_, err := m.db.Raw().ExecContext(ctx,
+		"UPDATE airports SET traffic_err = ?, updated_at = ? WHERE id = ?",
+		errMsg, now, id)
 	return err
 }
 
@@ -377,6 +406,11 @@ func (m *Manager) getConfig(ctx context.Context, key string) (string, error) {
 		return "", nil
 	}
 	return val, err
+}
+
+// GetConfig 读取 config 表的单个键；不存在返回 ("", nil)。
+func (m *Manager) GetConfig(ctx context.Context, key string) (string, error) {
+	return m.getConfig(ctx, key)
 }
 
 // setConfig 写入配置值。

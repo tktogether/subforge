@@ -92,19 +92,30 @@ type Strategy struct {
 	Expire   FieldStrategy `json:"expire"`
 }
 
-// Normalize 填空为默认：upload/download/total = sum，expire = min。
+// Normalize 填空为默认。
+//
+// 简单预设名（sum/min/max/avg/first/last/off）会被展开成对应的字段策略，
+// 这样配置里写裸名字 "max" 与写 JSON {"preset":"max"} 语义一致——
+// Aggregate 的 default 分支只看字段，不展开就等于把用户选的预设静默丢掉。
+// min_quota/max_quota/weighted 由 Aggregate 按 Preset 特殊处理，字段仍填通用默认。
+// 显式给出的字段永远优先于预设展开值。
 func (s Strategy) Normalize() Strategy {
+	base := Strategy{Upload: FieldSum, Download: FieldSum, Total: FieldSum, Expire: FieldMin}
+	if p, ok := PresetStrategy(s.Preset); ok && p.Upload != "" {
+		base = p
+		s.Preset = p.Preset
+	}
 	if s.Upload == "" {
-		s.Upload = FieldSum
+		s.Upload = base.Upload
 	}
 	if s.Download == "" {
-		s.Download = FieldSum
+		s.Download = base.Download
 	}
 	if s.Total == "" {
-		s.Total = FieldSum
+		s.Total = base.Total
 	}
 	if s.Expire == "" {
-		s.Expire = FieldMin
+		s.Expire = base.Expire
 	}
 	return s
 }
@@ -335,4 +346,11 @@ func format(u Usage, s Strategy) string {
 // ToHeader 把聚合结果写成响应头原文。
 func ToHeader(u Usage) string {
 	return format(u, Strategy{Upload: FieldSum, Download: FieldSum, Total: FieldSum, Expire: FieldMin})
+}
+
+// FormatWithStrategy 按策略把聚合结果写成响应头原文。
+// 与 ToHeader 的区别：本函数尊重字段级策略——FieldNone 的字段不出现；
+// 四个字段全为 FieldNone（"不透传"）时返回空串，调用方据此跳过设置响应头。
+func FormatWithStrategy(u Usage, s Strategy) string {
+	return format(u, s)
 }

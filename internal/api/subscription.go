@@ -19,6 +19,7 @@ import (
 	"github.com/tktogether/subforge/internal/convert"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/subforge"
+	"github.com/tktogether/subforge/internal/traffic"
 )
 
 // SubscriptionManager 返回 Manager 实例。
@@ -516,6 +517,17 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		target = "clash.meta"
 	}
 
+	// pipeline：显式 query 优先；为空时回落到 config 表的 subscribe.pipeline。
+	pipeline := strings.TrimSpace(r.URL.Query().Get("pipeline"))
+	if pipeline == "" {
+		if v, err := m.GetConfig(r.Context(), "subscribe.pipeline"); err == nil {
+			pipeline = strings.TrimSpace(v)
+		}
+	}
+	configName := strings.TrimSpace(r.URL.Query().Get("config"))
+	includeList := splitListQuery(r.URL.Query().Get("include"))
+	excludeList := splitListQuery(r.URL.Query().Get("exclude"))
+
 	// 1. 启用的订阅源（ListAirports 已按 sort_order, id 排序）。
 	airports, err := m.ListAirports(r.Context())
 	if err != nil {
@@ -609,11 +621,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
 	params := convert.Params{
-		Target: target,
-		URLs:   urls,
-		Files:  selfNodeFiles,
-		Groups: renderGroups,
-		Rules:  renderRules,
+		Target:   target,
+		URLs:     urls,
+		Files:    selfNodeFiles,
+		Groups:   renderGroups,
+		Rules:    renderRules,
+		Pipeline: pipeline,
+		Config:   configName,
+		Include:  includeList,
+		Exclude:  excludeList,
 	}
 	result, err := s.engine.Run(r.Context(), params)
 	if err != nil {
@@ -625,5 +641,47 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			dash(chimw.GetReqID(r.Context())), len(result.Failures),
 			strings.Join(result.Failures, " | "))
 	}
+	// 5. 流量余额透传：把上游 subscription-userinfo 按策略聚合后写进响应头，
+	//    下游 mihomo/clash 客户端据此显示余额与到期。
+	//
+	// 只统计「已成功采集过」的机场（TrafficAt > 0）：
+	// 从未采集成功的机场流量是零值，混进来会把 min/max/avg 拉偏。
+	// 读策略失败（DB 故障）时静默跳过——订阅本身仍然要能生成。
+	if strat, err := m.GetTrafficStrategy(r.Context()); err == nil {
+		usages := make([]traffic.Usage, 0, len(airports))
+		nodeCounts := make([]int, 0, len(airports))
+		for _, a := range airports {
+			if !a.Enabled || strings.TrimSpace(a.SubscriptionURL) == "" || a.TrafficAt <= 0 {
+				continue
+			}
+			usages = append(usages, traffic.Usage{
+				Upload: a.Upload, Download: a.Download, Total: a.Total, Expire: a.Expire,
+			})
+			nodeCounts = append(nodeCounts, a.NodeCount)
+		}
+		// Aggregate 在「无可聚合数据」或「策略为不透传（全 none）」时返回 ok=false。
+		if u, ok := traffic.Aggregate(usages, nodeCounts, strat); ok {
+			if header := traffic.FormatWithStrategy(u, strat); header != "" {
+				w.Header().Set("Subscription-Userinfo", header)
+			}
+		}
+	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
+}
+
+// splitListQuery 把逗号分隔的 query 值切成去空白的非空切片。
+func splitListQuery(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

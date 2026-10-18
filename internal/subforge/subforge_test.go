@@ -579,3 +579,27 @@ func TestListScanErrors(t *testing.T) {
 		t.Fatal("ListRules 应返回错误")
 	}
 }
+
+func TestGetConfig(t *testing.T) {
+	m := newTestManager(t)
+	ctx := context.Background()
+	// 不存在键
+	v, err := m.GetConfig(ctx, "nope.key")
+	if err != nil {
+		t.Fatalf("GetConfig err: %v", err)
+	}
+	if v != "" {
+		t.Fatalf("want empty got %q", v)
+	}
+	// 写入后读取
+	if err := m.setConfig(ctx, "foo.bar", "hello"); err != nil {
+		t.Fatalf("setConfig: %v", err)
+	}
+	v, err = m.GetConfig(ctx, "foo.bar")
+	if err != nil {
+		t.Fatalf("GetConfig err: %v", err)
+	}
+	if v != "hello" {
+		t.Fatalf("want hello got %q", v)
+	}
+}

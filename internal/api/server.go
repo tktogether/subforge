@@ -193,6 +193,11 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/", s.handleAPISelfNode)
 		})
 	})
+	r.Route("/api/traffic", func(r chi.Router) {
+		r.Get("/strategy", s.handleAPITrafficStrategy)
+		r.Put("/strategy", s.handleAPITrafficStrategy)
+		r.Post("/refresh", s.handleAPITrafficRefresh)
+	})
 	r.Get("/subscribe", s.handleSubscribe)
 
 	// pprof 端点（仅 debug 模式）

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestDB 打开一个临时文件数据库，返回 *DB 与 context。
@@ -462,5 +463,249 @@ func TestUpdateCancelledCtx(t *testing.T) {
 	}
 	if err := d.UpdateRule(cancelled, rlID, "a", "b", 1, true, true); err == nil {
 		t.Error("UpdateRule(cancelled ctx) 期望失败")
+	}
+}
+
+// TestAirportsHasTrafficColumns 覆盖 airports 表的 7 个流量元数据列。
+func TestAirportsHasTrafficColumns(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	cols := airportColumns(t, d)
+	for _, want := range []string{"upload", "download", "total", "expire", "node_count", "traffic_at", "traffic_err"} {
+		if !cols[want] {
+			t.Errorf("airports 缺少列 %q，实际列：%v", want, cols)
+		}
+	}
+}
+
+// airportColumns 返回 airports 表的列名集合。
+func airportColumns(t *testing.T, d *DB) map[string]bool {
+	t.Helper()
+	rows, err := d.Raw().Query("PRAGMA table_info(airports)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid, notNull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
+}
+
+// TestMigrateAddsTrafficColumnsToLegacyDB 覆盖老库迁移回归。
+func TestMigrateAddsTrafficColumnsToLegacyDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	// 1) 造老库：只有旧版 airports 表，没有任何流量列
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE airports (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		name             TEXT NOT NULL,
+		subscription_url TEXT NOT NULL,
+		remarks          TEXT,
+		enabled          INTEGER DEFAULT 1,
+		sort_order       INTEGER DEFAULT 0,
+		created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`); err != nil {
+		t.Fatalf("建老库: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO airports (name, subscription_url) VALUES ('旧机场', 'https://old.example/sub')"); err != nil {
+		t.Fatalf("插老数据: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("关老库: %v", err)
+	}
+
+	// 2) 用 store.Open 打开 → migrate 应自动补列，且老数据保留
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(老库): %v", err)
+	}
+	cols := airportColumns(t, d)
+	for _, want := range []string{"upload", "download", "total", "expire", "node_count", "traffic_at", "traffic_err"} {
+		if !cols[want] {
+			t.Errorf("老库迁移后缺少列 %q", want)
+		}
+	}
+	var name string
+	var upload int64
+	if err := d.Raw().QueryRow("SELECT name, upload FROM airports WHERE id = 1").Scan(&name, &upload); err != nil {
+		t.Fatalf("读老行: %v", err)
+	}
+	if name != "旧机场" {
+		t.Errorf("老数据被破坏：name = %q", name)
+	}
+	if upload != 0 {
+		t.Errorf("新列默认值应为 0，实际 %d", upload)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// 3) 幂等：再 Open 一次不许报 duplicate column
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("二次 Open 应幂等，实际: %v", err)
+	}
+	defer d2.Close()
+}
+
+// TestFetchAuditRoundTrip 覆盖 fetch_audit 往返 + 排序。
+func TestFetchAuditRoundTrip(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+
+	base := time.Unix(1700000000, 0).UTC()
+	recs := []FetchAudit{
+		{AirportID: 1, URL: "https://a.example/sub", StatusCode: 200, Bytes: 111, OK: true, DurationMS: 12, CreatedAt: base},
+		{AirportID: 2, URL: "https://b.example/sub", StatusCode: 500, Bytes: 0, OK: false, Error: "上游 500", DurationMS: 34, CreatedAt: base.Add(time.Second)},
+		{AirportID: 3, URL: "https://c.example/sub", StatusCode: 200, Bytes: 333, OK: true, DurationMS: 56, CreatedAt: base.Add(2 * time.Second)},
+	}
+	for _, r := range recs {
+		if err := d.AddFetchAudit(ctx, r); err != nil {
+			t.Fatalf("AddFetchAudit: %v", err)
+		}
+	}
+
+	got, err := d.ListFetchAudit(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListFetchAudit: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("期望 3 条，实际 %d", len(got))
+	}
+	// created_at 倒序：最新的 c 在前
+	if got[0].URL != "https://c.example/sub" || got[1].URL != "https://b.example/sub" || got[2].URL != "https://a.example/sub" {
+		t.Fatalf("排序不对：%v", []string{got[0].URL, got[1].URL, got[2].URL})
+	}
+	// 逐字段往返
+	b := got[1]
+	if b.AirportID != 2 || b.StatusCode != 500 || b.Bytes != 0 || b.OK || b.Error != "上游 500" || b.DurationMS != 34 {
+		t.Errorf("字段往返不一致：%+v", b)
+	}
+	if !b.CreatedAt.Equal(base.Add(time.Second)) {
+		t.Errorf("CreatedAt 往返不一致：%v", b.CreatedAt)
+	}
+	if b.ID == 0 {
+		t.Error("ID 应被回填")
+	}
+}
+
+// TestListFetchAuditLimit 覆盖 ListFetchAudit 的 limit 语义。
+func TestListFetchAuditLimit(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	base := time.Unix(1700000000, 0).UTC()
+	for i := 0; i < 5; i++ {
+		if err := d.AddFetchAudit(ctx, FetchAudit{AirportID: int64(i + 1), URL: "https://x.example", OK: true, CreatedAt: base.Add(time.Duration(i) * time.Second)}); err != nil {
+			t.Fatalf("AddFetchAudit: %v", err)
+		}
+	}
+	// limit <= 0 视为 100，5 条都要回来
+	all, err := d.ListFetchAudit(ctx, -1)
+	if err != nil {
+		t.Fatalf("ListFetchAudit(-1): %v", err)
+	}
+	if len(all) != 5 {
+		t.Fatalf("limit<=0 期望 5 条，实际 %d", len(all))
+	}
+	// limit=2 → 最新 2 条（AirportID 5、4）
+	top, err := d.ListFetchAudit(ctx, 2)
+	if err != nil {
+		t.Fatalf("ListFetchAudit(2): %v", err)
+	}
+	if len(top) != 2 || top[0].AirportID != 5 || top[1].AirportID != 4 {
+		t.Fatalf("limit=2 结果不对：%+v", top)
+	}
+}
+
+// TestPruneFetchAudit 覆盖 PruneFetchAudit 保留最近 N 条。
+func TestPruneFetchAudit(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	base := time.Unix(1700000000, 0).UTC()
+	for i := 0; i < 5; i++ {
+		if err := d.AddFetchAudit(ctx, FetchAudit{AirportID: int64(i + 1), URL: "https://x.example", OK: true, CreatedAt: base.Add(time.Duration(i) * time.Second)}); err != nil {
+			t.Fatalf("AddFetchAudit: %v", err)
+		}
+	}
+	// keep<=0 不动数据
+	n, err := d.PruneFetchAudit(ctx, 0)
+	if err != nil {
+		t.Fatalf("PruneFetchAudit(0): %v", err)
+	}
+	if n != 0 {
+		t.Errorf("keep<=0 不应删除，实际删了 %d", n)
+	}
+	// keep=2 → 删 3 条，剩最新 2 条
+	n, err = d.PruneFetchAudit(ctx, 2)
+	if err != nil {
+		t.Fatalf("PruneFetchAudit(2): %v", err)
+	}
+	if n != 3 {
+		t.Errorf("期望删 3 条，实际 %d", n)
+	}
+	left, err := d.ListFetchAudit(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListFetchAudit: %v", err)
+	}
+	if len(left) != 2 || left[0].AirportID != 5 || left[1].AirportID != 4 {
+		t.Fatalf("保留结果不对：%+v", left)
+	}
+}
+
+// TestAddFetchAuditZeroCreatedAt 覆盖 CreatedAt 为零值时用当前时间。
+func TestAddFetchAuditZeroCreatedAt(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	before := time.Now().Add(-time.Minute)
+	if err := d.AddFetchAudit(ctx, FetchAudit{AirportID: 7, URL: "https://z.example", OK: true}); err != nil {
+		t.Fatalf("AddFetchAudit: %v", err)
+	}
+	got, err := d.ListFetchAudit(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListFetchAudit: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("期望 1 条，实际 %d", len(got))
+	}
+	if got[0].CreatedAt.IsZero() || got[0].CreatedAt.Before(before) {
+		t.Errorf("零值 CreatedAt 应被填成当前时间，实际 %v", got[0].CreatedAt)
 	}
 }

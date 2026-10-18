@@ -1,6 +1,7 @@
 package traffic
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -323,5 +324,119 @@ func TestParseNoEquals(t *testing.T) {
 	u, _ := ParseSubscriptionUserinfo("garbage; upload=1")
 	if u.Upload != 1 {
 		t.Fatalf("got %+v", u)
+	}
+}
+
+func TestFormatWithStrategyAllNone(t *testing.T) {
+	got := FormatWithStrategy(Usage{Upload: 1, Download: 2, Total: 3, Expire: 4}, Strategy{Preset: "off", Upload: FieldNone, Download: FieldNone, Total: FieldNone, Expire: FieldNone})
+	if got != "" {
+		t.Fatalf("all none should return empty, got %q", got)
+	}
+}
+
+func TestFormatWithStrategyAllSum(t *testing.T) {
+	s, ok := PresetStrategy("sum")
+	if !ok {
+		t.Fatal("PresetStrategy(sum) should succeed")
+	}
+	got := FormatWithStrategy(Usage{Upload: 1, Download: 2, Total: 3, Expire: 4}, s)
+	if got != "upload=1; download=2; total=3; expire=4" {
+		t.Fatalf("got %q, want %q", got, "upload=1; download=2; total=3; expire=4")
+	}
+}
+
+func TestFormatWithStrategyPartial(t *testing.T) {
+	got := FormatWithStrategy(Usage{Upload: 1, Download: 2, Total: 3, Expire: 4}, Strategy{Upload: FieldSum, Download: FieldNone, Total: FieldSum, Expire: FieldNone})
+	if strings.Contains(got, "download=") || strings.Contains(got, "expire=") {
+		t.Fatalf("should not contain download= or expire=, got %q", got)
+	}
+	if !strings.Contains(got, "upload=1") || !strings.Contains(got, "total=3") {
+		t.Fatalf("should contain upload=1 and total=3, got %q", got)
+	}
+}
+
+func TestFormatWithStrategyZeroUsage(t *testing.T) {
+	s, ok := PresetStrategy("sum")
+	if !ok {
+		t.Fatal("PresetStrategy(sum) should succeed")
+	}
+	got := FormatWithStrategy(Usage{}, s)
+	if got != "upload=0; download=0; total=0; expire=0" {
+		t.Fatalf("got %q, want %q", got, "upload=0; download=0; total=0; expire=0")
+	}
+}
+
+func TestNormalizeExpandsSimplePreset(t *testing.T) {
+	for _, name := range []string{"sum", "min", "max", "avg", "first", "last", "off"} {
+		got := Strategy{Preset: name}.Normalize()
+		want, _ := PresetStrategy(name)
+		if got.Upload != want.Upload || got.Download != want.Download || got.Total != want.Total || got.Expire != want.Expire {
+			t.Fatalf("preset %q: got %+v, want %+v", name, got, want)
+		}
+	}
+}
+
+func TestNormalizePresetKeepsExplicitFields(t *testing.T) {
+	got := Strategy{Preset: "max", Expire: FieldMin}.Normalize()
+	if got.Upload != FieldMax || got.Download != FieldMax || got.Total != FieldMax || got.Expire != FieldMin {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestNormalizeQuotaPresetKeepsGenericFields(t *testing.T) {
+	for _, name := range []string{"min_quota", "weighted"} {
+		got := Strategy{Preset: name}.Normalize()
+		if got.Upload != FieldSum || got.Download != FieldSum || got.Total != FieldSum || got.Expire != FieldMin {
+			t.Fatalf("preset %q: got %+v", name, got)
+		}
+	}
+}
+
+func TestNormalizeCanonicalizesPresetName(t *testing.T) {
+	got := Strategy{Preset: " MAX "}.Normalize()
+	if got.Preset != "max" {
+		t.Fatalf("got preset %q, want %q", got.Preset, "max")
+	}
+	if got.Upload != FieldMax || got.Download != FieldMax || got.Total != FieldMax || got.Expire != FieldMax {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestNormalizeUnknownPresetKeepsName(t *testing.T) {
+	got := Strategy{Preset: "nope"}.Normalize()
+	if got.Preset != "nope" {
+		t.Fatalf("got preset %q, want %q", got.Preset, "nope")
+	}
+	if got.Upload != FieldSum || got.Download != FieldSum || got.Total != FieldSum || got.Expire != FieldMin {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAggregateHonorsJSONPresetMax(t *testing.T) {
+	usages := []Usage{{Upload: 1, Download: 10, Total: 100, Expire: 111}, {Upload: 3, Download: 30, Total: 300, Expire: 222}}
+	got, ok := Aggregate(usages, nil, Strategy{Preset: "max"})
+	if !ok {
+		t.Fatal("ok should be true")
+	}
+	if got.Upload != 3 || got.Download != 30 || got.Total != 300 || got.Expire != 222 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAggregateJSONPresetOffReturnsFalse(t *testing.T) {
+	usages := []Usage{{Upload: 1, Download: 10, Total: 100, Expire: 111}, {Upload: 3, Download: 30, Total: 300, Expire: 222}}
+	_, ok := Aggregate(usages, nil, Strategy{Preset: "off"})
+	if ok {
+		t.Fatal("ok should be false")
+	}
+}
+
+func TestNormalizeEmptyPresetKeepsGenericDefaults(t *testing.T) {
+	got := Strategy{}.Normalize()
+	if got.Preset != "" {
+		t.Fatalf("got preset %q, want %q", got.Preset, "")
+	}
+	if got.Upload != FieldSum || got.Download != FieldSum || got.Total != FieldSum || got.Expire != FieldMin {
+		t.Fatalf("got %+v", got)
 	}
 }
