@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -586,5 +587,125 @@ func TestRun(t *testing.T) {
 
 	if code != 0 {
 		t.Fatalf("run() 期望通过 exit 0, got %d", code)
+	}
+}
+
+func TestRunArgsJSONUncoveredIsComplete(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n\ngo 1.26\n"), 0644)
+	srcDir := filepath.Join(dir, "pkg")
+	os.MkdirAll(srcDir, 0755)
+
+	const n = 70
+	var src strings.Builder
+	src.WriteString("package pkg\n\nfunc F(x int) {\n")
+	blocks := []Block{}
+	line := 4
+	for i := 0; i < n; i++ {
+		src.WriteString("    if x > " + itoa(i) + " {\n")
+		blocks = append(blocks, Block{StartLine: line + 1, EndLine: line + 1, Count: 0})
+		src.WriteString("        x++\n")
+		src.WriteString("    }\n")
+		blocks = append(blocks, Block{StartLine: line + 3, EndLine: line + 3, Count: 0})
+		src.WriteString("    x++\n")
+		line += 4
+	}
+	src.WriteString("}\n")
+
+	os.WriteFile(filepath.Join(srcDir, "f.go"), []byte(src.String()), 0644)
+
+	var prof strings.Builder
+	prof.WriteString("mode: count\n")
+	for _, b := range blocks {
+		prof.WriteString("example.com/m/pkg/f.go:")
+		prof.WriteString(itoa(b.StartLine))
+		prof.WriteString(".1,")
+		prof.WriteString(itoa(b.EndLine))
+		prof.WriteString(".2 1 0\n")
+	}
+	profPath := filepath.Join(dir, "coverage.out")
+	os.WriteFile(profPath, []byte(prof.String()), 0644)
+
+	var stdout, stderr bytes.Buffer
+	runArgs([]string{"-engine", "profile", "-profile", profPath, "-min", "0", "-root", dir, "-module", "example.com/m", "-json"}, &stdout, &stderr)
+	var r reportJSON
+	if err := json.Unmarshal(stdout.Bytes(), &r); err != nil {
+		t.Fatalf("json unmarshal: %v; stdout=%s; stderr=%s", err, stdout.String(), stderr.String())
+	}
+	if len(r.Uncovered) <= textUncoveredLimit {
+		t.Fatalf("JSON uncovered %d <= %d", len(r.Uncovered), textUncoveredLimit)
+	}
+	if len(r.Uncovered) != r.Total-r.Covered {
+		t.Fatalf("invariant broken: uncovered=%d total-covered=%d", len(r.Uncovered), r.Total-r.Covered)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	runArgs([]string{"-engine", "profile", "-profile", profPath, "-min", "0", "-root", dir, "-module", "example.com/m"}, &stdout, &stderr)
+	out := stdout.String()
+	cnt := 0
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.HasPrefix(ln, "  ") && strings.Contains(ln, "语句") {
+			cnt++
+		}
+	}
+	if cnt != textUncoveredLimit {
+		t.Fatalf("text 明细行数=%d want %d; out=%s", cnt, textUncoveredLimit, out)
+	}
+	if !strings.Contains(out, "还有 ") || !strings.Contains(out, "条未列出") {
+		t.Fatalf("缺少 '还有 ... 条未列出' 提示; out=%s", out)
+	}
+}
+
+// TestClauseBlocksMatchesMultiLineCaseBody 验证多行 case 体的 switch 臂匹配。
+// Go cover 把 case 体块的 StartLine 标在 case 关键字行，而体首语句在下一行；
+// clauseBlocks 必须用 case 子句自身的位置行作为下界，否则永远匹配不到。
+func TestClauseBlocksMatchesMultiLineCaseBody(t *testing.T) {
+	src := `package p
+
+func f(name string) string {
+	switch {
+	case name == "a":
+		return "A"
+	case name == "b":
+		return "B"
+	default:
+		return "C"
+	}
+}
+`
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, "x.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd := astFile.Decls[0].(*ast.FuncDecl)
+	ss := fd.Body.List[0].(*ast.SwitchStmt)
+
+	// 合成 profile 块：每个 case 体块的 StartLine = case 关键字所在行，Count=1。
+	var blocks []Block
+	for _, s := range ss.Body.List {
+		cc := s.(*ast.CaseClause)
+		if len(cc.Body) == 0 {
+			continue
+		}
+		line := fset.Position(cc.Pos()).Line
+		blocks = append(blocks, Block{
+			File:      "x.go",
+			StartLine: line,
+			StartCol:  1,
+			EndLine:   fset.Position(cc.Body[len(cc.Body)-1].End()).Line,
+			EndCol:    1,
+			NumStmt:   1,
+			Count:     1,
+		})
+	}
+	clauses := []*ast.CaseClause{}
+	for _, s := range ss.Body.List {
+		clauses = append(clauses, s.(*ast.CaseClause))
+	}
+	walked, nonEmpty := clauseBlocks(clauses, fset, blocks)
+	if walked != 3 || nonEmpty != 3 {
+		t.Fatalf("clauseBlocks = (%d,%d), want (3,3)", walked, nonEmpty)
 	}
 }

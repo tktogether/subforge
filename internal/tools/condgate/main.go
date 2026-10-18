@@ -21,6 +21,10 @@ import (
 
 const percentEpsilon = 1e-9
 
+// textUncoveredLimit 限制**文本报告**里列出的未覆盖判定条数；
+// JSON 输出（-json）始终给完整清单，供补测定位使用。
+const textUncoveredLimit = 50
+
 type Block struct {
 	File      string
 	StartLine int
@@ -90,7 +94,7 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 	jsonOut := fs.Bool("json", false, "JSON")
 	root := fs.String("root", ".", "源码根")
 	module := fs.String("module", "", "模块前缀")
-	_ = fs.String("packages", "", "gobco 用")
+	packages := fs.String("packages", "", "gobco 用")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "condgate -engine=profile -profile coverage.out -min 80 [-top 20] [-json] [-root .] [-module P]")
 		fmt.Fprintln(stderr, "condgate -engine=gobco  -packages ./internal/... -min 80 [-top 20] [-json]")
@@ -109,10 +113,6 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "非法 engine:", *engine)
 		return 2
 	}
-	if *engine == "gobco" {
-		fmt.Fprintln(stderr, "gobco 引擎未实现")
-		return 2
-	}
 	if *minStr == "" {
 		fmt.Fprintln(stderr, "缺少 -min")
 		return 2
@@ -121,6 +121,20 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "非法 -min:", err)
 		return 2
+	}
+	if *engine == "gobco" {
+		patterns := []string{}
+		if strings.TrimSpace(*packages) != "" {
+			for _, p := range strings.Fields(*packages) {
+				patterns = append(patterns, p)
+			}
+		}
+		patterns = append(patterns, fs.Args()...)
+		if len(patterns) == 0 {
+			fmt.Fprintln(stderr, "gobco 引擎需要 -packages 或位置参数")
+			return 2
+		}
+		return runGobcoEngine(patterns, minVal, *top, *jsonOut, stdout, stderr)
 	}
 	if *profile == "" {
 		fmt.Fprintln(stderr, "缺少 -profile")
@@ -234,9 +248,6 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 		}
 		return uncovered[i].Col < uncovered[j].Col
 	})
-	if len(uncovered) > 50 {
-		uncovered = uncovered[:50]
-	}
 
 	if *jsonOut {
 		pkgsJSON := make([]packageStatsJSON, 0, len(pkgs))
@@ -279,9 +290,16 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintf(stdout, "condgate: engine=profile mode=%s 文件数=%d 包数=%d\n", prof.Mode, len(files), len(pkgs))
 	fmt.Fprintf(stdout, "条件覆盖: %d/%d = %.1f%%\n", covered, total, pct)
-	fmt.Fprintln(stdout, "未覆盖的判定（最多列 50 条）:")
-	for _, j := range uncovered {
+	fmt.Fprintf(stdout, "未覆盖的判定（最多列 %d 条，JSON 输出为完整清单）:\n", textUncoveredLimit)
+	shown := uncovered
+	if len(shown) > textUncoveredLimit {
+		shown = shown[:textUncoveredLimit]
+	}
+	for _, j := range shown {
 		fmt.Fprintf(stdout, "  %s:%d:%d: %s 语句 %s\n", j.File, j.Line, j.Col, j.Kind, j.Detail)
+	}
+	if rest := len(uncovered) - len(shown); rest > 0 {
+		fmt.Fprintf(stdout, "  …还有 %d 条未列出（用 -json 取完整清单）\n", rest)
 	}
 	fmt.Fprintf(stdout, "跳过无法判定的判定: %d 条（无 else 且其后无块）\n", skipped)
 	n := *top
@@ -707,7 +725,7 @@ func clauseBlocks(clauses []*ast.CaseClause, fset *token.FileSet, blocks []Block
 			continue
 		}
 		nonEmpty++
-		start := fset.Position(cc.Body[0].Pos()).Line
+		start := fset.Position(cc.Pos()).Line
 		end := fset.Position(cc.Body[len(cc.Body)-1].End()).Line
 		b := firstBlockInRange(blocks, start, end)
 		if b != nil && b.Count > 0 {
