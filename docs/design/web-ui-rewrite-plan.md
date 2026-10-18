@@ -634,6 +634,10 @@ CREATE TABLE IF NOT EXISTS pipelines (
 
 ## 5. 前端（按 `impeccable` skill 执行）
 
+> ⚠️ **本节已被取代**：前端技术栈改为 **Vite + Vue 3 + Vuetify 3.13.7 + TypeScript**，并新增前端覆盖率门禁 100%。
+> 见 `docs/design/vite-vuetify-coverage-plan.md` §2（技术栈）、§3（门禁 A）、§5（页面与共享层规格）。
+> 本节保留，仅作为「13 页要做哪些事」的设计意图记录。
+
 ### 5.1 技术栈（不改动构建方式）
 
 - 纯静态 HTML/CSS/JS，`go:embed` 进二进制（现架构，不引入 npm/打包）。
@@ -822,6 +826,9 @@ fmt.expire(unix)                       // 0 → "未知"，否则 YYYY-MM-DD + �
 ---
 
 ## 6. 实施顺序与提交点
+
+> ⚠️ **本节已被取代**：施工顺序见 `docs/design/vite-vuetify-coverage-plan.md` §8（P1–P12）。
+> 本节的 P1–P15 仍覆盖数据模型与 API 补全，那些工作**继续有效**，只是不再与前端换栈混在同一条序列里。
 
 每个阶段**独立可构建、可验证、可提交**。阶段间用提交点隔开，不攒大提交。
 
