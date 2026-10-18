@@ -94,10 +94,12 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 	jsonOut := fs.Bool("json", false, "JSON")
 	root := fs.String("root", ".", "源码根")
 	module := fs.String("module", "", "模块前缀")
-	packages := fs.String("packages", "", "gobco 用")
+	packages := fs.String("packages", "", "gobco 用，逗号分隔或位置参数")
+	tmpdir := fs.String("tmpdir", os.TempDir(), "gobco 临时目录根，建议指向大盘")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "condgate -engine=profile -profile coverage.out -min 80 [-top 20] [-json] [-root .] [-module P]")
-		fmt.Fprintln(stderr, "condgate -engine=gobco  -packages ./internal/... -min 80 [-top 20] [-json]")
+		fmt.Fprintln(stderr, "condgate -engine=gobco  -packages ./internal/a/,./internal/b/ -min 80 [-top 20] [-json] [-tmpdir F:\\gbtmp]")
+		fmt.Fprintln(stderr, "condgate -engine=gobco  ./internal/a/ ./internal/b/ -min 80 ...  (位置参数必须放在所有 flag 之后)")
 		fmt.Fprintln(stderr, "")
 		fmt.Fprintln(stderr, "本工具 profile 引擎是判定覆盖的近似：if a && b 整体算 1 个判定，")
 		fmt.Fprintln(stderr, "与 gobco 的真条件覆盖不可直接比较（condgate 分数结构性 >= gobco 分数）。")
@@ -125,8 +127,10 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 	if *engine == "gobco" {
 		patterns := []string{}
 		if strings.TrimSpace(*packages) != "" {
-			for _, p := range strings.Fields(*packages) {
-				patterns = append(patterns, p)
+			for _, p := range strings.Split(*packages, ",") {
+				if s := strings.TrimSpace(p); s != "" {
+					patterns = append(patterns, s)
+				}
 			}
 		}
 		patterns = append(patterns, fs.Args()...)
@@ -134,7 +138,7 @@ func runArgs(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "gobco 引擎需要 -packages 或位置参数")
 			return 2
 		}
-		return runGobcoEngine(patterns, minVal, *top, *jsonOut, stdout, stderr)
+		return runGobcoEngineWithTmpDir(patterns, minVal, *top, *jsonOut, *tmpdir, stdout, stderr)
 	}
 	if *profile == "" {
 		fmt.Fprintln(stderr, "缺少 -profile")

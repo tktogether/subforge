@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -19,12 +20,12 @@ type GobcoCondition struct {
 	FalseCount int    `json:"FalseCount"`
 }
 
-// listPackages 把包模式展开为具体包导入路径；可被测试替换。
+// listPackages 把包模式展开为包目录（gobco 只接受目录，不接受 import path）；可被测试替换。
 var listPackages = func(patterns []string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, fmt.Errorf("没有包模式")
 	}
-	args := append([]string{"list", "-f", "{{.ImportPath}}"}, patterns...)
+	args := append([]string{"list", "-f", "{{.Dir}}"}, patterns...)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = "."
 	out, err := cmd.Output()
@@ -57,21 +58,51 @@ var listPackages = func(patterns []string) ([]string, error) {
 	return pkgs, nil
 }
 
-// gobcoRun 调用 gobco 并读回 stats；可被测试替换。
-var gobcoRun = func(pkg string) ([]GobcoCondition, error) {
-	tmp, err := os.CreateTemp("", "gobco-*.json")
+// prepareGobcoTemp 在 tmpDir 下建独立临时根，返回 stats 文件路径与清理函数。
+// gobco 会在 TMPDIR 里留下大量临时文件，无论成功失败都必须清掉，否则磁盘会被写满。
+func prepareGobcoTemp(tmpDir string) (string, func(), error) {
+	root, err := os.MkdirTemp(tmpDir, "condgate-gobco-")
 	if err != nil {
-		return nil, fmt.Errorf("创建临时文件失败: %w", err)
+		return "", nil, fmt.Errorf("创建 gobco 临时根失败: %w", err)
 	}
-	tmpName := tmp.Name()
-	tmp.Close()
-	defer os.Remove(tmpName)
+	cleanup := func() { _ = os.RemoveAll(root) }
+	return filepath.Join(root, "gobco-stats.json"), cleanup, nil
+}
 
-	cmd := exec.Command("gobco", "-stats", tmpName, pkg)
+// gobcoPackageDir 把 go list 给出的绝对目录转成相对目录传给 gobco。
+// 实测：buildinfo 绝对 61.25s vs 相对 52.55s；subscheck 绝对 56.0s vs 相对 76.5s
+// （subscheck 相对那次在 Lead 全量 gobco 并发跑时测得，受 CPU 争用影响）。
+// 选相对目录：gobco 按进程 cwd 解析，省一次绝对路径解析，且 Lead 实测曾差 4 倍。
+func gobcoPackageDir(pkg string) string {
+	if !filepath.IsAbs(pkg) {
+		return pkg
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return pkg
+	}
+	rel, err := filepath.Rel(cwd, pkg)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return pkg
+	}
+	return rel
+}
+
+// gobcoRun 调用 gobco 并读回 stats；可被测试替换。
+var gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) {
+	statsPath, cleanup, err := prepareGobcoTemp(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	cmd := exec.Command("gobco", "-stats", statsPath, gobcoPackageDir(pkg))
+	root := filepath.Dir(statsPath)
+	cmd.Env = append(os.Environ(), "TMPDIR="+root, "TMP="+root, "TEMP="+root)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("gobco 执行失败: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	data, err := os.ReadFile(tmpName)
+	data, err := os.ReadFile(statsPath)
 	if err != nil {
 		return nil, fmt.Errorf("读取 gobco stats 失败: %w", err)
 	}
@@ -123,8 +154,13 @@ func parsePositiveInt(s string) (int, error) {
 	return n, nil
 }
 
-// runGobcoEngine 是 gobco 引擎的可测试内核。
+// runGobcoEngine 是 gobco 引擎的可测试内核（默认临时根）。
 func runGobcoEngine(patterns []string, minVal float64, top int, jsonOut bool, stdout, stderr io.Writer) int {
+	return runGobcoEngineWithTmpDir(patterns, minVal, top, jsonOut, os.TempDir(), stdout, stderr)
+}
+
+// runGobcoEngineWithTmpDir 是 gobco 引擎的可测试内核（显式临时根）。
+func runGobcoEngineWithTmpDir(patterns []string, minVal float64, top int, jsonOut bool, tmpDir string, stdout, stderr io.Writer) int {
 	pkgs, err := listPackages(patterns)
 	if err != nil {
 		fmt.Fprintln(stderr, "展开包失败:", err)
@@ -143,7 +179,7 @@ func runGobcoEngine(patterns []string, minVal float64, top int, jsonOut bool, st
 	skipped := 0
 
 	for _, pkg := range pkgs {
-		conds, err := gobcoRun(pkg)
+		conds, err := gobcoRun(pkg, tmpDir)
 		if err != nil {
 			fmt.Fprintln(stderr, "包失败", pkg, ":", err)
 			skipped++
@@ -177,6 +213,11 @@ func runGobcoEngine(patterns []string, minVal float64, top int, jsonOut bool, st
 			}
 		}
 		pkgsOut = append(pkgsOut, pkgAgg{name: pkg, covered: pCovered, total: pTotal})
+	}
+
+	if total == 0 && skipped > 0 {
+		fmt.Fprintf(stderr, "全部 %d 个包的 gobco 都失败了\n", skipped)
+		return 2
 	}
 
 	sort.Slice(pkgsOut, func(i, j int) bool {

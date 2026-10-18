@@ -213,3 +213,37 @@ func TestRunArgsNoModuleValidMod(t *testing.T) {
 		t.Fatalf("no module valid mod 应返回 0, got %d: %s", code, stderr.String())
 	}
 }
+
+func TestRunArgsGobcoCommaPackages(t *testing.T) {
+	origList := listPackages
+	origRun := gobcoRun
+	defer func() { listPackages = origList; gobcoRun = origRun }()
+	var got []string
+	listPackages = func(patterns []string) ([]string, error) { got = patterns; return []string{"pkg/a"}, nil }
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) { return nil, nil }
+	var stdout, stderr bytes.Buffer
+	code := runArgs([]string{"-engine", "gobco", "-packages", "./internal/a/, ./internal/b/", "-min", "0", "-json", "-tmpdir", t.TempDir()}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("got %d: %s", code, stderr.String())
+	}
+	if len(got) != 2 || got[0] != "./internal/a/" || got[1] != "./internal/b/" {
+		t.Fatalf("patterns got %v", got)
+	}
+}
+
+func TestRunArgsGobcoPositionalAfterFlags(t *testing.T) {
+	origList := listPackages
+	origRun := gobcoRun
+	defer func() { listPackages = origList; gobcoRun = origRun }()
+	var got []string
+	listPackages = func(patterns []string) ([]string, error) { got = patterns; return []string{"pkg/a"}, nil }
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) { return nil, nil }
+	var stdout, stderr bytes.Buffer
+	code := runArgs([]string{"-engine", "gobco", "-min", "0", "-json", "-tmpdir", t.TempDir(), "./internal/x/", "./internal/y/"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("got %d: %s", code, stderr.String())
+	}
+	if len(got) != 2 || got[0] != "./internal/x/" || got[1] != "./internal/y/" {
+		t.Fatalf("patterns got %v", got)
+	}
+}

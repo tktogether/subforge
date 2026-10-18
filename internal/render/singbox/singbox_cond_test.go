@@ -717,6 +717,7 @@ func TestCondParseDNSAddrPaths(t *testing.T) {
 	// rcode with rest
 	parseDNSAddr("rcode://success")
 	parseDNSAddr("fakeip")
+	parseDNSAddr("fakeip://198.18.0.0/15")
 }
 
 func TestCondTLSInherentAll(t *testing.T) {
@@ -725,6 +726,81 @@ func TestCondTLSInherentAll(t *testing.T) {
 	}
 	tlsInherent("http", true)
 	tlsInherent("http", false)
+}
+
+// --- rawNum all types (cover missing int/int64/string cases) ---
+func TestCondRawNumAllTypes(t *testing.T) {
+	cases := map[string]any{
+		"i":   5,        // int
+		"i64": int64(9), // int64
+		"f":   7.0,      // float64 (already)
+		"s":   "12",     // string
+	}
+	raw := map[string]any{}
+	for k, v := range cases {
+		raw[k] = v
+	}
+	for _, key := range []string{"i", "i64", "f", "s"} {
+		v, ok := rawNum(raw, key)
+		if !ok {
+			t.Fatalf("rawNum %s not ok", key)
+		}
+		if v < 0 {
+			t.Fatal()
+		}
+	}
+	// missing key
+	if _, ok := rawNum(raw, "nope"); ok {
+		t.Fatal("expected false")
+	}
+	// negative float rejected
+	if _, ok := rawNum(map[string]any{"n": -1.0}, "n"); ok {
+		t.Fatal("expected false for negative float")
+	}
+	// bad string rejected
+	if _, ok := rawNum(map[string]any{"b": "x"}, "b"); ok {
+		t.Fatal("expected false for bad string")
+	}
+}
+
+// --- parseDNSAddr all schemes (cover missing tls/udp/tcp/fakeip/rcode/no-scheme) ---
+func TestCondParseDNSAddrAllSchemes(t *testing.T) {
+	cases := []string{
+		"tls://example.com:8443",
+		"udp://1.2.3.4:53",
+		"tcp://1.2.3.4:53",
+		"fakeip",
+		"rcode://success",
+		"1.2.3.4",
+		"example.com:5353",
+		"",
+		"quic://dns.example/dns-query",
+		"doh://dns.example/dns-query",
+	}
+	for _, a := range cases {
+		parseDNSAddr(a)
+	}
+}
+
+// --- splitHostPort IPv6 branch ---
+func TestCondSplitHostPortIPv6(t *testing.T) {
+	h, p := splitHostPort("2001:db8::1", 53)
+	if h != "2001:db8::1" || p != 53 {
+		t.Fatalf("got %s %d", h, p)
+	}
+	h2, p2 := splitHostPort("example.com:8080", 53)
+	if h2 != "example.com" || p2 != 8080 {
+		t.Fatalf("got %s %d", h2, p2)
+	}
+	h3, p3 := splitHostPort("example.com", 53)
+	if h3 != "example.com" || p3 != 53 {
+		t.Fatalf("got %s %d", h3, p3)
+	}
+	// bad port
+	h4, p4 := splitHostPort("example.com:abc", 53)
+	if h4 != "example.com:abc" || p4 != 53 {
+		t.Fatalf("got %s %d", h4, p4)
+	}
 }
 
 var _ = json.Unmarshal

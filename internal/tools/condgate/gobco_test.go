@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,11 +54,14 @@ func TestRunGobcoEnginePackageFailure(t *testing.T) {
 	origRun := gobcoRun
 	defer func() { listPackages = origList; gobcoRun = origRun }()
 	listPackages = func(patterns []string) ([]string, error) { return []string{"pkg/a"}, nil }
-	gobcoRun = func(pkg string) ([]GobcoCondition, error) { return nil, errFake }
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) { return nil, errFake }
 	var stdout, stderr bytes.Buffer
 	code := runGobcoEngine([]string{"./..."}, 0, 5, true, &stdout, &stderr)
-	if code != 0 {
+	if code != 2 {
 		t.Fatalf("got %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "全部 1 个包的 gobco 都失败了") {
+		t.Fatalf("missing all-failed: %s", stderr.String())
 	}
 }
 
@@ -64,7 +70,7 @@ func TestRunGobcoEngineSuccess(t *testing.T) {
 	origRun := gobcoRun
 	defer func() { listPackages = origList; gobcoRun = origRun }()
 	listPackages = func(patterns []string) ([]string, error) { return []string{"pkg/a"}, nil }
-	gobcoRun = func(pkg string) ([]GobcoCondition, error) {
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) {
 		return []GobcoCondition{{Start: "f.go:1:2", Code: "if x", TrueCount: 1, FalseCount: 0}}, nil
 	}
 	var stdout, stderr bytes.Buffer
@@ -90,7 +96,7 @@ func TestRunGobcoEngineTextAndZeroTotal(t *testing.T) {
 	origRun := gobcoRun
 	defer func() { listPackages = origList; gobcoRun = origRun }()
 	listPackages = func(patterns []string) ([]string, error) { return []string{"pkg/a"}, nil }
-	gobcoRun = func(pkg string) ([]GobcoCondition, error) { return nil, nil }
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) { return nil, nil }
 	var stdout, stderr bytes.Buffer
 	code := runGobcoEngine([]string{"./..."}, 80, 5, false, &stdout, &stderr)
 	if code != 1 {
@@ -100,7 +106,7 @@ func TestRunGobcoEngineTextAndZeroTotal(t *testing.T) {
 		t.Fatalf("text output missing")
 	}
 	// success text path
-	gobcoRun = func(pkg string) ([]GobcoCondition, error) {
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) {
 		return []GobcoCondition{{Start: "f.go:1:2", Code: "if x", TrueCount: 1, FalseCount: 1}}, nil
 	}
 	var stdout2, stderr2 bytes.Buffer
@@ -108,12 +114,15 @@ func TestRunGobcoEngineTextAndZeroTotal(t *testing.T) {
 	if code2 != 0 {
 		t.Fatalf("got %d: %s", code2, stderr2.String())
 	}
-	// package failure text path
-	gobcoRun = func(pkg string) ([]GobcoCondition, error) { return nil, errFake }
+	// package failure text path: all failed -> exit 2
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) { return nil, errFake }
 	var stdout3, stderr3 bytes.Buffer
 	code3 := runGobcoEngine([]string{"./..."}, 0, 5, false, &stdout3, &stderr3)
-	if code3 != 0 {
+	if code3 != 2 {
 		t.Fatalf("got %d: %s", code3, stderr3.String())
+	}
+	if !strings.Contains(stderr3.String(), "全部 1 个包的 gobco 都失败了") {
+		t.Fatalf("missing all-failed: %s", stderr3.String())
 	}
 }
 
@@ -134,7 +143,7 @@ func TestRunGobcoEngineInvalidStartAndTop(t *testing.T) {
 	origRun := gobcoRun
 	defer func() { listPackages = origList; gobcoRun = origRun }()
 	listPackages = func(patterns []string) ([]string, error) { return []string{"pkg/a"}, nil }
-	gobcoRun = func(pkg string) ([]GobcoCondition, error) {
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) {
 		return []GobcoCondition{{Start: "badstart", Code: "if x", TrueCount: 0, FalseCount: 1}}, nil
 	}
 	var stdout, stderr bytes.Buffer
@@ -174,7 +183,7 @@ func TestRunGobcoEngineManyUncovered(t *testing.T) {
 	for i := 0; i < 51; i++ {
 		conds = append(conds, GobcoCondition{Start: "f.go:1:2", Code: "if x", TrueCount: 0, FalseCount: 1})
 	}
-	gobcoRun = func(pkg string) ([]GobcoCondition, error) { return conds, nil }
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) { return conds, nil }
 	var stdout, stderr bytes.Buffer
 	code := runGobcoEngine([]string{"./..."}, 0, 5, false, &stdout, &stderr)
 	if code != 0 {
@@ -182,6 +191,78 @@ func TestRunGobcoEngineManyUncovered(t *testing.T) {
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("还有")) {
 		t.Fatalf("rest message missing")
+	}
+}
+
+func TestPrepareGobcoTemp(t *testing.T) {
+	tmp := t.TempDir()
+	stats, cleanup, err := prepareGobcoTemp(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(stats)
+	if !strings.HasPrefix(root, tmp) {
+		t.Fatalf("root not under tmp: %s", root)
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("root not created: %v", err)
+	}
+	if filepath.Base(stats) != "gobco-stats.json" {
+		t.Fatalf("bad stats name: %s", stats)
+	}
+	cleanup()
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("cleanup did not remove root: %v", err)
+	}
+}
+
+func TestListPackagesDir(t *testing.T) {
+	pkgs, err := listPackages([]string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("got %d pkgs: %v", len(pkgs), pkgs)
+	}
+	if !filepath.IsAbs(pkgs[0]) {
+		t.Fatalf("not abs: %s", pkgs[0])
+	}
+	if strings.Contains(pkgs[0], "/vendor/") {
+		t.Fatalf("vendor leaked: %s", pkgs[0])
+	}
+}
+
+func TestRunGobcoEngineWithTmpDirAllFailed(t *testing.T) {
+	origList := listPackages
+	origRun := gobcoRun
+	defer func() { listPackages = origList; gobcoRun = origRun }()
+	listPackages = func(patterns []string) ([]string, error) { return []string{"pkg/a"}, nil }
+	gobcoRun = func(pkg, tmpDir string) ([]GobcoCondition, error) { return nil, errFake }
+	var stdout, stderr bytes.Buffer
+	code := runGobcoEngineWithTmpDir([]string{"./..."}, 80, 5, false, t.TempDir(), &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("got %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "全部 1 个包的 gobco 都失败了") {
+		t.Fatalf("missing all-failed message: %s", stderr.String())
+	}
+}
+
+func TestGobcoPackageDir(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	under := gobcoPackageDir(filepath.Join(cwd, "internal", "subscheck"))
+	if filepath.IsAbs(under) || strings.HasPrefix(under, "..") {
+		t.Fatalf("under cwd should be relative: %s", under)
+	}
+	outside := gobcoPackageDir("C:\\other\\pkg")
+	if !filepath.IsAbs(outside) {
+		t.Fatalf("outside cwd should stay absolute: %s", outside)
+	}
+	if got := gobcoPackageDir("internal/subscheck"); got != "internal/subscheck" {
+		t.Fatalf("already relative changed: %s", got)
 	}
 }
 
