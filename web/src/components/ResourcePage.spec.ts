@@ -74,7 +74,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     await flushPromises()
@@ -85,7 +85,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource, readonlyMode: true },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -93,7 +93,7 @@ describe('ResourcePage', () => {
 
     const w2 = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm2 = w2.vm as unknown as ResourcePageVm
@@ -104,7 +104,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource, emptyText: '空空' },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -112,7 +112,7 @@ describe('ResourcePage', () => {
 
     const w2 = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm2 = w2.vm as unknown as ResourcePageVm
@@ -123,7 +123,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -138,7 +138,7 @@ describe('ResourcePage', () => {
     const row = { name: 'a', count: 1, enabled: false }
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -157,7 +157,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -179,7 +179,7 @@ describe('ResourcePage', () => {
     resource.create.mockRejectedValue(new Error('create boom'))
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -199,7 +199,7 @@ describe('ResourcePage', () => {
     const row = { name: 'a', count: 1, enabled: false }
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -220,7 +220,7 @@ describe('ResourcePage', () => {
     const row = { name: 'a' }
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -242,7 +242,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -258,7 +258,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource, readonlyMode: true },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -268,7 +268,7 @@ describe('ResourcePage', () => {
 
     const w2 = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource, readonlyMode: false },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     await flushPromises()
@@ -279,7 +279,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     await flushPromises()
@@ -293,7 +293,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -304,16 +304,16 @@ describe('ResourcePage', () => {
     await w.vm.$nextTick()
     await new Promise((r) => setTimeout(r, 50))
     await flushPromises()
-    expect(w.find('[data-testid="field-switch"]').exists()).toBe(true)
-    expect(w.find('[data-testid="field-number"]').exists()).toBe(true)
-    expect(w.find('[data-testid="field-text"]').exists()).toBe(true)
+    expect(document.querySelector('[data-testid="field-switch"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="field-number"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="field-text"]')).not.toBeNull()
   })
 
   it('AsyncSection 空态：items 为空且传 emptyText 时显示该文案', async () => {
     const resource = makeResource([])
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource, emptyText: '没有数据哦' },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     await flushPromises()
@@ -324,7 +324,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -385,7 +385,7 @@ describe('ResourcePage', () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      global: { plugins: [vuetify] },
       attachTo: document.body,
     })
     const vm = w.vm as unknown as ResourcePageVm
@@ -411,7 +411,8 @@ describe('ResourcePage', () => {
     expect(vm.draft.port).toBe(42)
   })
 
-  it('点击 dialog-cancel 关闭新增对话框', async () => {
+
+  it('点击 dialog-cancel / confirm-cancel 关闭对话框（stub 内联）', async () => {
     const resource = makeResource()
     const w = mount(ResourcePage, {
       props: { title: 'T', subtitle: 'S', columns, fields, resource },
@@ -426,17 +427,7 @@ describe('ResourcePage', () => {
     await w.find('[data-testid="dialog-cancel"]').trigger('click')
     await flushPromises()
     expect(vm.dialog).toBe(false)
-  })
 
-  it('点击 confirm-cancel 关闭确认删除对话框', async () => {
-    const resource = makeResource()
-    const w = mount(ResourcePage, {
-      props: { title: 'T', subtitle: 'S', columns, fields, resource },
-      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
-      attachTo: document.body,
-    })
-    const vm = w.vm as unknown as ResourcePageVm
-    await flushPromises()
     vm.askDelete({ name: 'a' })
     await w.vm.$nextTick()
     expect(vm.confirmOpen).toBe(true)
