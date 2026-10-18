@@ -7,8 +7,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/tktogether/subforge/internal/fetch"
+	"github.com/tktogether/subforge/internal/parse"
 	"github.com/tktogether/subforge/internal/store"
 )
 
@@ -261,3 +264,154 @@ func (m *Manager) DeleteSubToken(ctx context.Context, token string) error {
 	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM sub_tokens WHERE token = ?", token)
 	return err
 }
+
+// GenerateSubscription 生成订阅内容。
+// 从数据库读取所有启用的订阅，拉取并合并，应用分组和规则，输出 YAML。
+func (m *Manager) GenerateSubscription(ctx context.Context) (string, error) {
+	// 1. 加载所有启用的订阅
+	airports, err := m.ListAirports(ctx)
+	if err != nil {
+		return "", fmt.Errorf("加载订阅列表失败: %w", err)
+	}
+
+	var enabledAirports []Airport
+	for _, a := range airports {
+		if a.Enabled {
+			enabledAirports = append(enabledAirports, a)
+		}
+	}
+	if len(enabledAirports) == 0 {
+		return "", fmt.Errorf("没有启用的订阅")
+	}
+
+	// 2. 加载代理分组
+	groups, err := m.ListProxyGroups(ctx)
+	if err != nil {
+		return "", fmt.Errorf("加载代理分组失败: %w", err)
+	}
+
+	// 3. 加载规则
+	rules, err := m.ListRules(ctx)
+	if err != nil {
+		return "", fmt.Errorf("加载规则失败: %w", err)
+	}
+
+	// 4. 拉取并合并 proxies
+	fetcher := fetch.New()
+	var allProxies []map[string]any
+
+	var sources []fetch.Source
+	for _, a := range enabledAirports {
+		sources = append(sources, fetch.Source{
+			Name: a.Name,
+			URL:  a.SubscriptionURL,
+		})
+	}
+
+	results, err := fetcher.Fetch(ctx, sources)
+	if err != nil {
+		return "", fmt.Errorf("拉取订阅失败: %w", err)
+	}
+	for i, result := range results {
+		if result.Err != nil {
+			// 记录错误但继续
+			continue
+		}
+		dec, err := parse.DecodeSource(result.Content)
+		if err != nil {
+			continue
+		}
+		a := enabledAirports[i]
+		for _, p := range dec.Nodes {
+			// 添加备注前缀
+			if a.Remarks != "" {
+				if name, ok := p["name"].(string); ok {
+					p["name"] = a.Remarks + " " + name
+				}
+			}
+			allProxies = append(allProxies, p)
+		}
+	}
+
+	if len(allProxies) == 0 {
+		return "", fmt.Errorf("没有获取到任何节点")
+	}
+
+	// 5. 构建 YAML
+	var buf strings.Builder
+	buf.WriteString("proxies:\n")
+	for _, p := range allProxies {
+		buf.WriteString("- ")
+		// 简化的 YAML 输出
+		if name, ok := p["name"].(string); ok {
+			buf.WriteString("name: " + yamlEscape(name) + "\n")
+		}
+		if typ, ok := p["type"].(string); ok {
+			buf.WriteString("  type: " + typ + "\n")
+		}
+		if server, ok := p["server"].(string); ok {
+			buf.WriteString("  server: " + yamlEscape(server) + "\n")
+		}
+		if port, ok := p["port"].(int); ok {
+			buf.WriteString(fmt.Sprintf("  port: %d\n", port))
+		}
+		// 其他字段...
+		buf.WriteString("\n")
+	}
+
+	// 6. 应用分组
+	buf.WriteString("proxy-groups:\n")
+	for _, g := range groups {
+		buf.WriteString("- name: " + yamlEscape(g.Name) + "\n")
+		buf.WriteString("  type: " + g.Type + "\n")
+		if g.Regex != "" {
+			buf.WriteString("  regex: " + yamlEscape(g.Regex) + "\n")
+		}
+		if g.URL != "" {
+			buf.WriteString("  url: " + yamlEscape(g.URL) + "\n")
+		}
+		if g.Interval > 0 {
+			buf.WriteString(fmt.Sprintf("  interval: %d\n", g.Interval))
+		}
+		buf.WriteString("  proxies: []\n")
+		buf.WriteString("\n")
+	}
+
+	// 7. 应用规则
+	buf.WriteString("rules:\n")
+	for _, r := range rules {
+		if r.Enabled {
+			buf.WriteString("- " + r.RuleType + "," + r.RuleParam + "\n")
+		}
+	}
+
+	return buf.String(), nil
+}
+
+// yamlEscape 转义 YAML 字符串中的特殊字符。
+func yamlEscape(s string) string {
+	if strings.ContainsAny(s, ":\n\t") {
+		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	}
+	return s
+}
+
+
+// getConfig 从 config 表读取配置值。
+func (m *Manager) getConfig(ctx context.Context, key string) (string, error) {
+	var val string
+	err := m.db.Raw().QueryRowContext(ctx, "SELECT value FROM config WHERE key = ?", key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return val, err
+}
+
+// setConfig 写入配置值。
+func (m *Manager) setConfig(ctx context.Context, key, value string) error {
+	_, err := m.db.Raw().ExecContext(ctx,
+		"INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		key, value)
+	return err
+}
+
