@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -77,4 +78,37 @@ func (s *Server) handleAPIRejectSuggestion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// suggestionLoop 保存 Rule-Bot 闭环（检测器 + 队列）。
+// 由启动装配注入；为空表示闭环未启用。
+var suggestionLoop *rulebot.Loop
+
+// SetSuggestionLoop 注入建议闭环（供启动装配调用）。
+func SetSuggestionLoop(l *rulebot.Loop) { suggestionLoop = l }
+
+// handleAPIApplySuggestions 实现 POST /api/suggestions/apply：把已确认建议真正导入规则库。
+// 成功返回 {"applied":N}；ApplyConfirmed 报错时 502，且 Confirmed 不会被清空（可重试）。
+func (s *Server) handleAPIApplySuggestions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	mgr, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	if suggestionLoop == nil {
+		s.writeAPIError(w, r, http.StatusNotImplemented, fmt.Errorf("Rule-Bot 建议队列未启用"))
+		return
+	}
+	n, err := suggestionLoop.ApplyConfirmed(r.Context(), "scheduler", func(ctx context.Context, source string, rules []string) error {
+		_, err := mgr.ImportRules(ctx, source, rules, nil)
+		return err
+	})
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusBadGateway, fmt.Errorf("应用建议失败: %w", err))
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"applied": n})
 }

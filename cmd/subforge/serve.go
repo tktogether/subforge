@@ -168,6 +168,7 @@ func cmdServe(args []string) error {
 		q := rulebot.NewPendingQueue()
 		api.SetSuggestionQueue(q)
 		loop := rulebot.NewLoop(rulebot.NewDetector(), q)
+		api.SetSuggestionLoop(loop)
 
 		// 调度器：把已启用的告警通道接进来，再注册两个定时任务。
 		sch := scheduler.New()
