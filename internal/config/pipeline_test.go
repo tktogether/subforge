@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tktogether/subforge/internal/transform"
@@ -211,5 +213,124 @@ step = op.dedupe
 	}
 	if _, ok := m["other"]; !ok {
 		t.Errorf("other 应存在")
+	}
+}
+
+// fakeResolver 是测试用的 ScriptResolver。
+type fakeResolver struct {
+	enabled bool
+	scripts map[string]string
+}
+
+func (f *fakeResolver) ScriptsEnabled() bool { return f.enabled }
+
+func (f *fakeResolver) ResolveScript(name string) (string, error) {
+	if code, ok := f.scripts[name]; ok {
+		return code, nil
+	}
+	return "", fmt.Errorf("脚本 %q 不存在", name)
+}
+
+func TestPipelineSpec_CompileWithResolver_RefHit(t *testing.T) {
+	sem := mustSem(t, `[pipeline:p]
+step = filter.script ref=foo timeout=1s
+`)
+	res := &fakeResolver{enabled: true, scripts: map[string]string{"foo": "true"}}
+	plan, err := sem.Pipelines[0].CompileWithResolver(res)
+	if err != nil {
+		t.Fatalf("CompileWithResolver: %v", err)
+	}
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Plan.Steps = %d，want 1", len(plan.Steps))
+	}
+	if _, ok := plan.Steps[0].Stage.(transform.ScriptFilter); !ok {
+		t.Errorf("Stage 类型不是 ScriptFilter: %T", plan.Steps[0].Stage)
+	}
+}
+
+func TestPipelineSpec_CompileWithResolver_RefNotFound(t *testing.T) {
+	sem := mustSem(t, `[pipeline:p]
+step = filter.script ref=nope timeout=1s
+`)
+	res := &fakeResolver{enabled: true, scripts: map[string]string{}}
+	_, err := sem.Pipelines[0].CompileWithResolver(res)
+	if err == nil {
+		t.Fatal("应报错")
+	}
+	if !strings.Contains(err.Error(), "解析脚本引用") {
+		t.Errorf("错误应含 解析脚本引用: %v", err)
+	}
+	if !strings.Contains(err.Error(), "nope") {
+		t.Errorf("错误应含脚本名: %v", err)
+	}
+}
+
+func TestPipelineSpec_CompileWithResolver_RefAndSrcConflict(t *testing.T) {
+	sem := mustSem(t, `[pipeline:p]
+step = filter.script ref=foo src=bar timeout=1s
+`)
+	res := &fakeResolver{enabled: true, scripts: map[string]string{"foo": "true"}}
+	_, err := sem.Pipelines[0].CompileWithResolver(res)
+	if err == nil {
+		t.Fatal("应报错")
+	}
+	if !strings.Contains(err.Error(), "不能同时给") {
+		t.Errorf("错误应含 不能同时给: %v", err)
+	}
+}
+
+func TestPipelineSpec_CompileWithResolver_NilResolverWithSrcCompat(t *testing.T) {
+	sem := mustSem(t, "[pipeline:p]\nstep = filter.script src=x==1 timeout=1s\n")
+	if _, err := sem.Pipelines[0].Compile(); err != nil {
+		t.Fatalf("纯 src= 存量路径 Compile 应成功: %v", err)
+	}
+}
+
+func TestPipelineSpec_CompileWithResolver_NilResolverWithRef(t *testing.T) {
+	sem := mustSem(t, "[pipeline:p]\nstep = filter.script ref=foo timeout=1s\n")
+	_, err := sem.Pipelines[0].Compile()
+	if err == nil {
+		t.Fatal("应报错")
+	}
+	if !strings.Contains(err.Error(), "需要脚本库支持") {
+		t.Errorf("错误应含 需要脚本库支持: %v", err)
+	}
+}
+
+func TestPipelineSpec_CompileWithResolver_Disabled(t *testing.T) {
+	sem := mustSem(t, `[pipeline:p]
+step = filter.script src=x==1 timeout=1s
+`)
+	res := &fakeResolver{enabled: false, scripts: map[string]string{}}
+	_, err := sem.Pipelines[0].CompileWithResolver(res)
+	if err == nil {
+		t.Fatal("应报错")
+	}
+	if !strings.Contains(err.Error(), "脚本步骤已禁用（在「设置」里开启 script.enabled）") {
+		t.Errorf("错误应逐字含禁用文案: %v", err)
+	}
+}
+
+func TestPipelineSpec_CompileWithResolver_MissingSrcAndRef(t *testing.T) {
+	sem := mustSem(t, `[pipeline:p]
+step = filter.script timeout=1s
+`)
+	res := &fakeResolver{enabled: true, scripts: map[string]string{}}
+	_, err := sem.Pipelines[0].CompileWithResolver(res)
+	if err == nil {
+		t.Fatal("应报错")
+	}
+	if !strings.Contains(err.Error(), "缺少 src= 或 ref=") {
+		t.Errorf("错误应含 缺少 src= 或 ref=: %v", err)
+	}
+}
+
+func TestPipelineSpec_CompileNoScriptCompat(t *testing.T) {
+	sem := mustSem(t, `[pipeline:clean]
+step = filter.regex include=^HK
+step = op.dedupe
+`)
+	if _, err := sem.Pipelines[0].Compile(); err != nil {
+		t.Fatalf("无脚本管线 Compile 应成功: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,16 +50,28 @@ type PipelineStep struct {
 	Line int
 }
 
+// ScriptResolver 把脚本名解析成 JS 源码，并告知脚本子系统是否启用。
+// internal/config 不依赖存储层，由调用方（serve 路径）注入实现。
+type ScriptResolver interface {
+	ScriptsEnabled() bool
+	ResolveScript(name string) (string, error)
+}
+
 // Compile 把命名管线定义编译成可执行的 Plan。
 // 正则、排序键、脚本都在这里编译一次，配置写错在构建期暴露，而不是等请求期。
 func (s PipelineSpec) Compile() (transform.Plan, error) {
+	return s.CompileWithResolver(nil)
+}
+
+// CompileWithResolver 同 Compile，但允许注入 ScriptResolver 以支持 ref=<脚本名>。
+func (s PipelineSpec) CompileWithResolver(res ScriptResolver) (transform.Plan, error) {
 	def, err := transform.ParseOnError(s.OnError)
 	if err != nil {
 		return transform.Plan{}, fmt.Errorf("管线 %q: %w", s.Name, err)
 	}
 	plan := transform.Plan{Name: s.Name}
 	for i, st := range s.Steps {
-		stage, err := st.build()
+		stage, err := st.buildWithResolver(res)
 		if err != nil {
 			return transform.Plan{}, fmt.Errorf("管线 %q 第 %d 步（%s）: %w", s.Name, i+1, st.Kind, err)
 		}
@@ -77,6 +90,11 @@ func (s PipelineSpec) Compile() (transform.Plan, error) {
 
 // build 把一步编译成 Stage。
 func (st PipelineStep) build() (transform.Stage, error) {
+	return st.buildWithResolver(nil)
+}
+
+// buildWithResolver 同 build，但允许注入 ScriptResolver 以支持 ref=<脚本名>。
+func (st PipelineStep) buildWithResolver(res ScriptResolver) (transform.Stage, error) {
 	a := st.Args
 	switch st.Kind {
 	case "filter.regex":
@@ -90,7 +108,11 @@ func (st PipelineStep) build() (transform.Stage, error) {
 		if err != nil {
 			return nil, err
 		}
-		return asStage(transform.NewScriptFilter(scriptName(a, st.Kind), a["src"], d))
+		code, err := resolveScriptSrc(res, a, st.Kind)
+		if err != nil {
+			return nil, err
+		}
+		return asStage(transform.NewScriptFilter(scriptName(a, st.Kind), code, d))
 	case "op.rename":
 		if strings.TrimSpace(a["pattern"]) == "" {
 			return nil, fmt.Errorf("缺少 pattern=")
@@ -116,7 +138,11 @@ func (st PipelineStep) build() (transform.Stage, error) {
 		if err != nil {
 			return nil, err
 		}
-		return asStage(transform.NewScriptOperate(scriptName(a, st.Kind), a["src"], d))
+		code, err := resolveScriptSrc(res, a, st.Kind)
+		if err != nil {
+			return nil, err
+		}
+		return asStage(transform.NewScriptOperate(scriptName(a, st.Kind), code, d))
 	default:
 		return nil, fmt.Errorf("未知步骤类型 %q（可用: filter.regex/region/type/script、op.rename/emoji/dedupe/split/sort/script）", st.Kind)
 	}
@@ -253,6 +279,36 @@ func timeoutArg(a map[string]string) (time.Duration, error) {
 		return 0, fmt.Errorf("timeout %q 必须为正", v)
 	}
 	return d, nil
+}
+
+// resolveScriptSrc 解析 filter.script / op.script 的 JS 源码：ref=<脚本名> 或 src=<源码>。
+// 只有 ref= 依赖 resolver；纯 src= 是存量路径，不依赖 resolver（CLI 零迁移）。
+func resolveScriptSrc(res ScriptResolver, a map[string]string, kind string) (string, error) {
+	ref := strings.TrimSpace(a["ref"])
+	src := a["src"]
+	if ref != "" && strings.TrimSpace(src) != "" {
+		return "", fmt.Errorf("ref= 与 src= 不能同时给")
+	}
+	if ref != "" {
+		if res == nil {
+			return "", fmt.Errorf("脚本步骤需要脚本库支持（%s）", kind)
+		}
+		if !res.ScriptsEnabled() {
+			return "", errors.New("脚本步骤已禁用（在「设置」里开启 script.enabled）")
+		}
+		code, err := res.ResolveScript(ref)
+		if err != nil {
+			return "", fmt.Errorf("解析脚本引用 %q: %w", ref, err)
+		}
+		return code, nil
+	}
+	if strings.TrimSpace(src) == "" {
+		return "", errors.New("缺少 src= 或 ref=")
+	}
+	if res != nil && !res.ScriptsEnabled() {
+		return "", errors.New("脚本步骤已禁用（在「设置」里开启 script.enabled）")
+	}
+	return src, nil
 }
 
 // scriptName 取脚本名；缺省回落到步骤类型，仅用于错误信息定位。
