@@ -942,6 +942,19 @@ jobs:
 | 11 | CI 三处接线 | ci.yml 中 `web` job 存在、`test` 与交叉编译均有 `needs: web`、`coverage` job 存在 |
 | 12 | 一次性验收 | `make verify`（或 `scripts/verify.cmd`）全绿 |
 
+### 验收证据（最终）
+
+以下数字与命令为 Lead 独立跑出（大验收点），本小节只转录，不重跑改数。
+
+- `gofmt -l cmd internal pkg` → 无输出
+- `go build ./...` / `go vet ./...` → exit 0
+- `go test ./... -count=1` → 32 包全 ok、0 FAIL
+- 门禁 A：`go run ./internal/tools/coveragegate -profile coverage.out -min 80 -min-func 100` → **函数 794/794 = 100%**，`uncovered_functions=null`；语句 92.51%
+- 门禁 B 快层：`go run ./internal/tools/condgate -engine=profile -profile coverage.out -min 80` → **条件 1955/2304 = 84.85%**，exit 0（阈值 80%）
+- 前端：`vue-tsc --noEmit` 0 错误；`vitest run` **33 files / 319 tests** 全绿；全量覆盖率 **函数/行/语句 100%、分支 98.2%**
+- 门禁 B 准层：`go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80` → 结果见仓库根 `gobco-condition.txt`，该文件不入库（Lead 后台跑，数字以该文件为准，本小节不编造）
+
+说明：本机无 `make`，用 `scripts/verify.cmd` 等价替代（已实测 exit 0）；CI 的 `condition-nightly` job 跑的就是上面那条准层命令。
 ---
 
 ## 附录 A：本计划写作时的已完成事项（**未提交**，按「只写 plan」要求保留在工作区）

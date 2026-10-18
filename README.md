@@ -136,13 +136,17 @@ LAN/VPS 部署时在页面右上角填 token（或 URL 带 `?token=`），本机
 |------|------|------|------------------|
 | GET | `/api/stats` | 统计概览 | ✓ |
 | GET | `/api/history` | 转换历史 | ✓ |
-| GET | `/api/pipelines` | 命名管线列表 | ✓ |
+| GET | `/api/pipelines` | 命名管线列表（DB + 模板合并） | ✓ |
+| POST | `/api/pipelines` | 新增命名管线 | ✓ |
+| GET | `/api/pipelines/{id}` | 单个命名管线（含 steps） | ✓ |
+| PUT | `/api/pipelines/{id}` | 更新命名管线 | ✓ |
+| DELETE | `/api/pipelines/{id}` | 删除命名管线 | ✓ |
 | GET | `/api/targets` | 渲染 target 列表 | ✓ |
 | GET | `/api/rulesets` | 规则集列表 | ✓ |
 | GET | `/api/logs` | 结构化日志流 | ✓ |
 | GET | `/api/airports` | 机场列表 | ✓ |
 | POST | `/api/airports` | 新增机场 | ✓ |
-| POST | `/api/airports/refresh` | 刷新全部启用机场流量 | ✓ |
+| POST | `/api/airports/refresh` | 刷新全部启用机场流量（`?with_rules=1` 同步导入规则） | ✓ |
 | POST | `/api/airports/check` | 订阅测活 | ✓ |
 | GET | `/api/airports/check/last` | 最近测活结果 | ✓ |
 | GET | `/api/airports/{id}` | 单个机场 | ✓ |
@@ -185,6 +189,7 @@ LAN/VPS 部署时在页面右上角填 token（或 URL 带 `?token=`），本机
 | POST | `/api/alert-channels/test` | 告警通道连通性测试 | ✓ |
 | GET | `/api/rule-providers` | 规则提供者列表 | ✓ |
 | GET | `/api/suggestions` | Rule-Bot 建议队列 | ✓ |
+| POST | `/api/suggestions/apply` | 应用 Rule-Bot 建议 | ✓ |
 | POST | `/api/suggestions/{index}/confirm` | 确认建议 | ✓ |
 | POST | `/api/suggestions/{index}/reject` | 拒绝建议 | ✓ |
 | GET | `/api/rule-sources` | 规则源列表 | ✓ |

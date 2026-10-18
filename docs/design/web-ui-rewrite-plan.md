@@ -421,6 +421,9 @@ func (m *Manager) SetTrafficStrategy(ctx context.Context, s traffic.Strategy) er
 
 ### 3.6 脚本子系统（补齐 A5）
 
+> **本节已实现**（提交：`7adce6b` feat(config) 管线脚本步骤支持 `ref=` 脚本名与 `script.enabled` 安全开关；`0d70381` feat(scripts) 脚本库/设置/告警/规则源存储层与对应 API；`c4738a6` feat(web) 脚本库与任务页落地、管线对象化适配、前端端点补全；`fb896df` pipelines 表启用）。概念映射：`internal/scripts` 薄包思想落成 `internal/subforge/scripts.go`（ScriptResolver 鸭子类型）+ `internal/api/scripts.go`（CRUD）+ `internal/api/scripts_test.go`（`POST /api/scripts/test`）；`ref=<脚本名>` 与 `script.enabled` 开关在 `internal/config/pipeline.go` 的 ScriptResolver 接口实现；前端 `ScriptsPage.vue` 已从占位改为真实页面。关键文件：`internal/subforge/scripts.go`、`internal/api/scripts.go`、`internal/api/server.go`（`/api/scripts` 路由）、`web/src/pages/ScriptsPage.vue`。
+
+
 **现状（已核对）**：`internal/transform/script.go` 提供 goja 沙箱；`internal/config/pipeline.go:88` 的 `filter.script` 与 `:114` 的 `op.script` 把**内联脚本源码**直接编译执行。
 
 - 参数：`src`（**是 JS 源码本身，不是文件路径**——`newScriptRunner` 直接 `goja.Compile(name, src, false)`，见 `internal/transform/script.go:33-45`）、`name`（仅用于错误定位）、`timeout`（缺省 5s，`defaultScriptTimeout = 5 * time.Second`）。
@@ -489,6 +492,9 @@ config 表 key = `script.enabled`，默认 `false`。
 ---
 
 ### 3.7 上游订阅规则导入（补齐 A11–A13）
+
+> **本节已实现**（提交：`6bea4da` feat(api) GET /api/rules 补 source/raw/origin_key 与 group_name；`bbf71c3` feat(api) 补全规则导入/规则集/批量启用/建议/设置/模板/override/规则源/任务/测活/脚本试运行端点并收口路由；`214fa76` feat(api) POST /api/airports/refresh 支持 `?with_rules=1` 顺带导入规则；`9cd4339` feat(rulebot) 建议应用闭环；`6f54f47` feat(web) 规则页四区块与规则源页操作按钮）。① 解析层 `internal/model` 的 `ParseClashRuleProviders` + `parse.Decoded.RuleProviders/Warnings`；② 导入语义 `internal/subforge/import.go` 的 `ImportRules`/`NormalizeRuleOriginKey`（候选队列 enabled=0、`origin_key` 幂等、分组名映射不上不丢行）；③ 入口 `POST /api/airports/{id}/import-rules` 与 `POST /api/airports/refresh?with_rules=1`；④ 前端 `RulesPage.vue` 四区块 + `RuleSourcesPage.vue` 操作按钮。关键文件：`internal/model/model.go`、`internal/parse/parse.go`、`internal/subforge/import.go`、`internal/api/server.go`（`/api/airports/{id}/import-rules`、`/api/rule-sources/*`）、`web/src/pages/RulesPage.vue`、`web/src/pages/RuleSourcesPage.vue`。
+
 
 **现状（已核对，链路断在半途）**
 
