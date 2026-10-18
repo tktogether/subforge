@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -456,5 +458,247 @@ func TestAPITrafficPreviewNoPersist(t *testing.T) {
 		before.NodeCount != after.NodeCount || before.TrafficAt != after.TrafficAt ||
 		before.TrafficErr != after.TrafficErr {
 		t.Fatalf("preview modified airport row: before=%+v after=%+v", before, after)
+	}
+}
+
+// newWithRulesServer 起一个启用订阅管理的服务，并预置一个指向 rulesUpstream 的启用机场。
+func newWithRulesServer(t *testing.T) (*httptest.Server, *subforge.Manager) {
+	ts, mgr, _ := newTrafficTestServer(t)
+	up := rulesUpstream(t)
+	if _, err := mgr.AddAirport(t.Context(), "机场R", up.URL, "", true); err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	return ts, mgr
+}
+
+// TestAPIAirportsRefreshWithoutWithRulesHasNoImportsKey 不带 query 时响应必须与旧版逐字节一致：只有 results/ok/fail。
+func TestAPIAirportsRefreshWithoutWithRulesHasNoImportsKey(t *testing.T) {
+	ts, _ := newWithRulesServer(t)
+	status, _, body := uiPostJSON(t, ts, "/api/airports/refresh", "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	if strings.Contains(body, "imports") {
+		t.Fatalf("不带 with_rules 时不应出现 imports 键: %s", body)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if len(got) != 3 {
+		t.Fatalf("顶层键应为 3 个（results/ok/fail），got=%v", got)
+	}
+	for _, k := range []string{"results", "ok", "fail"} {
+		if _, ok := got[k]; !ok {
+			t.Fatalf("缺少键 %s: %s", k, body)
+		}
+	}
+}
+
+type refreshImportItem struct {
+	AirportID      int64    `json:"airport_id"`
+	Name           string   `json:"name"`
+	RulesAdded     int      `json:"rules_added"`
+	RulesSkipped   int      `json:"rules_skipped"`
+	ProvidersAdded int      `json:"providers_added"`
+	Warnings       []string `json:"warnings"`
+	Err            string   `json:"err"`
+}
+
+type refreshWithImports struct {
+	Results []struct {
+		OK bool `json:"ok"`
+	} `json:"results"`
+	OK      int                 `json:"ok"`
+	Fail    int                 `json:"fail"`
+	Imports []refreshImportItem `json:"imports"`
+}
+
+// TestAPIAirportsRefreshWithRulesImports ?with_rules=1 时对刷新成功的机场导入规则与规则集。
+func TestAPIAirportsRefreshWithRulesImports(t *testing.T) {
+	ts, _ := newWithRulesServer(t)
+	status, _, body := uiPostJSON(t, ts, "/api/airports/refresh?with_rules=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var got refreshWithImports
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if got.OK != 1 || got.Fail != 0 {
+		t.Fatalf("ok=%d fail=%d body=%s", got.OK, got.Fail, body)
+	}
+	if len(got.Imports) != 1 {
+		t.Fatalf("imports 长度 = %d，应为 1；body=%s", len(got.Imports), body)
+	}
+	item := got.Imports[0]
+	if item.Err != "" {
+		t.Fatalf("imports[0].err = %q，应为空", item.Err)
+	}
+	if item.RulesAdded != 2 {
+		t.Fatalf("rules_added = %d，应为 2", item.RulesAdded)
+	}
+	if item.ProvidersAdded != 1 {
+		t.Fatalf("providers_added = %d，应为 1", item.ProvidersAdded)
+	}
+	if item.Warnings == nil {
+		t.Fatalf("warnings 必须是非 nil 数组")
+	}
+	if item.Name != "机场R" {
+		t.Fatalf("name = %q，应为 机场R", item.Name)
+	}
+}
+
+// TestAPIAirportsRefreshWithRulesTruthyVariants 只有 1/true/yes/on（大小写不敏感、可带空白）才算真。
+func TestAPIAirportsRefreshWithRulesTruthyVariants(t *testing.T) {
+	for _, v := range []string{"1", "true", "YES", " on "} {
+		ts, _ := newWithRulesServer(t)
+		status, _, body := uiPostJSON(t, ts, "/api/airports/refresh?with_rules="+url.QueryEscape(v), "")
+		if status != http.StatusOK {
+			t.Fatalf("with_rules=%q status=%d body=%s", v, status, body)
+		}
+		if !strings.Contains(body, "\"imports\"") {
+			t.Fatalf("with_rules=%q 应带 imports 键: %s", v, body)
+		}
+	}
+	for _, v := range []string{"0", "false", "", "bogus"} {
+		ts, _ := newWithRulesServer(t)
+		status, _, body := uiPostJSON(t, ts, "/api/airports/refresh?with_rules="+url.QueryEscape(v), "")
+		if status != http.StatusOK {
+			t.Fatalf("with_rules=%q status=%d body=%s", v, status, body)
+		}
+		if strings.Contains(body, "imports") {
+			t.Fatalf("with_rules=%q 不应带 imports 键: %s", v, body)
+		}
+	}
+}
+
+// TestAPIAirportsRefreshWithRulesImportFailureDoesNotFailRefresh 单机场导入失败只记 err，整体仍 200。
+func TestAPIAirportsRefreshWithRulesImportFailureDoesNotFailRefresh(t *testing.T) {
+	ts, mgr, _ := newTrafficTestServer(t)
+	var calls int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+			_, _ = w.Write([]byte(rulesClashYAML))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer up.Close()
+	if _, err := mgr.AddAirport(t.Context(), "机场F", up.URL, "", true); err != nil {
+		t.Fatal(err)
+	}
+	status, _, body := uiPostJSON(t, ts, "/api/airports/refresh?with_rules=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("导入失败不应让整体非 200: status=%d body=%s", status, body)
+	}
+	var got refreshWithImports
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if got.OK != 1 {
+		t.Fatalf("刷新应成功 ok=%d body=%s", got.OK, body)
+	}
+	if len(got.Imports) != 1 {
+		t.Fatalf("imports 长度 = %d，应为 1；body=%s", len(got.Imports), body)
+	}
+	if got.Imports[0].Err == "" {
+		t.Fatalf("imports[0].err 应非空；body=%s", body)
+	}
+	if !strings.Contains(got.Imports[0].Err, "导入失败") {
+		t.Fatalf("imports[0].err = %q，应含 导入失败", got.Imports[0].Err)
+	}
+	if got.Imports[0].RulesAdded != 0 || got.Imports[0].ProvidersAdded != 0 {
+		t.Fatalf("失败时计数应为 0: %+v", got.Imports[0])
+	}
+}
+
+// TestAPIAirportsRefreshWithRulesOnlyOKAirportsImported 刷新失败的机场不进入 imports。
+func TestAPIAirportsRefreshWithRulesOnlyOKAirportsImported(t *testing.T) {
+	ts, mgr, _ := newTrafficTestServer(t)
+	up := rulesUpstream(t)
+	if _, err := mgr.AddAirport(t.Context(), "机场OK", up.URL, "", true); err != nil {
+		t.Fatal(err)
+	}
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer dead.Close()
+	if _, err := mgr.AddAirport(t.Context(), "机场坏", dead.URL, "", true); err != nil {
+		t.Fatal(err)
+	}
+	status, _, body := uiPostJSON(t, ts, "/api/airports/refresh?with_rules=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var got refreshWithImports
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if got.OK != 1 || got.Fail != 1 {
+		t.Fatalf("ok=%d fail=%d body=%s", got.OK, got.Fail, body)
+	}
+	if len(got.Imports) != 1 {
+		t.Fatalf("imports 只应含刷新成功的机场，长度 = %d；body=%s", len(got.Imports), body)
+	}
+	if got.Imports[0].Name != "机场OK" {
+		t.Fatalf("imports[0].name = %q", got.Imports[0].Name)
+	}
+}
+
+// TestIsTruthyQuery 直接覆盖真值解析的边界。
+func TestIsTruthyQuery(t *testing.T) {
+	for _, v := range []string{"1", "true", "TRUE", "Yes", "on", " ON ", "\ttrue\n"} {
+		if !isTruthyQuery(v) {
+			t.Errorf("isTruthyQuery(%q) = false，应为 true", v)
+		}
+	}
+	for _, v := range []string{"", "0", "false", "off", "no", "bogus", "2"} {
+		if isTruthyQuery(v) {
+			t.Errorf("isTruthyQuery(%q) = true，应为 false", v)
+		}
+	}
+}
+
+// TestImportRulesAfterRefreshNilManager 覆盖 manager 缺失时的每元素 err（不新增 503 路径）。
+func TestImportRulesAfterRefreshNilManager(t *testing.T) {
+	srv, _ := importTestServer(t)
+	got := srv.importRulesAfterRefresh(context.Background(), nil, []subforge.TrafficRefreshResult{{AirportID: 1, Name: "a", OK: true}})
+	if len(got) != 1 {
+		t.Fatalf("len = %d，应为 1", len(got))
+	}
+	if got[0]["err"] != "订阅管理未启用" {
+		t.Fatalf("err = %v，应为 订阅管理未启用", got[0]["err"])
+	}
+}
+
+// TestImportRulesAfterRefreshNilEngine 覆盖引擎缺失时的每元素 err。
+func TestImportRulesAfterRefreshNilEngine(t *testing.T) {
+	// New 要求 Engine 非空，这里直接构造零值 Server 以覆盖 engine==nil 的防御分支。
+	srv := &Server{}
+	mgr, err := subforge.NewManager(filepath.Join(t.TempDir(), "engine.db"))
+	if err != nil {
+		t.Fatalf("打开临时 SQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	got := srv.importRulesAfterRefresh(context.Background(), mgr, []subforge.TrafficRefreshResult{{AirportID: 1, Name: "a", OK: true}})
+	if len(got) != 1 {
+		t.Fatalf("len = %d，应为 1", len(got))
+	}
+	if got[0]["err"] != "转换引擎未启用" {
+		t.Fatalf("err = %v，应为 转换引擎未启用", got[0]["err"])
+	}
+}
+
+// TestImportRulesAfterRefreshMissingAirport 覆盖 GetAirport 失败分支。
+func TestImportRulesAfterRefreshMissingAirport(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	got := srv.importRulesAfterRefresh(context.Background(), mgr, []subforge.TrafficRefreshResult{{AirportID: 99999, Name: "ghost", OK: true}})
+	if len(got) != 1 {
+		t.Fatalf("len = %d，应为 1", len(got))
+	}
+	if got[0]["err"] == "" {
+		t.Fatalf("不存在的机场应记 err，got=%v", got[0])
 	}
 }

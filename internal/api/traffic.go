@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/tktogether/subforge/internal/subforge"
 	"github.com/tktogether/subforge/internal/traffic"
@@ -46,9 +48,65 @@ func (s *Server) handleAPITrafficStrategy(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// isTruthyQuery 判断 query 参数是否为真值：1/true/yes/on（大小写不敏感、忽略首尾空白）。
+func isTruthyQuery(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// importRulesAfterRefresh 对所有刷新成功的机场导入规则与规则集；单个机场失败只记 err，不影响整体。
+func (s *Server) importRulesAfterRefresh(ctx context.Context, m *subforge.Manager, results []subforge.TrafficRefreshResult) []map[string]any {
+	out := make([]map[string]any, 0, len(results))
+	for _, res := range results {
+		if !res.OK {
+			continue
+		}
+		item := map[string]any{
+			"airport_id":      res.AirportID,
+			"name":            res.Name,
+			"rules_added":     0,
+			"rules_skipped":   0,
+			"providers_added": 0,
+			"warnings":        []string{},
+			"err":             "",
+		}
+		if m == nil {
+			item["err"] = "订阅管理未启用"
+			out = append(out, item)
+			continue
+		}
+		if s.engine == nil || s.engine.Fetcher == nil {
+			item["err"] = "转换引擎未启用"
+			out = append(out, item)
+			continue
+		}
+		a, err := m.GetAirport(ctx, res.AirportID)
+		if err != nil {
+			item["err"] = err.Error()
+			out = append(out, item)
+			continue
+		}
+		ir, warnings, err := s.importRulesFromAirport(ctx, m, a)
+		if err != nil {
+			item["err"] = err.Error()
+			out = append(out, item)
+			continue
+		}
+		item["rules_added"] = ir.RulesAdded
+		item["rules_skipped"] = ir.RulesSkipped
+		item["providers_added"] = ir.ProvidersAdded
+		item["warnings"] = warnings
+		out = append(out, item)
+	}
+	return out
+}
+
 // handleAPITrafficRefresh 立即刷新所有启用机场的流量余额。
 //
-// POST → {"results":[...], "ok":N, "fail":M}
+// POST → {"results":[...], "ok":N, "fail":M}；可选 ?with_rules=1 时额外带 "imports" 数组。
 func (s *Server) handleAPITrafficRefresh(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
 	if !ok {
@@ -62,6 +120,7 @@ func (s *Server) handleAPITrafficRefresh(w http.ResponseWriter, r *http.Request)
 		s.writeAPIError(w, r, http.StatusServiceUnavailable, errors.New("转换引擎未启用"))
 		return
 	}
+	withRules := isTruthyQuery(r.URL.Query().Get("with_rules"))
 	results, err := m.RefreshAirportTraffic(r.Context(), s.engine.Fetcher)
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -76,11 +135,15 @@ func (s *Server) handleAPITrafficRefresh(w http.ResponseWriter, r *http.Request)
 			okCount++
 		}
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"results": results,
 		"ok":      okCount,
 		"fail":    len(results) - okCount,
-	})
+	}
+	if withRules {
+		resp["imports"] = s.importRulesAfterRefresh(r.Context(), m, results)
+	}
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleAPIAirportRefreshOne 刷新单个机场流量：POST /api/airports/{id}/refresh

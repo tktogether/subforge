@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -170,4 +172,166 @@ func TestImportRules_IdempotentSecondImportSkips(t *testing.T) {
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	_ = resp
+}
+
+// TestImportHTTPErrorUnwrapAndError 直接覆盖 importHTTPError 的 Error/Unwrap，
+// 因为 errors.As 走反射不计入被包装类型的 Unwrap 函数体覆盖。
+func TestImportHTTPErrorUnwrapAndError(t *testing.T) {
+	wrapped := errors.New("底层错误")
+	he := &importHTTPError{status: http.StatusBadGateway, err: wrapped}
+	if he.Error() != "底层错误" {
+		t.Fatalf("Error() = %q，应为 底层错误", he.Error())
+	}
+	if unwrapped := he.Unwrap(); unwrapped != wrapped {
+		t.Fatalf("Unwrap() = %v，应为 %v", unwrapped, wrapped)
+	}
+	if he.status != http.StatusBadGateway {
+		t.Fatalf("status = %d，应为 502", he.status)
+	}
+}
+
+// rulesClashYAML 是一个含 rules / rule-providers 的最小 Clash YAML 订阅，用于导入测试。
+const rulesClashYAML = "proxies:\n" +
+	"  - name: p1\n" +
+	"    type: ss\n" +
+	"    server: s.example.com\n" +
+	"    port: 8388\n" +
+	"    cipher: aes-256-gcm\n" +
+	"    password: pw\n" +
+	"rules:\n" +
+	"  - DOMAIN-SUFFIX,example.com,DIRECT\n" +
+	"  - IP-CIDR,1.1.1.1/32,DIRECT,no-resolve\n" +
+	"rule-providers:\n" +
+	"  rp1:\n" +
+	"    type: http\n" +
+	"    url: https://example.com/rule.txt\n"
+
+// rulesUpstream 起一个吐 rulesClashYAML 的本地 httptest 上游（带 Subscription-Userinfo 头，便于流量刷新也成功）。
+func rulesUpstream(t *testing.T) *httptest.Server {
+	t.Helper()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(rulesClashYAML))
+	}))
+	t.Cleanup(up.Close)
+	return up
+}
+
+// TestImportRulesFromAirportHelper 直接调用 helper，断言 ImportResult 计数与 warnings 非 nil。
+func TestImportRulesFromAirportHelper(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	up := rulesUpstream(t)
+	a, err := mgr.AddAirport(t.Context(), "helper", up.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	ir, warnings, err := srv.importRulesFromAirport(context.Background(), mgr, a)
+	if err != nil {
+		t.Fatalf("importRulesFromAirport err: %v", err)
+	}
+	if ir.RulesAdded != 2 {
+		t.Fatalf("rules_added = %d，应为 2", ir.RulesAdded)
+	}
+	if ir.ProvidersAdded != 1 {
+		t.Fatalf("providers_added = %d，应为 1", ir.ProvidersAdded)
+	}
+	if warnings == nil {
+		t.Fatalf("warnings 必须是非 nil 切片")
+	}
+}
+
+// TestImportRulesFromAirportHelperFetchFailure 覆盖 helper 在拉取失败时返回 502 语义错误。
+func TestImportRulesFromAirportHelperFetchFailure(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer dead.Close()
+	a, err := mgr.AddAirport(t.Context(), "dead-helper", dead.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	_, _, err = srv.importRulesFromAirport(context.Background(), mgr, a)
+	if err == nil {
+		t.Fatalf("拉取失败应返回 err")
+	}
+	if !strings.Contains(err.Error(), "导入失败") {
+		t.Fatalf("err = %q，应含 导入失败", err.Error())
+	}
+}
+
+// TestImportRulesFromAirportNilManager 覆盖 manager 缺失时的 503 语义错误。
+func TestImportRulesFromAirportNilManager(t *testing.T) {
+	srv, _ := importTestServer(t)
+	a := &subforge.Airport{Name: "nil-mgr", SubscriptionURL: "https://example.invalid/sub"}
+	_, _, err := srv.importRulesFromAirport(context.Background(), nil, a)
+	if err == nil {
+		t.Fatalf("nil manager 应返回 err")
+	}
+	var he *importHTTPError
+	if !errors.As(err, &he) {
+		t.Fatalf("err = %v，应为 *importHTTPError", err)
+	}
+	if he.status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d，应为 503", he.status)
+	}
+	if !strings.Contains(err.Error(), "订阅管理未启用") {
+		t.Fatalf("err = %q，应含 订阅管理未启用", err.Error())
+	}
+}
+
+// TestImportRulesFromAirportDecodeFailure 上游内容无法解析 → 502「导入失败」。
+func TestImportRulesFromAirportDecodeFailure(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("proxies: [not-valid-yaml"))
+	}))
+	defer up.Close()
+	a, err := mgr.AddAirport(t.Context(), "bad-parse", up.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	_, _, err = srv.importRulesFromAirport(context.Background(), mgr, a)
+	if err == nil {
+		t.Fatalf("解析失败应返回 err")
+	}
+	if !strings.Contains(err.Error(), "导入失败") {
+		t.Fatalf("err = %q，应含 导入失败", err.Error())
+	}
+}
+
+// TestImportRulesFromAirportWriteFailure 关闭数据库后写库失败 → 500 语义。
+func TestImportRulesFromAirportWriteFailure(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	up := rulesUpstream(t)
+	a, err := mgr.AddAirport(t.Context(), "closed-db", up.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	if err := mgr.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, _, err = srv.importRulesFromAirport(context.Background(), mgr, a)
+	if err == nil {
+		t.Fatalf("写库失败应返回 err")
+	}
+	var he *importHTTPError
+	if !errors.As(err, &he) || he.status != http.StatusInternalServerError {
+		t.Fatalf("err = %v，应为 500 语义", err)
+	}
+}
+
+// TestImportRules_MissingID400 路径缺少 id → 400。
+func TestImportRules_MissingID400(t *testing.T) {
+	srv, _ := importTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/airports/import-rules", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAPIImportRules(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("缺少 id 状态码 = %d，应为 400", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "无效的 ID") {
+		t.Fatalf("body = %s，应含 无效的 ID", rr.Body.String())
+	}
 }
