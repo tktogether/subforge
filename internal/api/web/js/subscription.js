@@ -397,6 +397,8 @@
     var path = API[kind] + (id == null ? "" : "/" + encodeURIComponent(id));
     var method = id == null ? "POST" : "PUT";
     if (kind === "tokens") { path = API.tokens; method = "POST"; }
+    msg.className = "editor-msg";
+    msg.textContent = "保存中…";
     return SF.api(path, { method: method, body: body }).then(function (data) {
       closeEditor(kind);
       if (kind === "tokens" && data && data.token && data.token.token) {
@@ -417,23 +419,36 @@
     if (state.confirmTimer[key]) {
       clearTimeout(state.confirmTimer[key]);
       delete state.confirmTimer[key];
+      btn.classList.remove("danger");
+      btn.textContent = "删除";
       remove(kind, id, btn);
       return;
     }
+    btn.classList.add("danger");
     btn.textContent = "确认删除？";
     state.confirmTimer[key] = setTimeout(function () {
       delete state.confirmTimer[key];
+      btn.classList.remove("danger");
       btn.textContent = "删除";
     }, 4000);
   }
 
   function remove(kind, id, btn) {
     setBusy(btn, true);
+    btn.textContent = "删除中…";
     return SF.api(API[kind] + "/" + encodeURIComponent(id), { method: "DELETE" }).then(function () {
       return reload(kind);
     }, function (err) {
       setBusy(btn, false);
+      btn.textContent = "删除";
       setState(kind, "删除失败：" + err.message, "err");
+      var b = listBox(kind);
+      if (b) {
+        var retry = SF.el("button", { class: "btn" }, "重试");
+        retry.style.marginTop = "8px";
+        retry.addEventListener("click", function () { remove(kind, id, btn); });
+        b.appendChild(retry);
+      }
     });
   }
 

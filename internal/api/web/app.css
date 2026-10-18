@@ -164,9 +164,9 @@ input:focus, select:focus, textarea:focus {
 
 /* --- 表格 --- */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: break-word; word-break: break-word; }
 th { color: var(--muted); font-weight: 500; font-size: 12px; }
-td.mono, .mono { font-family: var(--font-mono); font-size: 12.5px; }
+td.mono, .mono { font-family: var(--font-mono); font-size: 12.5px; max-width: 320px; }
 
 /* --- 徽标 --- */
 .badge {
@@ -265,7 +265,7 @@ details > .body { padding: 4px 0 14px; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
-.list-box { min-height: 18px; }
+.list-box { min-height: 18px; overflow-x: auto; }
 .list-box.state { padding: 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--muted); font-size: 13px; }
 .list-box.state.err { color: var(--danger); border-color: var(--danger); }
 .list-box .actions { white-space: nowrap; }
