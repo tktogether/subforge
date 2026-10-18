@@ -3,11 +3,11 @@
 // 约束：全部走本地 httptest，不依赖外网、不依赖真实订阅。需要 Engine 的构造沿用
 // server_test.go 的 newTestServer（最小 Engine，且以下用例都不触发上游拉取）。
 //
-// 覆盖三件事：
-//  1. 页面/静态资源真的能取到、Content-Type 与前端判断一致；
-//  2. 前端契约（DOM id、fetch 路径）与后端路由表/HTML 对齐——五个页面（含
-//     /subscriptions 的 subscription.html + js/subscription.js）都在扫描范围内；
-//  3. /api/targets、/api/diff、/api/convert、订阅管理 CRUD 与 /subscribe 的行为契约。
+// 覆盖四件事：
+//  1. SPA fallback 与静态资源语义：真实文件按文件服务、带扩展名的缺失资源 404、无扩展名路径回落 index.html；
+//  2. 排除前缀（/api、/sub、/render 等）不进入 fallback（spaExcluded 的前缀匹配语义）；
+//  3. 无构建产物（干净 clone、只跑 go test）时退化为 404，而不是 500 或空的 200；
+//  4. /api/targets、/api/diff、/api/convert、订阅管理 CRUD 与 /subscribe 的行为契约。
 package api
 
 import (
@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,6 +22,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/tktogether/subforge/internal/convert"
@@ -63,16 +63,6 @@ func uiPostJSON(t *testing.T, ts *httptest.Server, path, body string) (int, http
 		t.Fatalf("读取 %s 响应: %v", path, err)
 	}
 	return resp.StatusCode, resp.Header, string(buf)
-}
-
-// uiReadWeb 读一份嵌入的 web 资源（页面或脚本）。
-func uiReadWeb(t *testing.T, name string) string {
-	t.Helper()
-	buf, err := fs.ReadFile(webFS, name)
-	if err != nil {
-		t.Fatalf("读取嵌入资源 %s: %v", name, err)
-	}
-	return string(buf)
 }
 
 // uiDoJSON 发一个带 JSON body 的请求（覆盖 uiPostJSON 到不了的 PUT/DELETE）。
@@ -152,81 +142,62 @@ func uiAssertJSONError(t *testing.T, what, body string, hdr http.Header) {
 	}
 }
 
-// --- 页面 ---
+// --- SPA 页面与 fallback ---
 
-// TestWebUI_Pages 五个页面都必须 200、text/html，并带各自的标志性 DOM 标记。
-// 标记取自 web/js/*.js 里 SF.qs("#...") 的实际取值：缺任何一个，页面脚本在
-// DOMContentLoaded 里就会抛 TypeError，而服务端仍然返回 200——只看状态码看不出来。
-func TestWebUI_Pages(t *testing.T) {
-	ts := newTestServer(t, nil)
-	cases := []struct {
-		path    string
-		title   string
-		markers []string
-	}{
-		{"/", "SubForge · Dashboard", []string{
-			`id="qcRun"`, `id="qcUrl"`, `id="qcTarget"`, `id="qcOut"`,
-			`id="statsBox"`, `id="historyBox"`, `src="/js/dashboard.js"`,
-		}},
-		{"/convert", "SubForge · Convert", []string{
-			`id="cvRun"`, `id="cvTarget"`, `id="cvOverride"`, `id="cvDiff"`,
-			`id="cvDiffOut"`, `id="cvOut"`, `src="/js/convert.js"`,
-		}},
-		{"/rules", "SubForge · Rules", []string{
-			`id="reEditor"`, `id="reMode"`, `id="rulesetsBox"`, `src="/js/rules.js"`,
-		}},
-		{"/logs", "SubForge · Logs", []string{
-			`id="logBox"`, `id="logFilter"`, `id="logExportJson"`, `src="/js/logs.js"`,
-		}},
-		{"/subscriptions", "SubForge · Subscriptions", []string{
-			`id="airportsBox"`, `id="groupsBox"`, `id="rulesBox"`, `id="tokensBox"`,
-			`id="airportAdd"`, `id="groupAdd"`, `id="ruleAdd"`, `id="tokenAdd"`,
-			`src="/js/subscription.js"`,
-		}},
+// uiFakeDist 把 webFS 换成一个最小的假 Vite 产物，让 SPA 路由可测。
+//
+// 为什么必须换：dist/ 是构建产物、不入库（仓库里只有 .gitkeep），干净 clone 上
+// webFS 里没有 index.html。直接断言真实嵌入资源，等于在测"本地有没有跑前端构建"，
+// 而不是在测路由逻辑——那种用例在 CI 上必挂。
+func uiFakeDist(t *testing.T) {
+	t.Helper()
+	old := webFS
+	webFS = fstest.MapFS{
+		"index.html":              {Data: []byte("<!doctype html><html><head><title>SubForge</title></head><body><div id=\"app\"></div></body></html>")},
+		"assets/index-abc123.js":  {Data: []byte("window.SF={};")},
+		"assets/index-abc123.css": {Data: []byte(":root{--sf-x:1}")},
+		"favicon.ico":             {Data: []byte("ICO")},
 	}
-	for _, c := range cases {
-		status, hdr, body := uiGet(t, ts, c.path)
+	t.Cleanup(func() { webFS = old })
+}
+
+// TestWebUI_SPAFallback 无扩展名的未知路径必须回落 index.html ——
+// createWebHistory 下 /airports 这类深链在服务端没有对应文件，只能交给前端路由。
+func TestWebUI_SPAFallback(t *testing.T) {
+	uiFakeDist(t)
+	ts := newTestServer(t, nil)
+	for _, p := range []string{
+		"/", "/convert", "/pipelines", "/airports", "/self-nodes", "/rules", "/groups",
+		"/subscriptions", "/logs", "/settings", "/scripts", "/tasks",
+		"/deep/unknown/path",
+	} {
+		status, hdr, body := uiGet(t, ts, p)
 		if status != http.StatusOK {
-			t.Errorf("%s 状态 = %d，应为 200", c.path, status)
+			t.Errorf("%s 状态 = %d，应为 200", p, status)
 			continue
 		}
-		if got := hdr.Get("Content-Type"); got != "text/html; charset=utf-8" {
-			t.Errorf("%s Content-Type = %q，应为 text/html; charset=utf-8", c.path, got)
+		if ct := hdr.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+			t.Errorf("%s Content-Type = %q，应为 text/html; charset=utf-8", p, ct)
 		}
-		if !strings.Contains(body, "<title>"+c.title+"</title>") {
-			t.Errorf("%s 的 <title> 不是 %q", c.path, c.title)
-		}
-		for _, m := range c.markers {
-			if !strings.Contains(body, m) {
-				t.Errorf("%s 缺少关键标记 %q", c.path, m)
-			}
-		}
-		// 共享运行时必须先于页面脚本：app.js 定义 window.SF，页面脚本在顶层就取它。
-		if i, j := strings.Index(body, `src="/app.js"`), strings.Index(body, c.markers[len(c.markers)-1]); i < 0 || j < 0 || i > j {
-			t.Errorf("%s 应先加载 /app.js 再加载页面脚本（app.js@%d, 页面脚本@%d）", c.path, i, j)
+		if !strings.Contains(body, `<div id="app">`) {
+			t.Errorf("%s 未回落 index.html（正文里没有 #app 挂载点）", p)
 		}
 	}
 }
 
-// --- 静态资源 ---
-
-// TestWebUI_StaticAssets Content-Type 必须与前端判断匹配：SF.api 只在
-// Content-Type 含 application/json 时走 res.json()，其余一律 res.text()。
+// TestWebUI_StaticAssets 真实产物按文件服务，Content-Type 必须与扩展名匹配。
 func TestWebUI_StaticAssets(t *testing.T) {
+	uiFakeDist(t)
 	ts := newTestServer(t, nil)
 	cases := []struct {
 		path string
 		ct   string
+		body string
 	}{
-		{"/app.css", "text/css; charset=utf-8"},
-		{"/app.js", "application/javascript; charset=utf-8"},
-		{"/js/dashboard.js", "application/javascript; charset=utf-8"},
-		{"/js/convert.js", "application/javascript; charset=utf-8"},
-		{"/js/rules.js", "application/javascript; charset=utf-8"},
-		{"/js/logs.js", "application/javascript; charset=utf-8"},
-		{"/js/subscription.js", "application/javascript; charset=utf-8"},
+		{"/assets/index-abc123.js", "application/javascript; charset=utf-8", "window.SF={};"},
+		{"/assets/index-abc123.css", "text/css; charset=utf-8", ":root{--sf-x:1}"},
+		{"/favicon.ico", "application/octet-stream", "ICO"},
 	}
-	bodies := map[string]string{}
 	for _, c := range cases {
 		status, hdr, body := uiGet(t, ts, c.path)
 		if status != http.StatusOK {
@@ -236,20 +207,128 @@ func TestWebUI_StaticAssets(t *testing.T) {
 		if got := hdr.Get("Content-Type"); got != c.ct {
 			t.Errorf("%s Content-Type = %q，应为 %q", c.path, got, c.ct)
 		}
-		if strings.TrimSpace(body) == "" {
-			t.Errorf("%s 正文为空", c.path)
+		if body != c.body {
+			t.Errorf("%s 正文 = %q，应为 %q", c.path, body, c.body)
 		}
-		bodies[c.path] = body
 	}
-	app := bodies["/app.js"]
-	if !strings.Contains(app, "window.SF") {
-		t.Error("/app.js 未暴露 window.SF，页面脚本拿不到共享运行时")
+}
+
+// TestWebUI_MissingAssetIs404NotHTML 是本文件最重要的一条：
+// 带扩展名却找不到的资源必须 404，**绝不能回落 index.html**。
+// 一旦回落成 HTML，浏览器会把 HTML 当 JS 解析并报 "Unexpected token '<'" 时，
+// 服务端日志里看不到任何异常（状态码是 200）。
+func TestWebUI_MissingAssetIs404NotHTML(t *testing.T) {
+	uiFakeDist(t)
+	ts := newTestServer(t, nil)
+	for _, p := range []string{
+		"/assets/missing.js", "/assets/missing.css", "/nope.png", "/js/old.js", "/favicon.svg",
+	} {
+		status, _, body := uiGet(t, ts, p)
+		if status != http.StatusNotFound {
+			t.Errorf("%s 状态 = %d，应为 404", p, status)
+		}
+		if strings.Contains(body, `<div id="app">`) {
+			t.Errorf("%s 回落成了 HTML：浏览器会把它当 JS 解析并报 Unexpected token '<'", p)
+		}
 	}
-	if !strings.Contains(app, `indexOf("application/json")`) {
-		t.Error("/app.js 的 SF.api 不再按 application/json 判断 res.json()，前端契约变了")
+}
+
+// TestWebUI_APIPrefixNeverFallsBackToHTML 排除前缀里的路径不得进入 SPA fallback。
+// 否则一个写错的 API 路径会拿到 200 + HTML，前端 res.json() 抛出的错
+// 会指向 JSON 解析，而不是"路径写错了"。
+func TestWebUI_APIPrefixNeverFallsBackToHTML(t *testing.T) {
+	uiFakeDist(t)
+	ts := newTestServer(t, nil)
+	for _, p := range []string{
+		"/api/does-not-exist", "/api/", "/sub/does-not-exist", "/render/nope",
+		"/inspect/nope", "/profile/nope", "/getruleset/nope", "/version/nope", "/metrics/nope",
+	} {
+		_, _, body := uiGet(t, ts, p)
+		if strings.Contains(body, `<div id="app">`) {
+			t.Errorf("%s 落进了 SPA fallback，该前缀必须排除", p)
+		}
 	}
-	if !strings.Contains(bodies["/app.css"], "data-theme") {
-		t.Error("/app.css 缺少 data-theme 主题钩子")
+}
+
+// TestWebUI_NoDistDegradesTo404 没有构建产物时（干净 clone、只跑 go test）
+// 必须退化为 404，而不是 500 或空的 200。
+func TestWebUI_NoDistDegradesTo404(t *testing.T) {
+	old := webFS
+	webFS = fstest.MapFS{}
+	t.Cleanup(func() { webFS = old })
+	ts := newTestServer(t, nil)
+	for _, p := range []string{"/", "/convert", "/deep/unknown/path"} {
+		if status, _, _ := uiGet(t, ts, p); status != http.StatusNotFound {
+			t.Errorf("%s 在无构建产物时状态 = %d，应为 404", p, status)
+		}
+	}
+}
+
+// TestWebUI_SPAMethodSemantics 只有 GET/HEAD 参与 fallback；HEAD 与 GET 同源。
+func TestWebUI_SPAMethodSemantics(t *testing.T) {
+	uiFakeDist(t)
+	ts := newTestServer(t, nil)
+
+	// POST 无扩展名路径：chi 的 /* 只注册了 GET/HEAD，POST 命中同一路由但方法不匹配，
+	// chi 返回 405 Method Not Allowed（而非 404）；两种都表示"未回落成 HTML"，不得回落。
+	if status, _, _ := uiDoJSON(t, ts, http.MethodPost, "/convert", "{}"); status != http.StatusNotFound && status != http.StatusMethodNotAllowed {
+		t.Errorf("POST /convert 状态 = %d，应为 404 或 405", status)
+	}
+
+	// HEAD 与 GET 走同一 handler。
+	req, err := http.NewRequest(http.MethodHead, ts.URL+"/convert", nil)
+	if err != nil {
+		t.Fatalf("构造 HEAD 请求: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HEAD /convert: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("HEAD /convert 状态 = %d，应为 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("HEAD /convert Content-Type = %q", ct)
+	}
+}
+
+// TestSpaExcluded 前缀匹配是「等于前缀」或「前缀 + /」，不是 strings.HasPrefix。
+// 用 HasPrefix 会让 /apiary 这类同前缀路径被误判成 API，直接 404。
+func TestSpaExcluded(t *testing.T) {
+	excluded := []string{
+		"/api", "/api/x", "/sub", "/sub/x", "/subscribe", "/subscribe/x",
+		"/profile", "/profile/x", "/render", "/render/x", "/getruleset", "/getruleset/x",
+		"/inspect", "/inspect/x", "/version", "/version/x", "/healthz", "/healthz/x",
+		"/debug/pprof", "/debug/pprof/heap", "/metrics", "/metrics/x",
+	}
+	for _, p := range excluded {
+		if !spaExcluded(p) {
+			t.Errorf("spaExcluded(%q) = false，应为 true", p)
+		}
+	}
+	allowed := []string{"/", "/apiary", "/submarine", "/versions", "/healthz2", "/metric", "/convert"}
+	for _, p := range allowed {
+		if spaExcluded(p) {
+			t.Errorf("spaExcluded(%q) = true，应为 false（同前缀不同路径不能误伤）", p)
+		}
+	}
+}
+
+// TestLastSegment 扩展名判定只看最后一段。
+func TestLastSegment(t *testing.T) {
+	cases := map[string]string{
+		"":            "",
+		"/":           "",
+		"a":           "a",
+		"a/b":         "b",
+		"a/b/c.txt":   "c.txt",
+		"assets/x.js": "x.js",
+	}
+	for in, want := range cases {
+		if got := lastSegment(in); got != want {
+			t.Errorf("lastSegment(%q) = %q，应为 %q", in, got, want)
+		}
 	}
 }
 
@@ -440,112 +519,6 @@ func TestWebUI_ConvertValidation(t *testing.T) {
 	}
 }
 
-// --- 前端契约：DOM id 与 fetch 路径 ---
-
-var (
-	uiQSSel          = regexp.MustCompile(`SF\.qs\(\s*"#([A-Za-z0-9_-]+)"`)
-	uiGetByID        = regexp.MustCompile(`getElementById\(\s*"([A-Za-z0-9_-]+)"`)
-	uiAPIPath        = regexp.MustCompile(`SF\.api\(\s*"(/[^"]*)"`)
-	uiAPIPathLiteral = regexp.MustCompile(`["\'](/(?:api|subscribe)[A-Za-z0-9_/.,?=&%:-]*)["\']`)
-	uiIDAttr         = regexp.MustCompile(`id="([A-Za-z0-9_-]+)"`)
-)
-
-// uiTrimQuery 去掉路径上的 query，只留路由部分。
-func uiTrimQuery(p string) string {
-	if i := strings.IndexByte(p, '?'); i >= 0 {
-		return p[:i]
-	}
-	return p
-}
-
-// uiIDs 从正则子匹配里取第 1 组。
-func uiIDs(matches [][]string) []string {
-	out := make([]string, 0, len(matches))
-	for _, m := range matches {
-		out = append(out, m[1])
-	}
-	return out
-}
-
-// TestWebUI_DomIDsMatchScripts 前端脚本引用的每个 DOM id 必须真实存在于对应页面。
-// 这是“页面能点”的最低契约：SF.qs 返回 null 后紧接着 .value / .addEventListener
-// 会抛 TypeError，该行之后的初始化全部失效，而服务端仍然返回 200。
-func TestWebUI_DomIDsMatchScripts(t *testing.T) {
-	pages := []struct{ html, js string }{
-		{"index.html", "js/dashboard.js"},
-		{"convert.html", "js/convert.js"},
-		{"rules.html", "js/rules.js"},
-		{"logs.html", "js/logs.js"},
-		{"subscription.html", "js/subscription.js"},
-	}
-	appIDs := uiIDs(uiGetByID.FindAllStringSubmatch(uiReadWeb(t, "app.js"), -1))
-	if len(appIDs) == 0 {
-		t.Fatal("app.js 未解析出任何 DOM id，检查提取正则")
-	}
-	for _, p := range pages {
-		html := uiReadWeb(t, p.html)
-		js := uiReadWeb(t, p.js)
-		have := map[string]bool{}
-		for _, m := range uiIDAttr.FindAllStringSubmatch(html, -1) {
-			have[m[1]] = true
-		}
-		want := uiIDs(uiQSSel.FindAllStringSubmatch(js, -1))
-		want = append(want, uiIDs(uiGetByID.FindAllStringSubmatch(js, -1))...)
-		want = append(want, appIDs...)
-		if len(want) == 0 {
-			t.Errorf("%s 未解析出任何 DOM id，检查提取正则", p.js)
-			continue
-		}
-		for _, id := range want {
-			if !have[id] {
-				t.Errorf("%s 引用了 %s 里不存在的 id=%q", p.js, p.html, id)
-			}
-		}
-	}
-}
-
-// TestWebUI_ScriptAPIPathsAreRouted 前端 fetch 的每个路径都必须真的挂在路由表上。
-// 前端契约与后端路由表分处两个文件，路径写错时页面只会静默 catch，没人会发现。
-func TestWebUI_ScriptAPIPathsAreRouted(t *testing.T) {
-	ts := newTestServer(t, nil)
-	seen := map[string]bool{}
-	for _, s := range []string{"app.js", "js/dashboard.js", "js/convert.js", "js/rules.js", "js/logs.js"} {
-		for _, m := range uiAPIPath.FindAllStringSubmatch(uiReadWeb(t, s), -1) {
-			seen[uiTrimQuery(m[1])] = true
-		}
-	}
-	// js/subscription.js 是第 5 页：早期版本自带 api(method, path) 助手直接 fetch(path)，
-	// 不经过 SF.api，只靠 uiAPIPath 会整页漏扫；这里同时收 SF.api 与字面量两种写法。
-	subSrc := uiReadWeb(t, "js/subscription.js")
-	for _, m := range uiAPIPath.FindAllStringSubmatch(subSrc, -1) {
-		seen[uiTrimQuery(m[1])] = true
-	}
-	for _, m := range uiAPIPathLiteral.FindAllStringSubmatch(subSrc, -1) {
-		seen[uiTrimQuery(m[1])] = true
-	}
-	// 期望集合写死：既防“提取不到”时静默通过，也锁住前端用到的端点清单。
-	for _, want := range []string{
-		"/api/targets", "/api/stats", "/api/history", "/api/pipelines",
-		"/api/rulesets", "/api/logs", "/api/convert", "/api/diff",
-		"/api/airports", "/api/groups", "/api/rules", "/api/tokens",
-	} {
-		if !seen[want] {
-			t.Errorf("前端脚本未引用 %s（契约漂移：端点被删或改名）", want)
-		}
-	}
-	for p := range seen {
-		var status int
-		if p == "/api/convert" || p == "/api/diff" {
-			status, _, _ = uiPostJSON(t, ts, p, "{}")
-		} else {
-			status, _, _ = uiGet(t, ts, p)
-		}
-		if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
-			t.Errorf("前端引用的 %s 没有对应路由（状态 %d）", p, status)
-		}
-	}
-}
-
 // --- 其余 /api/* 的形状 ---
 
 // TestWebUI_JSONEndpointShapes 页面脚本读取的字段必须真实存在，且都是 JSON。
@@ -617,25 +590,6 @@ func TestWebUI_JSONEndpointShapes(t *testing.T) {
 }
 
 // --- 第 5 页 /subscriptions 与 /subscribe ---
-
-// TestWebUI_SubscriptionScriptUsesNoPromptOrInlineHandlers 是第 5 页的验收点。
-//
-// 修复前的 subscription.js 用 prompt() 收集字段，并把 onclick="editAirport(...)"
-// 拼进 innerHTML，而 editAirport/editGroup/editRule 从未定义——点一下就是
-// ReferenceError，内联处理器还会被 CSP 拦。修复后用 SF.api + 事件绑定代替，
-// 本用例锁住这个结果。
-func TestWebUI_SubscriptionScriptUsesNoPromptOrInlineHandlers(t *testing.T) {
-	js := uiReadWeb(t, "js/subscription.js")
-	if strings.TrimSpace(js) == "" {
-		t.Fatal("js/subscription.js 为空")
-	}
-	if i := strings.Index(js, "prompt("); i >= 0 {
-		t.Errorf("subscription.js 仍在用 prompt()（偏移 %d）：同步弹窗既不可测也不该出现在订阅管理里", i)
-	}
-	if m := regexp.MustCompile(`\bon(?:click|change|input|submit)\s*=`).FindString(js); m != "" {
-		t.Errorf("subscription.js 仍有内联事件处理器 %q：拼进 innerHTML 依赖全局函数名且被 CSP 拦", m)
-	}
-}
 
 // TestWebUI_SubscriptionCRUDShapes 第 5 页 /subscriptions 用的 CRUD 端点必须按冻结
 // 契约返回包装对象（{"airport":...} / {"group":...} / {"rule":...} / {"token":...}），

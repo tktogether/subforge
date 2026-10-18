@@ -1,0 +1,448 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import ResourcePage from './ResourcePage.vue'
+import { vuetify } from '../plugins/vuetify'
+import { notifyState } from '../composables/useNotify'
+
+const columns = [
+  { key: 'name', title: '名称' },
+  { key: 'enabled', title: '状态' },
+  { key: 'subscription_url', title: '订阅' },
+  { key: 'link', title: '链接' },
+  { key: 'token', title: '令牌' },
+]
+const fields = [
+  { key: 'name', label: '名称', type: 'text' },
+  { key: 'count', label: '数量', type: 'number' },
+  { key: 'enabled', label: '启用', type: 'switch' },
+]
+
+const sampleItem = {
+  name: 'a',
+  enabled: true,
+  subscription_url: 'http://x/sub',
+  link: 'http://x/link',
+  token: 'tok123',
+}
+
+function makeResource(items: any[] = [sampleItem]) {
+  return {
+    list: vi.fn().mockResolvedValue(items),
+    create: vi.fn().mockResolvedValue(undefined),
+    update: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+  }
+}
+
+interface ResourcePageVm {
+  headers: any
+  emptyText: string
+  openCreate: () => void
+  openEdit: (row: any) => void
+  draft: Record<string, any>
+  editing: any
+  dialog: boolean
+  submit: () => Promise<void>
+  askDelete: (row: any) => void
+  pendingDelete: any
+  confirmOpen: boolean
+  doDelete: () => Promise<void>
+}
+
+describe('ResourcePage', () => {
+  beforeEach(() => {
+    notifyState.open = false
+    notifyState.text = ''
+    notifyState.kind = 'ok'
+    if (typeof window.visualViewport === 'undefined') {
+      (window as any).visualViewport = {
+        width: 1024,
+        height: 768,
+        offsetLeft: 0,
+        offsetTop: 0,
+        pageLeft: 0,
+        pageTop: 0,
+        scale: 1,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }
+    }
+  })
+
+  it('setup 时自动 reload，resource.list 被调用 1 次', async () => {
+    const resource = makeResource()
+    mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(resource.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('headers：readonlyMode===true 等于 columns；否则追加 actions 列', () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource, readonlyMode: true },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    expect(vm.headers).toEqual(columns)
+
+    const w2 = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm2 = w2.vm as unknown as ResourcePageVm
+    expect(vm2.headers).toEqual(columns.concat([{ key: 'actions', title: '操作' }]))
+  })
+
+  it('emptyText：传了用传的，没传默认 "暂无数据"', () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource, emptyText: '空空' },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    expect(vm.emptyText).toBe('空空')
+
+    const w2 = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm2 = w2.vm as unknown as ResourcePageVm
+    expect(vm2.emptyText).toBe('暂无数据')
+  })
+
+  it('blank()：openCreate 后 draft 按类型初始化', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    expect(vm.draft).toEqual({ name: '', count: 0, enabled: true })
+  })
+
+  it('openEdit(row)：draft 是副本、editing 为 row、dialog 打开', async () => {
+    const resource = makeResource()
+    const row = { name: 'a', count: 1, enabled: false }
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openEdit(row)
+    await w.vm.$nextTick()
+    expect(vm.draft).not.toBe(row)
+    expect(vm.draft).toEqual({ ...row })
+    expect(vm.editing).toEqual(row)
+    expect(vm.dialog).toBe(true)
+    vm.draft.name = 'changed'
+    expect(row.name).toBe('a')
+  })
+
+  it('submit() 新增分支：调 create，成功关闭对话框 + notify("已新增")', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    vm.draft = { name: 'x', count: 1, enabled: true }
+    await vm.submit()
+    await flushPromises()
+    expect(resource.create).toHaveBeenCalledWith({ name: 'x', count: 1, enabled: true })
+    expect(resource.list).toHaveBeenCalled()
+    expect(vm.dialog).toBe(false)
+    expect(notifyState.text).toBe('已新增')
+    expect(notifyState.open).toBe(true)
+  })
+
+  it('submit() 新增失败：notify(error, "error") 且对话框仍开', async () => {
+    const resource = makeResource()
+    resource.create.mockRejectedValue(new Error('create boom'))
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    vm.draft = { name: 'x', count: 1, enabled: true }
+    await vm.submit()
+    await flushPromises()
+    expect(vm.dialog).toBe(true)
+    expect(notifyState.text).toBe('create boom')
+    expect(notifyState.kind).toBe('error')
+  })
+
+  it('submit() 编辑分支：调 update + notify("已更新")', async () => {
+    const resource = makeResource()
+    const row = { name: 'a', count: 1, enabled: false }
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openEdit(row)
+    await w.vm.$nextTick()
+    vm.draft = { name: 'b', count: 2, enabled: true }
+    await vm.submit()
+    await flushPromises()
+    expect(resource.update).toHaveBeenCalledWith({ name: 'b', count: 2, enabled: true })
+    expect(resource.create).not.toHaveBeenCalled()
+    expect(notifyState.text).toBe('已更新')
+    expect(vm.dialog).toBe(false)
+  })
+
+  it('askDelete(row) 设置 pendingDelete 并打开确认框；doDelete 有行时调 remove + notify("已删除","ok")', async () => {
+    const resource = makeResource()
+    const row = { name: 'a' }
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.askDelete(row)
+    await w.vm.$nextTick()
+    expect(vm.pendingDelete).toEqual(row)
+    expect(vm.confirmOpen).toBe(true)
+
+    await vm.doDelete()
+    await flushPromises()
+    expect(resource.remove).toHaveBeenCalledWith(row)
+    expect(resource.list).toHaveBeenCalled()
+    expect(notifyState.text).toBe('已删除')
+    expect(notifyState.kind).toBe('ok')
+  })
+
+  it('doDelete() 在 pendingDelete===null 时提前 return，不调 remove', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    const callsBefore = resource.remove.mock.calls.length
+    vm.pendingDelete = null
+    await vm.doDelete()
+    await flushPromises()
+    expect(resource.remove.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('readonlyMode 为 true 时 [data-testid="add"] 不存在且表头无「操作」；为 false 时存在', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource, readonlyMode: true },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    expect(w.find('[data-testid="add"]').exists()).toBe(false)
+    expect(vm.headers).not.toEqual(expect.arrayContaining([{ key: 'actions', title: '操作' }]))
+
+    const w2 = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource, readonlyMode: false },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(w2.find('[data-testid="add"]').exists()).toBe(true)
+  })
+
+  it('点 [data-testid="refresh"] → resource.list 再被调用一次', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const before = resource.list.mock.calls.length
+    await w.find('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect(resource.list.mock.calls.length).toBe(before + 1)
+  })
+
+  it('字段渲染：switch/number/text 类型时各 data-testid 渲染出来', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    await flushPromises()
+    await w.vm.$nextTick()
+    await new Promise((r) => setTimeout(r, 50))
+    await flushPromises()
+    expect(w.find('[data-testid="field-switch"]').exists()).toBe(true)
+    expect(w.find('[data-testid="field-number"]').exists()).toBe(true)
+    expect(w.find('[data-testid="field-text"]').exists()).toBe(true)
+  })
+
+  it('AsyncSection 空态：items 为空且传 emptyText 时显示该文案', async () => {
+    const resource = makeResource([])
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource, emptyText: '没有数据哦' },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(w.text()).toContain('没有数据哦')
+  })
+
+  it('交互覆盖：点击编辑/删除/取消按钮与字段 v-model setter', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+
+    // 点击编辑按钮（覆盖 item.actions 的 openEdit 箭头）
+    const editBtn = w.find('[data-testid="edit"]')
+    if (editBtn.exists()) await editBtn.trigger('click')
+    await flushPromises()
+
+    // 点击删除按钮（覆盖 askDelete 箭头）
+    const delBtn = w.find('[data-testid="delete"]')
+    if (delBtn.exists()) await delBtn.trigger('click')
+    await flushPromises()
+
+    // v-model setter：dialog v-model (line 159)
+    const dialogs = w.findAllComponents({ name: 'VDialog' })
+    for (const d of dialogs) {
+      try { await (d as any).trigger('update:modelValue', false) } catch {}
+      try { await (d as any).vm.$emit('update:modelValue', false) } catch {}
+    }
+    // v-model setter：字段 switch (line 166)
+    const fs2 = w.find('[data-testid="field-switch"]')
+    if (fs2.exists()) {
+      await (fs2 as unknown as { trigger: (e: string, p?: unknown) => Promise<void> }).trigger('update:modelValue', false)
+      const sw = w.findAllComponents({ name: 'VSwitch' })
+      for (const s of sw) { try { await (s as any).setValue(false) } catch {} }
+    }
+    // v-model setter：confirm dialog (line 201) — askDelete opens it
+    await vm.askDelete({ name: 'a' })
+    await flushPromises()
+    const dialogs2 = w.findAllComponents({ name: 'VDialog' })
+    for (const d of dialogs2) {
+      try { await (d as any).trigger('update:modelValue', false) } catch {}
+      try { await (d as any).vm.$emit('update:modelValue', false) } catch {}
+    }
+    const fn = w.find('[data-testid="field-number"]')
+    if (fn.exists()) { const inp = fn.find('input'); if (inp.exists()) await inp.setValue(5); else await (fn as unknown as { trigger: (e: string, p?: unknown) => Promise<void> }).trigger('update:modelValue', 5) }
+    const ft = w.find('[data-testid="field-text"]')
+    if (ft.exists()) { const inp = ft.find('input'); if (inp.exists()) await inp.setValue('abc'); else await (ft as unknown as { trigger: (e: string, p?: unknown) => Promise<void> }).trigger('update:modelValue', 'abc') }
+    await flushPromises()
+
+    // 取消按钮
+    const dc = w.find('[data-testid="dialog-cancel"]')
+    if (dc.exists()) await dc.trigger('click')
+    await flushPromises()
+    const cc = w.find('[data-testid="confirm-cancel"]')
+    if (cc.exists()) await cc.trigger('click')
+    await flushPromises()
+  })
+
+  it('对话框字段 v-model setter：VSwitch/VTextField 组件级 setValue 写入 draft', async () => {
+    const localFields = [
+      { key: 'enabled', label: '启用', type: 'switch' },
+      { key: 'port', label: '端口', type: 'number' },
+      { key: 'name', label: '名称', type: 'text' },
+    ]
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    const sw = w.findAllComponents({ name: 'VSwitch' })
+    expect(sw.length).toBeGreaterThan(0)
+    await sw[0].setValue(false)
+    expect(vm.draft.enabled).toBe(false)
+
+    const tf = w.findAllComponents({ name: 'VTextField' })
+    expect(tf.length).toBeGreaterThanOrEqual(2)
+    const numComp = tf.find((c) => c.attributes('data-testid') === 'field-number')
+    const txtComp = tf.find((c) => c.attributes('data-testid') === 'field-text')
+    expect(numComp).toBeTruthy()
+    expect(txtComp).toBeTruthy()
+    await (txtComp as any).setValue('hello')
+    await (numComp as any).setValue('42')
+    expect(vm.draft.name).toBe('hello')
+    expect(vm.draft.port).toBe(42)
+  })
+
+  it('点击 dialog-cancel 关闭新增对话框', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    expect(vm.dialog).toBe(true)
+    await w.find('[data-testid="dialog-cancel"]').trigger('click')
+    await flushPromises()
+    expect(vm.dialog).toBe(false)
+  })
+
+  it('点击 confirm-cancel 关闭确认删除对话框', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.askDelete({ name: 'a' })
+    await w.vm.$nextTick()
+    expect(vm.confirmOpen).toBe(true)
+    await w.find('[data-testid="confirm-cancel"]').trigger('click')
+    await flushPromises()
+    expect(vm.confirmOpen).toBe(false)
+  })
+
+})

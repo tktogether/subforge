@@ -123,15 +123,11 @@ func (s *Server) Routes() http.Handler {
 	r.Use(chimw.Timeout(s.cfg.Timeout))
 	r.Use(responseHeaders(s.cfg.Name))
 
-	r.Get("/", s.handleDashboard)
-	r.Get("/convert", s.handlePage("convert.html"))
-	r.Get("/rules", s.handlePage("rules.html"))
-	r.Get("/subscriptions", s.handlePage("subscription.html"))
-	r.Get("/logs", s.handlePage("logs.html"))
-
-	r.Get("/app.css", s.handleAsset("app.css"))
-	r.Get("/app.js", s.handleAsset("app.js"))
-	r.Get("/js/*", s.handleJSAsset)
+	// 前端为 SPA（Vite 产物）：页面路由交给浏览器，Go 侧只负责「静态资源 + fallback」。
+	// 命中真实文件按文件服务；带扩展名却找不到的一律 404（绝不回落成 HTML）；
+	// 其余无扩展名路径回落到 index.html。详见 spa.go。
+	r.Get("/*", s.handleSPAFallback)
+	r.Head("/*", s.handleSPAFallback)
 
 	r.Get("/version", s.handleVersion)
 	r.Get("/healthz", s.handleHealth)

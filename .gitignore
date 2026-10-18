@@ -38,3 +38,8 @@ Thumbs.db
 
 # Linux binary for test machine
 subforge-linux-amd64
+
+# 前端构建产物（Vite outDir 直接指向 Go embed 目录）
+# 产物是哈希文件名，不入库；只放行占位文件，保证干净 clone 时 go:embed 不会因目录缺失而编译失败
+/internal/api/web/dist/*
+!/internal/api/web/dist/.gitkeep

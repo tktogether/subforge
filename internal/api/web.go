@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	chi "github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tktogether/subforge/internal/config"
@@ -19,35 +18,7 @@ import (
 	"github.com/tktogether/subforge/internal/render/registry"
 )
 
-// handleDashboard 直出嵌入的 Dashboard 首页。
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	s.serveAsset(w, r, "index.html")
-}
-
-// handlePage 直出指定的 HTML 页面。
-func (s *Server) handlePage(name string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		s.serveAsset(w, r, name)
-	}
-}
-
-// handleAsset 直出样式/脚本等单个静态资源。
-func (s *Server) handleAsset(name string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		s.serveAsset(w, r, name)
-	}
-}
-
-// handleJSAsset 服务 /js/* 下的页面脚本。
-func (s *Server) handleJSAsset(w http.ResponseWriter, r *http.Request) {
-	star := chi.URLParam(r, "*")
-	if strings.Contains(star, "..") || star == "" {
-		s.handleNotFound(w, r)
-		return
-	}
-	s.serveAsset(w, r, "js/"+star)
-}
-
+// serveAsset 从嵌入的 Vite 产物读取单个文件并直出；文件不存在时走 404。
 func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string) {
 	data, err := fs.ReadFile(webFS, name)
 	if err != nil {

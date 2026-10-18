@@ -791,13 +791,19 @@ func TestVersionHealthIndexNotFound(t *testing.T) {
 		t.Errorf("/healthz 内容: %v", h)
 	}
 
+	// 前端是 SPA：/ 返回 index.html 外壳。这里用假产物（真实 dist 不入库，
+	// uiFakeDist 定义在 web_ui_test.go，同包可直接调用）。
+	uiFakeDist(t)
 	status, _, body = doGet(t, ts.URL+"/", "", "")
-	if status != http.StatusOK || !strings.Contains(body, "/sub") {
-		t.Errorf("/ 应给出服务说明，状态 %d", status)
+	if status != http.StatusOK || !strings.Contains(body, `<div id="app">`) {
+		t.Errorf("/ 应返回 SPA 外壳（含 #app 挂载点），状态 %d", status)
 	}
 
-	if status, _, _ = doGet(t, ts.URL+"/nope", "", ""); status != http.StatusNotFound {
-		t.Errorf("未知路径应为 404，实际 %d", status)
+	// 注意：上一步已装上假 dist，所以「无扩展名的未知路径」现在会正常回落 index.html（200），
+	// 这是 SPA 的预期行为。要测 404 必须用「带扩展名却找不到」的资源——
+	// 这类资源绝不能回落 HTML，否则浏览器会把 HTML 当 JS 解析报 Unexpected token '<'。
+	if status, _, _ = doGet(t, ts.URL+"/nope.js", "", ""); status != http.StatusNotFound {
+		t.Errorf("未知静态资源应为 404，实际 %d", status)
 	}
 }
 
