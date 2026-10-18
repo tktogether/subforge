@@ -542,6 +542,10 @@ type RuleProvider struct {
 
 ## 4. 后端 API 补全
 
+> **实现状态（2026-10）**：§4 的端点清单已实现（对应提交 `bbf71c3` 与 `0d70381`）；§3.6 脚本子系统、§3.7 规则导入已实现。所有端点均注册在 `internal/api/server.go` 的 `Routes()`，全量清单见 README 「HTTP API」章节。
+>
+> 尚未实现：`/api/pipelines` 的 DB 持久化（§4.1 `pipelines` 表）仍未落地——当前 `/api/pipelines` 仅返回名字（模板来源），`pipelines` 表尚未创建；`/api/airports/{id}/import-rules` 的 handler 已落地，但 Rule-Bot 闭环仍依赖 `SetSuggestionQueue` 注入（默认 nil，POST 返回 501）。
+
 `internal/api/server.go` 的 `Routes()` 新增（按页面归属分组）：
 
 **流量（页 5 / 10）**

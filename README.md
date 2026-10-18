@@ -90,6 +90,121 @@ M3 范围：manifest 聚合 → MRS 离线生成 → cron/告警 → Rule-Bot �
 前端为原生 JS，通过 `/api/targets`、`/api/convert`、`/api/diff` 等 JSON 端点工作；
 LAN/VPS 部署时在页面右上角填 token（或 URL 带 `?token=`），本机默认免鉴权。
 
+## HTTP API
+
+服务默认监听 `http://127.0.0.1:25500/`（仅本机）。除标注「需要 `-data-dir`」的端点外，
+其余端点为无状态转换/渲染/探针，不依赖数据目录。
+
+> `-data-dir` 指向订阅管理的 SQLite 数据库；未传时所有订阅管理类端点返回 503 或空。
+
+### 转换与渲染（无状态）
+
+| 方法 | 路径 | 说明 | 需要 `-data-dir` |
+|------|------|------|------------------|
+| GET | `/sub` | 订阅转换（subconverter 兼容） | — |
+| GET | `/profile` | 订阅转换（profile 形态） | — |
+| GET | `/render` | 按 target 渲染 | — |
+| GET | `/getruleset` | 规则集（六种形态） | — |
+| GET | `/inspect` | 回显解析后参数（排查用） | — |
+| GET | `/subscribe` | 订阅拉取 | — |
+| POST | `/api/convert` | 转换（JSON） | — |
+| POST | `/api/diff` | 覆盖 DSL diff 预览 | — |
+
+### 探针与运行时
+
+| 方法 | 路径 | 说明 | 需要 `-data-dir` |
+|------|------|------|------------------|
+| GET | `/version` | subconverter 兼容纯文本版本 | — |
+| GET | `/healthz` | 存活探针 | — |
+| GET | `/api/version` | 结构化版本与运行时长 | — |
+| GET | `/api/metrics` | 运行时指标（内存/GC/协程） | — |
+| GET | `/debug/pprof/` | pprof 索引 | — |
+| GET | `/debug/pprof/cmdline` | pprof cmdline | — |
+| GET | `/debug/pprof/profile` | pprof profile | — |
+| GET | `/debug/pprof/symbol` | pprof symbol | — |
+| GET | `/debug/pprof/trace` | pprof trace | — |
+| GET | `/debug/pprof/heap` | pprof heap | — |
+| GET | `/debug/pprof/goroutine` | pprof goroutine | — |
+| GET | `/debug/pprof/allocs` | pprof allocs | — |
+| GET | `/debug/pprof/block` | pprof block | — |
+| GET | `/debug/pprof/mutex` | pprof mutex | — |
+| GET | `/debug/pprof/threadcreate` | pprof threadcreate | — |
+
+### 订阅管理（需要 `-data-dir`）
+
+| 方法 | 路径 | 说明 | 需要 `-data-dir` |
+|------|------|------|------------------|
+| GET | `/api/stats` | 统计概览 | ✓ |
+| GET | `/api/history` | 转换历史 | ✓ |
+| GET | `/api/pipelines` | 命名管线列表 | ✓ |
+| GET | `/api/targets` | 渲染 target 列表 | ✓ |
+| GET | `/api/rulesets` | 规则集列表 | ✓ |
+| GET | `/api/logs` | 结构化日志流 | ✓ |
+| GET | `/api/airports` | 机场列表 | ✓ |
+| POST | `/api/airports` | 新增机场 | ✓ |
+| POST | `/api/airports/refresh` | 刷新全部启用机场流量 | ✓ |
+| POST | `/api/airports/check` | 订阅测活 | ✓ |
+| GET | `/api/airports/check/last` | 最近测活结果 | ✓ |
+| GET | `/api/airports/{id}` | 单个机场 | ✓ |
+| PUT | `/api/airports/{id}` | 更新机场 | ✓ |
+| DELETE | `/api/airports/{id}` | 删除机场 | ✓ |
+| POST | `/api/airports/{id}/refresh` | 刷新单个机场流量 | ✓ |
+| POST | `/api/airports/{id}/import-rules` | 导入规则 | ✓ |
+| GET | `/api/groups` | 分组列表 | ✓ |
+| POST | `/api/groups` | 新增分组 | ✓ |
+| GET | `/api/groups/{id}` | 单个分组 | ✓ |
+| PUT | `/api/groups/{id}` | 更新分组 | ✓ |
+| DELETE | `/api/groups/{id}` | 删除分组 | ✓ |
+| GET | `/api/rules` | 规则列表 | ✓ |
+| POST | `/api/rules` | 新增规则 | ✓ |
+| POST | `/api/rules/bulk` | 批量启用/停用 | ✓ |
+| GET | `/api/rules/{id}` | 单条规则 | ✓ |
+| PUT | `/api/rules/{id}` | 更新规则 | ✓ |
+| DELETE | `/api/rules/{id}` | 删除规则 | ✓ |
+| GET | `/api/tokens` | token 列表 | ✓ |
+| POST | `/api/tokens` | 新增 token | ✓ |
+| DELETE | `/api/tokens/{token}` | 删除 token | ✓ |
+| GET | `/api/self-nodes` | 自测节点列表 | ✓ |
+| POST | `/api/self-nodes` | 新增自测节点 | ✓ |
+| GET | `/api/self-nodes/{id}` | 单个自测节点 | ✓ |
+| PUT | `/api/self-nodes/{id}` | 更新自测节点 | ✓ |
+| DELETE | `/api/self-nodes/{id}` | 删除自测节点 | ✓ |
+| GET | `/api/traffic/strategy` | 流量策略 | ✓ |
+| PUT | `/api/traffic/strategy` | 更新流量策略 | ✓ |
+| POST | `/api/traffic/refresh` | 刷新全部流量 | ✓ |
+| GET | `/api/traffic/preview` | 流量试算 | ✓ |
+| GET | `/api/scripts` | 脚本列表 | ✓ |
+| POST | `/api/scripts` | 新增脚本 | ✓ |
+| POST | `/api/scripts/test` | 脚本试运行 | ✓ |
+| GET | `/api/scripts/{id}` | 单个脚本 | ✓ |
+| PUT | `/api/scripts/{id}` | 更新脚本 | ✓ |
+| DELETE | `/api/scripts/{id}` | 删除脚本 | ✓ |
+| GET | `/api/tasks` | 定时任务执行历史 | ✓ |
+| GET | `/api/alert-channels` | 告警通道列表（脱敏） | ✓ |
+| PUT | `/api/alert-channels` | 整体替换告警通道 | ✓ |
+| POST | `/api/alert-channels/test` | 告警通道连通性测试 | ✓ |
+| GET | `/api/rule-providers` | 规则提供者列表 | ✓ |
+| GET | `/api/suggestions` | Rule-Bot 建议队列 | ✓ |
+| POST | `/api/suggestions/{index}/confirm` | 确认建议 | ✓ |
+| POST | `/api/suggestions/{index}/reject` | 拒绝建议 | ✓ |
+| GET | `/api/rule-sources` | 规则源列表 | ✓ |
+| POST | `/api/rule-sources/update` | 更新规则源 | ✓ |
+| POST | `/api/rule-sources/rollback` | 回滚规则源 | ✓ |
+| POST | `/api/rule-sources/mrs` | MRS 离线生成 | ✓ |
+| GET | `/api/settings` | 设置 | ✓ |
+| PUT | `/api/settings` | 更新设置 | ✓ |
+| GET | `/api/template` | 模板 | ✓ |
+| PUT | `/api/template` | 更新模板 | ✓ |
+| GET | `/api/override` | 覆盖 DSL | ✓ |
+| PUT | `/api/override` | 更新覆盖 DSL | ✓ |
+
+### SPA 回退
+
+| 方法 | 路径 | 说明 | 需要 `-data-dir` |
+|------|------|------|------------------|
+| GET | `/*` | 静态资源 / 前端路由回退 | — |
+| HEAD | `/*` | 同上 | — |
+
 ## 构建
 
 要求 Go 1.24+。本项目**无 npm**，前端统一使用 `pnpm`。
