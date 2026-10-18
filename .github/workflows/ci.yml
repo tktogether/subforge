@@ -70,7 +70,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        run: go test ./...
+        run: go test ./... -count=1
       - name: Gofmt check (Linux)
         if: runner.os == 'Linux'
         run: test -z "$(gofmt -l cmd internal pkg)"
@@ -109,7 +109,7 @@ jobs:
           name: web-dist
           path: internal/api/web/dist
       - name: Run benchmarks
-        run: go test -bench=. -benchmem -run=^$ ./internal/... ./pkg/... 2>&1 | tee bench.txt
+        run: go test -count=1 -bench=. -benchmem -run=^$ ./internal/... ./pkg/... 2>&1 | tee bench.txt
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
