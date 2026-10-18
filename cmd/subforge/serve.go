@@ -22,7 +22,9 @@ import (
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/render/clashmeta"
 	"github.com/tktogether/subforge/internal/render/registry"
+	"github.com/tktogether/subforge/internal/rulebot"
 	"github.com/tktogether/subforge/internal/runtime"
+	"github.com/tktogether/subforge/internal/scheduler"
 	"github.com/tktogether/subforge/internal/subforge"
 	"github.com/tktogether/subforge/internal/template"
 )
@@ -60,6 +62,33 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   GET /healthz      存活探针
   GET /inspect      回显解析后的参数
   GET /getruleset   规则集（M1 返回 501，见 I6）
+  GET /subscribe    订阅推送（SSE）
+  GET /api/version  API 版本
+  GET /api/stats    统计信息
+  GET /api/history  转换历史
+  GET /api/pipelines 管道信息
+  GET /api/targets  目标类型
+  GET /api/rulesets 规则集列表
+  GET /api/logs     日志
+  POST /api/convert 转换订阅
+  POST /api/diff    差异对比
+  /api/airports     机场 CRUD（GET/POST/PUT/DELETE + refresh/check/import-rules）
+  /api/groups       分组 CRUD
+  /api/rules        规则 CRUD + 批量
+  /api/tokens       访问令牌 CRUD
+  /api/self-nodes   自建节点 CRUD
+  /api/traffic      流量策略/刷新/预览
+  /api/scripts      脚本库 CRUD + 测试
+  GET /api/tasks    调度器任务历史
+  /api/alert-channels 告警通道配置与测试
+  GET /api/rule-providers 规则提供者
+  /api/suggestions  Rule-Bot 建议队列（confirm/reject）
+  /api/rule-sources 规则源管理
+  /api/settings     设置（GET/PUT）
+  /api/template     模板（GET/PUT）
+  /api/override     覆盖（GET/PUT）
+  GET /api/metrics  Prometheus 指标
+  /debug/pprof/*    性能分析
 `
 
 func cmdServe(args []string) error {
@@ -134,6 +163,63 @@ func cmdServe(args []string) error {
 		defer mgr.Close()
 		srv.SetSubManager(mgr)
 		fmt.Fprintf(os.Stderr, "订阅管理已启用: %s\n", dataDir)
+
+		// Rule-Bot 建议队列：空队列，生产运行下由调度器/手动触发填充。
+		api.SetSuggestionQueue(rulebot.NewPendingQueue())
+
+		// 调度器：把已启用的告警通道接进来，再注册两个定时任务。
+		sch := scheduler.New()
+		channels, chErr := mgr.GetAlertChannels(context.Background())
+		if chErr != nil {
+			log.Printf("[serve] 读取告警通道失败: %v", chErr)
+		} else {
+			for _, c := range channels {
+				if !c.Enabled {
+					continue
+				}
+				switch c.Kind {
+				case "telegram":
+					sch.AddAlertChannel(scheduler.NewTelegramChannel(c.BotToken, c.ChatID))
+				case "dingtalk":
+					sch.AddAlertChannel(scheduler.NewDingTalkChannel(c.Webhook))
+				case "smtp":
+					log.Printf("[serve] 告警通道 %q 为 smtp，SMTPChannel 尚未实现，已跳过", c.Kind)
+				default:
+					log.Printf("[serve] 未知告警通道 kind=%q，已跳过", c.Kind)
+				}
+			}
+		}
+
+		// 从 config 表读取 cron 表达式：键不存在用默认；键存在但为空串则不注册。
+		cronCtx := context.Background()
+		ruleSpec, ruleErr := scheduler.CronSpecFromConfig(cronCtx, mgr, scheduler.RuleSourceCronKey, scheduler.DefaultRuleSourceCron)
+		if ruleErr != nil {
+			log.Printf("[serve] 读取 %s 失败: %v，使用默认", scheduler.RuleSourceCronKey, ruleErr)
+			ruleSpec = scheduler.DefaultRuleSourceCron
+		}
+		if ruleSpec != "" {
+			job := scheduler.NewRuleSourceUpdateJob(mgr, log.Default()).WithSpec(ruleSpec)
+			if err := sch.AddJob(job); err != nil {
+				log.Printf("[serve] 注册 rule-sources 任务失败: %v", err)
+			}
+		}
+
+		subSpec, subErr := scheduler.CronSpecFromConfig(cronCtx, mgr, scheduler.SubscheckCronKey, scheduler.DefaultSubscheckCron)
+		if subErr != nil {
+			log.Printf("[serve] 读取 %s 失败: %v，使用默认", scheduler.SubscheckCronKey, subErr)
+			subSpec = scheduler.DefaultSubscheckCron
+		}
+		if subSpec != "" {
+			job := scheduler.NewSubscheckJob(mgr, fetcher, log.Default()).WithSpec(subSpec)
+			if err := sch.AddJob(job); err != nil {
+				log.Printf("[serve] 注册 subscheck 任务失败: %v", err)
+			}
+		}
+
+		srv.SetScheduler(sch)
+		sch.Start()
+		// defer 后进先出：sch.Stop 先于 mgr.Close 执行，确保调度器在 manager 关闭前停止。
+		defer sch.Stop()
 	}
 
 	httpServer := &http.Server{
