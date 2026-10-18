@@ -188,6 +188,22 @@ func (s *Server) Routes() http.Handler {
 	r.Delete("/api/tokens/{token}", s.handleAPIToken)
 	r.Get("/subscribe", s.handleSubscribe)
 
+	// pprof 端点（仅 debug 模式）
+	r.Get("/debug/pprof/", s.handlePprofIndex)
+	r.Get("/debug/pprof/cmdline", s.handlePprofCmdline)
+	r.Get("/debug/pprof/profile", s.handlePprofProfile)
+	r.Get("/debug/pprof/symbol", s.handlePprofSymbol)
+	r.Get("/debug/pprof/trace", s.handlePprofTrace)
+	r.Get("/debug/pprof/heap", s.handlePprofHeap)
+	r.Get("/debug/pprof/goroutine", s.handlePprofGoroutine)
+	r.Get("/debug/pprof/allocs", s.handlePprofAllocs)
+	r.Get("/debug/pprof/block", s.handlePprofBlock)
+	r.Get("/debug/pprof/mutex", s.handlePprofMutex)
+	r.Get("/debug/pprof/threadcreate", s.handlePprofThreadcreate)
+
+	// 运行时指标
+	r.Get("/api/metrics", s.handleMetrics)
+
 	r.NotFound(s.handleNotFound)
 	return r
 }

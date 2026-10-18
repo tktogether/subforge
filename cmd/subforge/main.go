@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 	"runtime/debug"
 
 	"github.com/tktogether/subforge/internal/buildinfo"
@@ -81,37 +80,6 @@ func cmdVersion(args []string) error {
 	return nil
 }
 
-func cmdDoctor(args []string) error {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	fmt.Println(buildinfo.Full())
-	fmt.Printf("go:       %s\n", runtime.Version())
-	fmt.Printf("platform: %s/%s (GOMAXPROCS=%d, NumCPU=%d)\n",
-		runtime.GOOS, runtime.GOARCH, runtime.GOMAXPROCS(0), runtime.NumCPU())
-
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	fmt.Printf("memory:   HeapAlloc=%.2f MB HeapSys=%.2f MB Sys=%.2f MB NumGC=%d\n",
-		float64(ms.HeapAlloc)/(1<<20), float64(ms.HeapSys)/(1<<20),
-		float64(ms.Sys)/(1<<20), ms.NumGC)
-
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		fmt.Printf("module:   %s\n", bi.Main.Path)
-		if rev := buildSetting(bi, "vcs.revision"); rev != "" {
-			fmt.Printf("vcs:      %s (modified=%s)\n", rev, buildSetting(bi, "vcs.modified"))
-		}
-	}
-
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("workdir:  %s\n", wd)
-	return nil
-}
 
 func buildSetting(bi *debug.BuildInfo, key string) string {
 	for _, s := range bi.Settings {
