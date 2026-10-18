@@ -14,7 +14,7 @@ GOFLAGS := -trimpath -mod=vendor -ldflags "$(LDFLAGS)"
 COVERAGE_OUT ?= coverage.out
 
 .PHONY: build test vet cross docker release clean \
-        web-install web-dev web-test web-coverage web-build \
+        web-install web-dev web-typecheck web-test web-coverage web-build \
         coverage coverage-gate condition-gate verify
 
 build:
@@ -62,6 +62,9 @@ web-install:
 web-dev:
 	pnpm -C web run dev
 
+web-typecheck:
+	pnpm -C web run typecheck
+
 web-test:
 	pnpm -C web run test
 
@@ -78,12 +81,14 @@ coverage:
 
 coverage-gate: coverage
 	go run ./internal/tools/coveragegate -profile $(COVERAGE_OUT) -min 80 -min-func 100
-	go run ./internal/tools/condgate -engine=profile -profile $(COVERAGE_OUT) -min 80 -top 20
+	go run ./internal/tools/condgate -engine=profile -profile $(COVERAGE_OUT) -min 80
 
+# 准层（gobco 真条件覆盖）：仅 nightly / workflow_dispatch 跑，不进 verify。
 condition-gate: coverage
-	go run ./internal/tools/condgate -engine=profile -profile $(COVERAGE_OUT) -min 80 -top 20
+	go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80
 
 # --- Verify (one-shot local green) ---
 
-verify: vet test coverage-gate condition-gate
+# 本机一把过：go build/vet/test + 门禁A + 门禁B快层 + 前端 typecheck/test/build。
+verify: build vet test coverage-gate web-typecheck web-test web-build
 	@echo "verify: all green"

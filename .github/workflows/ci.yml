@@ -154,7 +154,7 @@ jobs:
       - name: Coverage gate
         run: go run ./internal/tools/coveragegate -profile coverage.out -min 80 -min-func 100
       - name: Condition gate (fast layer)
-        run: go run ./internal/tools/condgate -engine=profile -profile coverage.out -min 80 -top 20
+        run: go run ./internal/tools/condgate -engine=profile -profile coverage.out -min 80
       - name: Upload coverage profile
         uses: actions/upload-artifact@v4
         with:
@@ -180,7 +180,7 @@ jobs:
       - name: Install gobco
         run: go install github.com/rillig/gobco@v1.3.4
       - name: Run gobco condition coverage
-        run: go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80 -top 20 | tee gobco-condition.txt
+        run: go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80 | tee gobco-condition.txt
       - name: Upload condition report
         uses: actions/upload-artifact@v4
         with:
