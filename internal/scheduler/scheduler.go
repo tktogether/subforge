@@ -31,11 +31,12 @@ type AlertChannel interface {
 
 // Scheduler 是内嵌 cron 调度器。
 type Scheduler struct {
-	cron    *cron.Cron
-	jobs    map[string]cron.EntryID
-	alerts  []AlertChannel
-	mu      sync.Mutex
-	results []JobResult
+	cron     *cron.Cron
+	jobs     map[string]cron.EntryID
+	alerts   []AlertChannel
+	mu       sync.Mutex
+	results  []JobResult
+	onResult func(JobResult)
 }
 
 // JobResult 是最近一次任务执行结果。
@@ -60,6 +61,20 @@ func (s *Scheduler) AddAlertChannel(ch AlertChannel) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.alerts = append(s.alerts, ch)
+}
+
+// SetOnResult 注册任务执行结果回调（可选）。回调在 recordResult 之后、持锁外调用，nil 安全。
+func (s *Scheduler) SetOnResult(fn func(JobResult)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onResult = fn
+}
+
+// onResultFn 在锁内读取回调（避免与 SetOnResult 并发）。
+func (s *Scheduler) onResultFn() func(JobResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.onResult
 }
 
 // AddJob 注册一个定时任务。
@@ -129,6 +144,9 @@ func (s *Scheduler) execute(ctx context.Context, job Job) {
 		if err == nil {
 			result.Success = true
 			s.recordResult(result)
+			if fn := s.onResultFn(); fn != nil {
+				fn(result)
+			}
 			return
 		}
 		lastErr = err
@@ -140,12 +158,18 @@ func (s *Scheduler) execute(ctx context.Context, job Job) {
 			case <-time.After(backoff):
 			case <-ctx.Done():
 				s.recordResult(result)
+				if fn := s.onResultFn(); fn != nil {
+					fn(result)
+				}
 				return
 			}
 		}
 		// 记录最后一次失败
 		if attempt == maxRetries-1 {
 			s.recordResult(result)
+			if fn := s.onResultFn(); fn != nil {
+				fn(result)
+			}
 		}
 	}
 	// 全部失败，触发告警（同步发送，便于测试断言）

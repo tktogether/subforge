@@ -129,3 +129,34 @@ func TestScheduler_StartStop(t *testing.T) {
 		t.Fatalf("应至少执行 1 次, got %d", got)
 	}
 }
+
+func TestScheduler_SetOnResult(t *testing.T) {
+	s := New()
+	job := &fakeJob{name: "fail", spec: "@every 1s", errOnNth: 3, err: errors.New("boom")}
+
+	// 未设置回调时不 panic
+	s.execute(context.Background(), job)
+
+	var got JobResult
+	var called int32
+	s.SetOnResult(func(r JobResult) {
+		called++
+		got = r
+	})
+	// 重置调用计数以便再跑一次
+	job2 := &fakeJob{name: "fail2", spec: "@every 1s", errOnNth: 3, err: errors.New("boom2")}
+	s.execute(context.Background(), job2)
+
+	if called != 1 {
+		t.Fatalf("callback 调用次数 = %d, want 1", called)
+	}
+	if got.JobName != "fail2" {
+		t.Errorf("JobName = %q, want fail2", got.JobName)
+	}
+	if got.Success {
+		t.Errorf("Success = true, want false")
+	}
+	if got.Err == "" {
+		t.Errorf("Err 为空, want 非空")
+	}
+}

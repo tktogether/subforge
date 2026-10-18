@@ -165,10 +165,17 @@ func cmdServe(args []string) error {
 		fmt.Fprintf(os.Stderr, "订阅管理已启用: %s\n", dataDir)
 
 		// Rule-Bot 建议队列：空队列，生产运行下由调度器/手动触发填充。
-		api.SetSuggestionQueue(rulebot.NewPendingQueue())
+		q := rulebot.NewPendingQueue()
+		api.SetSuggestionQueue(q)
+		loop := rulebot.NewLoop(rulebot.NewDetector(), q)
 
 		// 调度器：把已启用的告警通道接进来，再注册两个定时任务。
 		sch := scheduler.New()
+		sch.SetOnResult(func(r scheduler.JobResult) {
+			if !r.Success && r.Err != "" {
+				loop.Ingest("scheduler", []string{r.JobName + ": " + r.Err})
+			}
+		})
 		channels, chErr := mgr.GetAlertChannels(context.Background())
 		if chErr != nil {
 			log.Printf("[serve] 读取告警通道失败: %v", chErr)
@@ -217,6 +224,7 @@ func cmdServe(args []string) error {
 		}
 
 		srv.SetScheduler(sch)
+		log.Printf("[serve] rule-bot stats: %v", loop.Stats())
 		sch.Start()
 		// defer 后进先出：sch.Stop 先于 mgr.Close 执行，确保调度器在 manager 关闭前停止。
 		defer sch.Stop()
