@@ -634,6 +634,9 @@ CREATE TABLE IF NOT EXISTS pipelines (
 
 ## 5. 前端（按 `impeccable` skill 执行）
 
+> 本节的「前端技术栈与施工顺序」已被 `docs/design/vite-vuetify-coverage-plan.md` 取代，以该文件为准。
+> 本文件中仍然有效的是：§1 模块边界与能力矩阵、§2 数据模型、§3 流量聚合与脚本、§4 后端 API 补全清单。
+
 > ⚠️ **本节已被取代**：前端技术栈改为 **Vite + Vue 3 + Vuetify 3.13.7 + TypeScript**，并新增前端覆盖率门禁 100%。
 > 见 `docs/design/vite-vuetify-coverage-plan.md` §2（技术栈）、§3（门禁 A）、§5（页面与共享层规格）。
 > 本节保留，仅作为「13 页要做哪些事」的设计意图记录。
@@ -826,6 +829,9 @@ fmt.expire(unix)                       // 0 → "未知"，否则 YYYY-MM-DD + �
 ---
 
 ## 6. 实施顺序与提交点
+
+> 本节的「前端技术栈与施工顺序」已被 `docs/design/vite-vuetify-coverage-plan.md` 取代，以该文件为准。
+> 本文件中仍然有效的是：§1 模块边界与能力矩阵、§2 数据模型、§3 流量聚合与脚本、§4 后端 API 补全清单。
 
 > ⚠️ **本节已被取代**：施工顺序见 `docs/design/vite-vuetify-coverage-plan.md` §8（P1–P12）。
 > 本节的 P1–P15 仍覆盖数据模型与 API 补全，那些工作**继续有效**，只是不再与前端换栈混在同一条序列里。

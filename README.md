@@ -92,21 +92,64 @@ LAN/VPS 部署时在页面右上角填 token（或 URL 带 `?token=`），本机
 
 ## 构建
 
-要求 Go 1.24+。
+要求 Go 1.24+。本项目**无 npm**，前端统一使用 `pnpm`。
+
+### 纯后端构建（不需要 Node）
+
+仓库里 `internal/api/web/dist/` 只放有一个 `.gitkeep` 占位文件（前端产物**不入库**），
+`//go:embed all:web/dist` 只要求目录存在，因此**干净 clone 上 `go build ./...` 能过**（embed 会把占位目录编进二进制，SPA 路由在运行时才会 404）。
 
 ```sh
-go build ./cmd/subforge         # 本地构建
+go build ./...                  # 后端编译（干净 clone 可直接跑）
 go test ./...                   # 测试
+go build ./cmd/subforge         # 本地构建二进制
 go run ./cmd/subforge version   # 版本信息
 go run ./cmd/subforge doctor    # 环境与运行时自检
 ```
 
-交叉编译（Linux 服务器 / NAS / 软路由）：
+等价的 Makefile 目标：`make build`（仅后端）、`make test`、`make vet`。
+
+### 完整构建（含前端）
+
+前端工程在 `web/`，使用 Vite + Vue 3 + Vuetify 3 + TypeScript，产物直接输出到 `internal/api/web/dist/`
+（`emptyOutDir: true`，构建时会清空重建，脚本末尾补回 `.gitkeep`）：
+
+```sh
+cd web
+pnpm install --frozen-lockfile
+pnpm run build                  # = vue-tsc --noEmit && vite build && node scripts/ensure-dist-placeholder.mjs
+```
+
+`pnpm run build` 的产物落在 `internal/api/web/dist/`（`index.html` + `assets/*` + `.gitkeep`）。
+构建完成后 `go build ./...` 会把前端一并嵌入二进制。
+
+一键完整验证：`make verify`（`web-coverage` + `web-build` + `test` + `coverage-gate` + `go vet`）。
+
+### 开发模式
+
+```sh
+cd web
+pnpm run dev                    # 开发服务器（Vite HMR，端口 5173）
+pnpm run test                   # 单元测试（Vitest）
+pnpm run coverage               # 覆盖率门禁（函数 100% + 条件 ≥80%）
+pnpm run typecheck              # 类型检查（vue-tsc --noEmit）
+```
+
+### 工具链注意
+
+- 本机**没有 npm**，统一用 `pnpm`（`pnpm-lock.yaml` 已提交，使用 `--frozen-lockfile`）。
+- 若 `pnpm` 报 `'node' 不是内部或外部命令`，把 Node 的 bin 目录放进 `PATH`：
+  `C:\Users\<you>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin`。
+- `make` 在 Windows 上可能不可用；可用 `scripts/verify.cmd` 或直接按 Makefile recipe 逐条跑。
+
+### 交叉编译（Linux 服务器 / NAS / 软路由）
 
 ```sh
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/subforge
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/subforge
 ```
+
+等价的 Makefile 目标：`make cross`（交付矩阵：linux/amd64|arm64|arm、windows/amd64、darwin/amd64|arm64、freebsd/amd64、linux/mipsle|mips softfloat）。
 
 ## 目录结构
 
