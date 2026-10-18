@@ -11,7 +11,11 @@ LDFLAGS := -s -w \
 
 GOFLAGS := -trimpath -mod=vendor -ldflags "$(LDFLAGS)"
 
-.PHONY: build test vet cross docker release clean
+COVERAGE_OUT ?= coverage.out
+
+.PHONY: build test vet cross docker release clean \
+        web-install web-dev web-test web-coverage web-build \
+        coverage coverage-gate condition-gate verify
 
 build:
 	CGO_ENABLED=0 go build $(GOFLAGS) -o bin/subforge ./cmd/subforge
@@ -49,3 +53,37 @@ release: cross
 
 clean:
 	rm -rf bin/ dist/
+
+# --- Frontend (web/) targets ---
+
+web-install:
+	pnpm -C web install --frozen-lockfile
+
+web-dev:
+	pnpm -C web run dev
+
+web-test:
+	pnpm -C web run test
+
+web-coverage:
+	pnpm -C web run coverage
+
+web-build:
+	pnpm -C web run build
+
+# --- Coverage targets ---
+
+coverage:
+	go test -coverprofile=$(COVERAGE_OUT) -covermode=atomic ./internal/... -count=1
+
+coverage-gate: coverage
+	go run ./internal/tools/coveragegate -profile $(COVERAGE_OUT) -min 80 -min-func 100
+	go run ./internal/tools/condgate -engine=profile -profile $(COVERAGE_OUT) -min 80 -top 20
+
+condition-gate: coverage
+	go run ./internal/tools/condgate -engine=profile -profile $(COVERAGE_OUT) -min 80 -top 20
+
+# --- Verify (one-shot local green) ---
+
+verify: vet test coverage-gate condition-gate
+	@echo "verify: all green"

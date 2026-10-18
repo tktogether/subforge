@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * *'
 
 permissions:
   contents: read
@@ -12,8 +15,40 @@ env:
   CGO_ENABLED: "0"
 
 jobs:
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Test
+        run: pnpm run test
+      - name: Build
+        run: pnpm run build
+      - name: Upload web dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: internal/api/web/dist
+          if-no-files-found: error
+
   test:
     name: test (${{ matrix.os }})
+    needs: web
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,15 +60,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/api/web/dist
       - name: Build
         run: go build ./...
       - name: Vet
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Gofmt check (Linux)
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l cmd internal pkg)"
 
   cross:
     name: cross-build
+    needs: web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,12 +85,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/api/web/dist
       - name: Cross builds (delivery matrix)
         run: make cross
 
-
   bench:
     name: benchmark
+    needs: web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +103,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/api/web/dist
       - name: Run benchmarks
         run: go test -bench=. -benchmem -run=^$ ./internal/... ./pkg/... 2>&1 | tee bench.txt
       - name: Upload benchmark results
@@ -64,12 +118,71 @@ jobs:
 
   docker:
     name: docker-build
+    needs: web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/api/web/dist
       - name: Build scratch image
         run: docker build -t subforge:ci-scratch .
       - name: Build alpine image
         run: docker build -f Dockerfile.alpine -t subforge:ci-alpine .
       - name: Verify binary runs
         run: docker run --rm subforge:ci-scratch version
+
+  coverage:
+    name: coverage
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/api/web/dist
+      - name: Test with coverage
+        run: go test -coverprofile=coverage.out -covermode=atomic ./internal/... -count=1
+      - name: Coverage gate
+        run: go run ./internal/tools/coveragegate -profile coverage.out -min 80 -min-func 100
+      - name: Condition gate (fast layer)
+        run: go run ./internal/tools/condgate -engine=profile -profile coverage.out -min 80 -top 20
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile
+          path: coverage.out
+
+  condition-nightly:
+    name: condition-nightly
+    needs: web
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/api/web/dist
+      - name: Install gobco
+        run: go install github.com/rillig/gobco@v1.3.4
+      - name: Run gobco condition coverage
+        run: go run ./internal/tools/condgate -engine=gobco -packages ./internal/... -min 80 -top 20 | tee gobco-condition.txt
+      - name: Upload condition report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gobco-condition
+          path: gobco-condition.txt
