@@ -436,4 +436,124 @@ describe('ResourcePage', () => {
     expect(vm.confirmOpen).toBe(false)
   })
 
+  it('字段 hint/example：显式传入时渲染 field-hint 与 field-example（含「示例：」前缀）', async () => {
+    const localFields = [
+      { key: 'name', label: '名称', type: 'text', hint: '自定义提示文案', example: '自定义示例值' },
+    ]
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    await flushPromises()
+    const hint = w.find('[data-testid="field-hint"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toContain('自定义提示文案')
+    const ex = w.find('[data-testid="field-example"]')
+    expect(ex.exists()).toBe(true)
+    expect(ex.text()).toContain('示例：')
+    expect(ex.text()).toContain('自定义示例值')
+  })
+
+  it('字段 hint/example：未显式传入时回退到 fieldHelp（FIELD_HELP）', async () => {
+    const localFields = [
+      { key: 'airport.name', label: '名称', type: 'text' },
+      { key: 'airport.subscription_url', label: '订阅', type: 'text' },
+    ]
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    await flushPromises()
+    const hints = w.findAll('[data-testid="field-hint"]')
+    expect(hints.length).toBe(2)
+    expect(w.text()).toContain('机场显示名称，便于识别')
+    const exs = w.findAll('[data-testid="field-example"]')
+    expect(exs.length).toBe(2)
+    expect(w.text()).toContain('香港 IEPL')
+  })
+
+  it('字段 hint/example：既无显式也无 FIELD_HELP 时不渲染', async () => {
+    const localFields = [
+      { key: 'nope.unknown_field', label: '未知', type: 'text' },
+    ]
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    await flushPromises()
+    expect(w.find('[data-testid="field-hint"]').exists()).toBe(false)
+    expect(w.find('[data-testid="field-example"]').exists()).toBe(false)
+  })
+
+  it('empty 传 EmptyStateHelp 且列表为空时渲染 empty-state（优先于 emptyText）', async () => {
+    const resource = makeResource([])
+    const w = mount(ResourcePage, {
+      props: {
+        title: 'T', subtitle: 'S', columns, fields, resource,
+        emptyText: '旧的空文案',
+        empty: { title: '还没有任何记录', detail: '点右上角新增', action: { label: '去新增' } },
+      },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const es = w.find('[data-testid="empty-state"]')
+    expect(es.exists()).toBe(true)
+    expect(w.find('[data-testid="empty-state-title"]').text()).toContain('还没有任何记录')
+    expect(w.find('[data-testid="empty-state-detail"]').text()).toContain('点右上角新增')
+    expect(w.text()).not.toContain('旧的空文案')
+  })
+
+  it('列表非空时即使传了 empty 也不渲染 empty-state', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: {
+        title: 'T', subtitle: 'S', columns, fields, resource,
+        empty: { title: '不该出现', detail: 'd' },
+      },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(w.find('[data-testid="empty-state"]').exists()).toBe(false)
+  })
+  it('传了 helpKey 时渲染 help-panel（P8 透传）', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource, helpKey: 'groups' },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(w.find('[data-testid="help-panel"]').exists()).toBe(true)
+  })
+
+  it('没传 helpKey 时不渲染 help-panel', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(w.find('[data-testid="help-panel"]').exists()).toBe(false)
+  })
 })

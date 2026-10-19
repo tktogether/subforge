@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PageHeader from './PageHeader.vue'
 import { vuetify } from '../plugins/vuetify'
+import { pageHelp } from '../content/help'
 
 describe('PageHeader', () => {
   it('基础渲染：title 渲染到 h1，subtitle 渲染到 p', () => {
@@ -48,5 +49,31 @@ describe('PageHeader', () => {
     })
     const p = wrapper.find('p')
     expect(p.classes()).toContain('text-body-2')
+  })
+
+  it('helpKey 给了时渲染 help-panel 且含该页 oneLiner', () => {
+    const w = mount(PageHeader, {
+      props: { title: '机场', subtitle: '管理上游机场', helpKey: 'airports' },
+      global: { plugins: [vuetify] },
+    })
+    const panel = w.find('[data-testid="help-panel"]')
+    expect(panel.exists()).toBe(true)
+    expect(w.find('[data-testid="help-oneliner"]').text()).toContain(pageHelp('airports').oneLiner)
+  })
+
+  it('helpKey 没给时不渲染 help-panel', () => {
+    const w = mount(PageHeader, {
+      props: { title: '机场', subtitle: '管理上游机场' },
+      global: { plugins: [vuetify] },
+    })
+    expect(w.find('[data-testid="help-panel"]').exists()).toBe(false)
+  })
+
+  it('helpKey 未知时渲染兜底 oneLiner', () => {
+    const w = mount(PageHeader, {
+      props: { title: 'x', subtitle: 'y', helpKey: 'unknown-page' },
+      global: { plugins: [vuetify] },
+    })
+    expect(w.find('[data-testid="help-oneliner"]').text()).toBe('该页面暂无说明')
   })
 })

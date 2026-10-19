@@ -1,67 +1,124 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatBytes,
+  formatTrafficPair,
   formatExpire,
-  formatPercent,
   formatDuration,
+  formatRelative,
+  formatPercent,
   shortTime,
 } from './index'
 
 describe('formatBytes', () => {
-  it('bytes <= 0 返回「无限」', () => {
-    expect(formatBytes(0)).toBe('无限')
-    expect(formatBytes(-1)).toBe('无限')
-    expect(formatBytes(-1024)).toBe('无限')
+  it('0 → 0 B', () => {
+    expect(formatBytes(0)).toBe('0 B')
   })
 
-  it('unit === 0：小于 1024 时保留原始字节并带 B 单位', () => {
+  it('负数 → 0 B', () => {
+    expect(formatBytes(-1)).toBe('0 B')
+    expect(formatBytes(-1024)).toBe('0 B')
+  })
+
+  it('B 不带小数', () => {
     expect(formatBytes(1)).toBe('1 B')
     expect(formatBytes(512)).toBe('512 B')
     expect(formatBytes(1023)).toBe('1023 B')
   })
 
-  it('到达 1024 时进位到 KB', () => {
-    expect(formatBytes(1024)).toBe('1.00 KB')
-    expect(formatBytes(1024 * 1024)).toBe('1.00 MB')
-    expect(formatBytes(1024 * 1024 * 1024)).toBe('1.00 GB')
+  it('KB 保留 1 位小数', () => {
+    expect(formatBytes(1024)).toBe('1.0 KB')
+    expect(formatBytes(1536)).toBe('1.5 KB')
   })
 
-  it('digits 分档：value >= 100 取 0 位小数', () => {
-    expect(formatBytes(100 * 1024)).toBe('100 KB')
+  it('MB/GB/TB 保留 1 位小数', () => {
+    expect(formatBytes(1024 * 1024)).toBe('1.0 MB')
+    expect(formatBytes(1024 * 1024 * 1024)).toBe('1.0 GB')
+    expect(formatBytes(1024 * 1024 * 1024 * 1024)).toBe('1.0 TB')
   })
 
-  it('digits 分档：value >= 10 取 1 位小数', () => {
-    expect(formatBytes(10 * 1024)).toBe('10.0 KB')
+  it('封顶 TB', () => {
+    expect(formatBytes(1024 ** 5)).toBe('1024.0 TB')
+  })
+})
+
+describe('formatTrafficPair', () => {
+  it('total <= 0 → used / 未知', () => {
+    expect(formatTrafficPair(1024, 0)).toBe('1.0 KB / 未知')
+    expect(formatTrafficPair(1024, -5)).toBe('1.0 KB / 未知')
   })
 
-  it('digits 分档：其余取 2 位小数', () => {
-    expect(formatBytes(1536)).toBe('1.50 KB')
+  it('正常：used / total（percent%）', () => {
+    expect(formatTrafficPair(1024, 10240)).toBe('1.0 KB / 10.0 KB（10.0%）')
   })
 
-  it('极大值封顶在 PB，不再继续进位', () => {
-    expect(formatBytes(1024 ** 6)).toBe('1024 PB')
-    expect(formatBytes(1024 ** 5)).toBe('1.00 PB')
+  it('percent >= 100 封顶', () => {
+    expect(formatTrafficPair(2048, 1024)).toBe('2.0 KB / 1.0 KB（100%）')
   })
 })
 
 describe('formatExpire', () => {
-  const unixSeconds = 1700000000 // 2023-11-14T22:13:20Z
-  const baseMs = unixSeconds * 1000
-  const stamp = '2023-11-14'
-
-  it('unixSeconds <= 0 返回「未知」', () => {
-    expect(formatExpire(0, baseMs)).toBe('未知')
-    expect(formatExpire(-1, baseMs)).toBe('未知')
+  it('0 → 未提供', () => {
+    expect(formatExpire(0)).toBe('未提供')
   })
 
-  it('days < 0：已过期', () => {
-    expect(formatExpire(unixSeconds, baseMs + 86400000)).toBe(stamp + '（已过期）')
-    expect(formatExpire(unixSeconds, baseMs + 86400000 * 30)).toBe(stamp + '（已过期）')
+  it('负数 → 未提供', () => {
+    expect(formatExpire(-1)).toBe('未提供')
   })
 
-  it('days >= 0：剩余 0 天与剩余多天', () => {
-    expect(formatExpire(unixSeconds, baseMs)).toBe(stamp + '（剩余 0 天）')
-    expect(formatExpire(unixSeconds, baseMs - 86400000 * 3)).toBe(stamp + '（剩余 3 天）')
+  it('正常 → YYYY-MM-DD HH:mm', () => {
+    const ts = 1700000000 // 2023-11-14T22:13:20Z
+    const d = new Date(ts * 1000)
+    const pad = (x: number) => (x < 10 ? '0' + x : String(x))
+    const expected = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+    expect(formatExpire(ts)).toBe(expected)
+  })
+})
+
+describe('formatDuration', () => {
+  it('ms < 1000 → <ms> ms', () => {
+    expect(formatDuration(0)).toBe('0 ms')
+    expect(formatDuration(999)).toBe('999 ms')
+  })
+
+  it('seconds < 60 → x.x s', () => {
+    expect(formatDuration(1000)).toBe('1.0 s')
+    expect(formatDuration(1500)).toBe('1.5 s')
+    expect(formatDuration(59900)).toBe('59.9 s')
+  })
+
+  it('>= 60 秒 → x m y s', () => {
+    expect(formatDuration(60000)).toBe('1 m 0 s')
+    expect(formatDuration(65000)).toBe('1 m 5 s')
+    expect(formatDuration(125000)).toBe('2 m 5 s')
+  })
+})
+
+describe('formatRelative', () => {
+  it('diff < 60000 → 刚刚', () => {
+    const now = 1000000
+    expect(formatRelative(now - 30000, now)).toBe('刚刚')
+    expect(formatRelative(now, now)).toBe('刚刚')
+  })
+
+  it('N 分钟前', () => {
+    const now = 1000000
+    expect(formatRelative(now - 5 * 60000, now)).toBe('5 分钟前')
+    expect(formatRelative(now - 59 * 60000, now)).toBe('59 分钟前')
+  })
+
+  it('N 小时前', () => {
+    const now = 1000000
+    expect(formatRelative(now - 2 * 3600000, now)).toBe('2 小时前')
+  })
+
+  it('N 天前', () => {
+    const now = 1000000
+    expect(formatRelative(now - 3 * 86400000, now)).toBe('3 天前')
+  })
+
+  it('now 缺省使用 Date.now', () => {
+    const ts = Date.now() - 1000
+    expect(formatRelative(ts)).toBe('刚刚')
   })
 })
 
@@ -80,25 +137,6 @@ describe('formatPercent', () => {
     expect(formatPercent(1, 3)).toBe('33.3%')
     expect(formatPercent(1, 4)).toBe('25.0%')
     expect(formatPercent(0, 100)).toBe('0.0%')
-  })
-})
-
-describe('formatDuration', () => {
-  it('ms < 1000 直接返回毫秒', () => {
-    expect(formatDuration(0)).toBe('0 ms')
-    expect(formatDuration(999)).toBe('999 ms')
-  })
-
-  it('seconds < 60 返回秒（1 位小数）', () => {
-    expect(formatDuration(1000)).toBe('1.0 s')
-    expect(formatDuration(1500)).toBe('1.5 s')
-    expect(formatDuration(59900)).toBe('59.9 s')
-  })
-
-  it('>= 60 秒返回「分 秒」', () => {
-    expect(formatDuration(60000)).toBe('1 分 0 秒')
-    expect(formatDuration(65000)).toBe('1 分 5 秒')
-    expect(formatDuration(125000)).toBe('2 分 5 秒')
   })
 })
 

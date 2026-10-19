@@ -78,7 +78,7 @@ describe('endpoints', () => {
 
   it('convert(body) → POST /api/convert，body 为 JSON 字符串', async () => {
     const body = { target: 't', urls: [], text: '', types: [], include: [], exclude: [], pipeline: '', config: '', sort: '', list: false, override: '' }
-    const data = { output: 'out', warnings: null, failures: null, nodes: 1, groups: 1, rules: 1 }
+    const data = { body: 'out', format: 'clash.meta', nodes: 1, rawNodes: 2, failures: null, warnings: null, cached: 0 }
     fetchMock.mockResolvedValue(respond(data))
     const result = await endpoints.convert(body)
     expect(fetchMock).toHaveBeenCalledWith('/api/convert', {
@@ -355,9 +355,10 @@ it('listScripts 解包 .scripts', async () => {
     expect(r.ok).toBe(true)
   })
   it('testScript POST /api/scripts/test', async () => {
-    fetchMock.mockResolvedValue(respond({ ok: true, duration_ms: 10 }))
+    fetchMock.mockResolvedValue(respond({ ok: true, kept: true, before: {}, after: {}, duration_ms: 10, error: '' }))
     const r = await endpoints.testScript({ code: 'x', kind: 'filter' })
     expect(r.ok).toBe(true)
+    expect(r.kept).toBe(true)
   })
   it('listTasks GET /api/tasks 解包 .tasks', async () => {
     fetchMock.mockResolvedValue(respond({ tasks: [{ JobName: 'j', Success: true, Err: '', StartedAt: '2020-01-01', Duration: 1 }] }))
@@ -384,15 +385,20 @@ it('listScripts 解包 .scripts', async () => {
     const r = await endpoints.rejectSuggestion(3)
     expect(r.ok).toBe(true)
   })
-  it('listSettings GET /api/settings 解包 .settings', async () => {
+  it('listSettings GET /api/settings 返回 { settings: [...] }', async () => {
     fetchMock.mockResolvedValue(respond({ settings: [{ key: 'k', value: 'v' }] }))
     const r = await endpoints.listSettings()
-    expect(r.length).toBe(1)
+    expect(r.settings).toHaveLength(1)
+    expect(r.settings[0].key).toBe('k')
   })
   it('updateSettings PUT /api/settings', async () => {
-    fetchMock.mockResolvedValue(respond({ ok: true }))
-    const r = await endpoints.updateSettings([{ key: 'k', value: 'v' }])
-    expect(r.ok).toBe(true)
+    fetchMock.mockResolvedValue(respond({ settings: [{ key: 'k', value: 'v', kind: 'string', label: 'K', description: '' }] }))
+    const r = await endpoints.updateSettings({ k: 'v' })
+    expect(r.settings[0].key).toBe('k')
+    const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+    expect(call[0]).toBe('/api/settings')
+    expect(call[1]).toMatchObject({ method: 'PUT' })
+    expect(JSON.parse(call[1].body as string)).toEqual({ settings: { k: 'v' } })
   })
 
   it('bulkRules POST /api/rules/bulk', async () => {
@@ -437,6 +443,173 @@ it('listScripts 解包 .scripts', async () => {
     expect(r.path).toBe('/p/v1.mrs')
     const call = fetchMock.mock.calls[0]
     expect(JSON.parse(call[1].body as string)).toEqual({ name: 's1', behavior: 'ipcidr' })
+  })
+
+
+  it('refreshAllAirports() POST /api/airports/refresh', async () => {
+    fetchMock.mockResolvedValue(respond({ results: [], ok: 0, fail: 0 }))
+    const r = await endpoints.refreshAllAirports()
+    expect(r.ok).toBe(0)
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/refresh', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('refreshAllAirports(true) POST /api/airports/refresh?with_rules=1', async () => {
+    fetchMock.mockResolvedValue(respond({ results: [], ok: 0, fail: 0 }))
+    await endpoints.refreshAllAirports(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/refresh?with_rules=1', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('refreshAirport(3) POST /api/airports/3/refresh', async () => {
+    fetchMock.mockResolvedValue(respond({ result: { airport_id: 3, name: 'a', ok: true, usage: { upload: 0, download: 0, total: 0, expire: 0 }, node_count: 1, err: '' } }))
+    const r = await endpoints.refreshAirport(3)
+    expect(r.result.airport_id).toBe(3)
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/3/refresh', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('importAirportRules(3) POST /api/airports/3/import-rules', async () => {
+    fetchMock.mockResolvedValue(respond({ rules_added: 1, rules_skipped: 0, providers_added: 0, warnings: [] }))
+    const r = await endpoints.importAirportRules(3)
+    expect(r.rules_added).toBe(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/3/import-rules', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('checkAirports([1,2]) POST /api/airports/check body {ids:[1,2]}', async () => {
+    fetchMock.mockResolvedValue(respond({ results: [] }))
+    await endpoints.checkAirports([1, 2])
+    const call = fetchMock.mock.calls[0]
+    expect(call[0]).toBe('/api/airports/check')
+    expect(JSON.parse(call[1].body as string)).toEqual({ ids: [1, 2] })
+  })
+
+  it('checkAirports() POST /api/airports/check body {}', async () => {
+    fetchMock.mockResolvedValue(respond({ results: [] }))
+    await endpoints.checkAirports()
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual({})
+  })
+
+  it('lastAirportCheck() GET /api/airports/check/last', async () => {
+    fetchMock.mockResolvedValue(respond({ results: [], at: 123 }))
+    const r = await endpoints.lastAirportCheck()
+    expect(r.at).toBe(123)
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/check/last', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('getTrafficStrategy() GET /api/traffic/strategy', async () => {
+    fetchMock.mockResolvedValue(respond({ strategy: { preset: 'default' } }))
+    const r = await endpoints.getTrafficStrategy()
+    expect(r.strategy.preset).toBe('default')
+    expect(fetchMock).toHaveBeenCalledWith('/api/traffic/strategy', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('setTrafficStrategy(s) PUT /api/traffic/strategy', async () => {
+    fetchMock.mockResolvedValue(respond({ strategy: { preset: 'custom' } }))
+    const r = await endpoints.setTrafficStrategy({ preset: 'custom' })
+    expect(r.strategy.preset).toBe('custom')
+    expect(fetchMock).toHaveBeenCalledWith('/api/traffic/strategy', expect.objectContaining({ method: 'PUT' }))
+  })
+
+  it('previewTraffic() GET /api/traffic/preview', async () => {
+    fetchMock.mockResolvedValue(respond({ usage: { upload: 0, download: 0, total: 0, expire: 0 }, header: 'h', ok: true }))
+    const r = await endpoints.previewTraffic()
+    expect(r.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/traffic/preview', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('previewTraffic(s) GET /api/traffic/preview?strategy=...', async () => {
+    fetchMock.mockResolvedValue(respond({ usage: { upload: 0, download: 0, total: 0, expire: 0 }, header: 'h', ok: true }))
+    await endpoints.previewTraffic({ preset: 'x' })
+    const call = fetchMock.mock.calls[0]
+    expect(call[0]).toContain('/api/traffic/preview?strategy=')
+  })
+
+  it('getTemplate() GET /api/template', async () => {
+    fetchMock.mockResolvedValue(respond({ path: '/t', content: 'c' }))
+    const r = await endpoints.getTemplate()
+    expect(r.path).toBe('/t')
+    expect(fetchMock).toHaveBeenCalledWith('/api/template', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('putTemplate(content) PUT /api/template body {content}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.putTemplate('hello')
+    expect(r.ok).toBe(true)
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual({ content: 'hello' })
+  })
+
+  it('getOverride() GET /api/override', async () => {
+    fetchMock.mockResolvedValue(respond({ path: '/o', content: 'c' }))
+    const r = await endpoints.getOverride()
+    expect(r.path).toBe('/o')
+    expect(fetchMock).toHaveBeenCalledWith('/api/override', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('putOverride(content) PUT /api/override body {content}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.putOverride('x')
+    expect(r.ok).toBe(true)
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual({ content: 'x' })
+  })
+
+  it('listAlertChannels() GET /api/alert-channels', async () => {
+    fetchMock.mockResolvedValue(respond({ channels: [{ kind: 'telegram', enabled: true }] }))
+    const r = await endpoints.listAlertChannels()
+    expect(r.channels).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/alert-channels', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('putAlertChannels(channels) PUT /api/alert-channels', async () => {
+    fetchMock.mockResolvedValue(respond({ channels: [{ kind: 'telegram', enabled: false }] }))
+    const r = await endpoints.putAlertChannels([{ kind: 'telegram', enabled: false }])
+    expect(r.channels[0].enabled).toBe(false)
+    expect(fetchMock).toHaveBeenCalledWith('/api/alert-channels', expect.objectContaining({ method: 'PUT' }))
+  })
+
+  it('testAlertChannel(0) POST /api/alert-channels/test body {index:0}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true, error: '', channel: 'telegram' }))
+    const r = await endpoints.testAlertChannel(0)
+    expect(r.ok).toBe(true)
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual({ index: 0 })
+  })
+
+  it('initRuleManifest() POST /api/rule-sources/init', async () => {
+    fetchMock.mockResolvedValue(respond({ path: '/m', created: true }))
+    const r = await endpoints.initRuleManifest()
+    expect(r.created).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/init', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('initRuleManifest(true) POST /api/rule-sources/init?force=1', async () => {
+    fetchMock.mockResolvedValue(respond({ path: '/m', created: false }))
+    await endpoints.initRuleManifest(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/init?force=1', expect.objectContaining({ method: 'POST' }))
+  })
+
+
+  it('createPipeline(body) → POST /api/pipelines 解出 pipeline', async () => {
+    const body = { name: 'p', description: 'd', steps: [{ op: 'op.sort' }], enabled: true }
+    fetchMock.mockResolvedValue(respond({ pipeline: { id: 1, name: 'p', description: 'd', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false } }))
+    const r = await endpoints.createPipeline(body)
+    expect(r.id).toBe(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/pipelines', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('updatePipeline(1,body) → PUT /api/pipelines/1 解出 pipeline', async () => {
+    const body = { name: 'p2', enabled: false }
+    fetchMock.mockResolvedValue(respond({ pipeline: { id: 1, name: 'p2', description: '', steps_json: '[]', enabled: false, sort_order: 0, source: 'ui', read_only: false } }))
+    const r = await endpoints.updatePipeline(1, body)
+    expect(r.name).toBe('p2')
+    expect(fetchMock).toHaveBeenCalledWith('/api/pipelines/1', expect.objectContaining({ method: 'PUT' }))
+  })
+
+  it('deletePipeline(1) → DELETE /api/pipelines/1 解出 {ok:true}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.deletePipeline(1)
+    expect(r.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/pipelines/1', expect.objectContaining({ method: 'DELETE' }))
   })
 
 })

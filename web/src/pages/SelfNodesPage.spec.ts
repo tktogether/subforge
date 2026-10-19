@@ -32,23 +32,26 @@ describe('SelfNodesPage', () => {
     listMock.mockResolvedValue([])
   })
 
-  it('把 title/subtitle/columns/fields/resource 原样传给 ResourcePage', async () => {
+  it('把 title/subtitle/columns/fields/resource/help-key 原样传给 ResourcePage', async () => {
     const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
 
     const rp = w.findComponent(ResourcePage)
     expect(rp.exists()).toBe(true)
     expect(rp.props('title')).toBe('自建节点')
-    expect(rp.props('subtitle')).toBe('自建代理节点')
+    expect(rp.props('subtitle')).toBe('手动添加的节点，与机场节点合并输出')
+    expect(rp.props('helpKey')).toBe('self-nodes')
     expect(rp.props('columns')).toEqual([
-      { key: 'link', title: '链接' },
       { key: 'name', title: '名称' },
+      { key: 'link', title: '链接' },
       { key: 'enabled', title: '启用' },
+      { key: 'sort_order', title: '顺序' },
     ])
     expect(rp.props('fields')).toEqual([
-      { key: 'link', label: '链接', type: 'text' },
-      { key: 'name', label: '名称', type: 'text' },
-      { key: 'enabled', label: '启用', type: 'switch' },
+      { key: 'name', label: '名称', type: 'text', hint: '输出到客户端显示的名字；留空则用链接里自带的名字', example: '自建-香港' },
+      { key: 'link', label: '分享链接', type: 'text', hint: '标准分享链接，以 ss:// / vmess:// / vless:// / trojan:// / hysteria2:// 开头', example: 'vless://uuid@1.2.3.4:443?encryption=none&security=tls#香港' },
+      { key: 'enabled', label: '启用', type: 'switch', hint: '关闭后不参与输出' },
+      { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
     ])
     const resource = rp.props('resource') as any
     expect(resource.list).toBe(endpoints.listSelfNodes)
@@ -67,7 +70,6 @@ describe('SelfNodesPage', () => {
     expect(listMock).toHaveBeenCalledTimes(1)
     expect(w.text()).toContain('节点A')
     expect(w.text()).toContain('vless://node-a')
-    // enabled=true 模板分支渲染「启用」
     expect(w.text()).toContain('启用')
     w.unmount()
   })
@@ -78,7 +80,7 @@ describe('SelfNodesPage', () => {
     await flushPromises()
 
     const resource = w.findComponent(ResourcePage).props('resource') as any
-    const item = { id: 3, link: 'vless://x', name: '改后', enabled: false }
+    const item = { id: 3, link: 'vless://x', name: '改后', enabled: false, sort_order: 1 }
     const res = await resource.update(item)
 
     expect(updateMock).toHaveBeenCalledTimes(1)
@@ -93,7 +95,7 @@ describe('SelfNodesPage', () => {
     await flushPromises()
 
     const resource = w.findComponent(ResourcePage).props('resource') as any
-    const item = { id: 12, link: 'vless://y', name: '待删', enabled: true }
+    const item = { id: 12, link: 'vless://y', name: '待删', enabled: true, sort_order: 1 }
     const res = await resource.remove(item)
 
     expect(deleteMock).toHaveBeenCalledTimes(1)
@@ -108,11 +110,28 @@ describe('SelfNodesPage', () => {
     await flushPromises()
 
     const resource = w.findComponent(ResourcePage).props('resource') as any
-    const body = { link: 'vless://z', name: '新节点', enabled: true }
+    const body = { link: 'vless://z', name: '新节点', enabled: true, sort_order: 1 }
     const res = await resource.create(body)
 
     expect(createMock).toHaveBeenCalledWith(body)
     expect(res).toEqual({ id: 2, name: '新节点' })
+    w.unmount()
+  })
+
+  it('help-panel 渲染 oneLiner', async () => {
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.text()).toContain('手动添加的节点，与机场节点合并输出')
+    w.unmount()
+  })
+
+  it('展开格式示例折叠面板渲染 4 条示例', async () => {
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const title = w.find('[data-testid="self-node-formats"] .v-expansion-panel-title')
+    if (title.exists()) { await title.trigger('click'); await flushPromises() }
+    expect(w.text()).toContain('查看格式示例')
+    expect(w.text()).toContain('以上均为示例')
     w.unmount()
   })
 })

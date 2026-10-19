@@ -4,6 +4,7 @@ import { useCrud, type CrudResource } from '../composables/useCrud'
 import { notify } from '../composables/useNotify'
 import PageHeader from './PageHeader.vue'
 import AsyncSection from './AsyncSection.vue'
+import { fieldHelp, type EmptyStateHelp } from '../content/help'
 
 type Row = Record<string, any>
 
@@ -16,6 +17,8 @@ export interface ResourceField {
   key: string
   label: string
   type: string
+  hint?: string
+  example?: string
 }
 
 const props = defineProps<{
@@ -26,6 +29,8 @@ const props = defineProps<{
   resource: CrudResource<Row>
   readonlyMode?: boolean
   emptyText?: string
+  empty?: EmptyStateHelp
+  helpKey?: string
 }>()
 
 const { items, error, loading, load, save, destroy } = useCrud<Row>(props.resource)
@@ -44,6 +49,24 @@ const headers = computed(() => {
 })
 
 const emptyText = computed(() => props.emptyText ?? '暂无数据')
+
+function fieldHint(field: ResourceField): string {
+  const explicit = field.hint
+  if (explicit !== undefined && explicit !== '') {
+    return explicit
+  }
+  const fromHelp = fieldHelp(field.key)
+  return fromHelp !== undefined && fromHelp.hint !== undefined ? fromHelp.hint : ''
+}
+
+function fieldExample(field: ResourceField): string {
+  const explicit = field.example
+  if (explicit !== undefined && explicit !== '') {
+    return explicit
+  }
+  const fromHelp = fieldHelp(field.key)
+  return fromHelp !== undefined && fromHelp.example !== undefined ? fromHelp.example : ''
+}
 
 function blank(): Row {
   const row: Row = {}
@@ -99,7 +122,7 @@ reload()
 </script>
 
 <template>
-  <PageHeader :title="props.title" :subtitle="props.subtitle">
+  <PageHeader :title="props.title" :subtitle="props.subtitle" :help-key="props.helpKey">
     <template #actions>
       <v-btn
         v-if="props.readonlyMode !== true"
@@ -117,7 +140,7 @@ reload()
   <AsyncSection
     :loading="loading"
     :error="error"
-    :empty="items.length === 0"
+    :empty="props.empty !== undefined && items.length === 0 ? props.empty : (items.length === 0)"
     :empty-text="emptyText"
     @retry="reload"
   >
@@ -188,6 +211,12 @@ reload()
             class="mb-2"
             data-testid="field-text"
           />
+          <div v-if="fieldHint(field) !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
+            {{ fieldHint(field) }}
+          </div>
+          <div v-if="fieldExample(field) !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
+            示例：{{ fieldExample(field) }}
+          </div>
         </template>
       </v-card-text>
       <v-card-actions>

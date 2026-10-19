@@ -7,6 +7,14 @@ export interface Airport {
   remarks: string
   enabled: boolean
   sort_order: number
+  // 流量字段（可选，后端 internal/store/store.go Airport 返回）
+  upload?: number // 字节
+  download?: number // 字节
+  total?: number // 字节
+  expire?: number // unix 秒
+  node_count?: number
+  traffic_at?: number // unix 秒
+  traffic_err?: string
 }
 
 export interface ProxyGroup {
@@ -123,12 +131,13 @@ export interface ConvertRequest {
 }
 
 export interface ConvertResponse {
-  output: string
-  warnings: string[] | null
-  failures: string[] | null
+  body: string
+  format: string
   nodes: number
-  groups: number
-  rules: number
+  rawNodes: number
+  failures: string[] | null
+  warnings: string[] | null
+  cached: number
 }
 
 export interface AirportInput {
@@ -181,11 +190,11 @@ export interface ScriptInput {
 
 export interface ScriptTestResult {
   ok: boolean
-  kept?: string
-  before?: Record<string, unknown>
-  after?: Record<string, unknown>
+  kept: boolean
+  before: Record<string, unknown>
+  after: Record<string, unknown>
   duration_ms: number
-  error?: string
+  error: string
 }
 
 export interface TaskEntry {
@@ -226,9 +235,14 @@ export interface Suggestion {
 export interface SettingItem {
   key: string
   value: string
+  kind: string
+  label: string
+  description: string
+  placeholder?: string
+  is_default?: boolean
 }
 
-export interface RuleSource {
+export interface RuleSourceStatus {
   name: string
   url: string
   format: string
@@ -236,6 +250,7 @@ export interface RuleSource {
   versions: string[]
   latest: string
 }
+export type RuleSource = RuleSourceStatus
 
 export interface RuleSourceUpdateResult {
   source: string
@@ -244,6 +259,50 @@ export interface RuleSourceUpdateResult {
   from_cache: boolean
   err: string
 }
+
+export interface TrafficUsage { upload: number; download: number; total: number; expire: number }
+export interface TrafficStrategy {
+  preset?: string
+  upload?: string; download?: string; total?: string; expire?: string
+}
+export interface TrafficRefreshResult {
+  airport_id: number; name: string; ok: boolean
+  usage: TrafficUsage; node_count: number; err: string
+}
+export interface ImportRulesOutcome {
+  airport_id: number; name: string
+  rules_added: number; rules_skipped: number; providers_added: number
+  warnings: string[]; err: string
+}
+export interface TrafficRefreshResponse {
+  results: TrafficRefreshResult[]; ok: number; fail: number
+  imports?: ImportRulesOutcome[]
+}
+export interface ImportRulesResult {
+  rules_added: number; rules_skipped: number; providers_added: number; warnings: string[]
+}
+export interface SubscheckResult {
+  url: string; ok: boolean; status_code: number; latency: number; bytes: number; err: string
+}
+export interface AlertChannel {
+  kind: string; enabled: boolean
+  bot_token?: string; chat_id?: string; webhook?: string
+  host?: string; port?: number; username?: string; password?: string
+  from?: string; to?: string; configured?: Record<string, boolean>
+}
+export interface AlertTestResult { ok: boolean; error: string; channel: string }
+export interface RuleSourcesResponse {
+  manifest_path: string
+  default_manifest_path?: string
+  output_dir?: string
+  exists?: boolean
+  sources: RuleSourceStatus[]
+  hint?: string
+  manifest_template?: string
+}
+export interface TemplateFile { path: string; content: string }
+export interface TrafficPreview { usage: TrafficUsage; header: string; ok: boolean }
+
 
 export interface Pipeline {
   id: number
@@ -256,10 +315,28 @@ export interface Pipeline {
   read_only: boolean
 }
 
+export interface PipelineStep {
+  op: string
+  args?: Record<string, string>
+  on_error?: string
+  line?: number
+}
+
+export interface PipelineInput {
+  name: string
+  description?: string
+  steps?: PipelineStep[]
+  steps_json?: string
+  enabled?: boolean
+}
+
 export const endpoints = {
   stats: (): Promise<Stats> => api.get<Stats>('/api/stats'),
   history: (): Promise<HistoryEntry[]> => api.get<HistoryEntry[]>('/api/history'),
   pipelines: (config: string): Promise<Pipeline[]> => api.get<Pipeline[]>('/api/pipelines', { query: { config } }),
+  createPipeline: (body: PipelineInput): Promise<Pipeline> => api.post<{ pipeline: Pipeline }>('/api/pipelines', body).then((r) => r.pipeline),
+  updatePipeline: (id: number, body: PipelineInput): Promise<Pipeline> => api.put<{ pipeline: Pipeline }>('/api/pipelines/' + id, body).then((r) => r.pipeline),
+  deletePipeline: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/pipelines/' + id),
   targets: (): Promise<string[]> => api.get<string[]>('/api/targets'),
   rulesets: (config: string): Promise<RulesetsResponse> => api.get<RulesetsResponse>('/api/rulesets', { query: { config } }),
   logs: (since: number): Promise<LogsResponse> => api.get<LogsResponse>('/api/logs', { query: { since } }),
@@ -308,8 +385,8 @@ export const endpoints = {
   confirmSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/confirm', {}),
   rejectSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/reject', {}),
   applySuggestions: (): Promise<{ applied: number }> => api.post<{ applied: number }>('/api/suggestions/apply', {}),
-  listRuleSources: (): Promise<{ manifest_path: string; sources: RuleSource[] }> =>
-    api.get<{ manifest_path: string; sources: RuleSource[] }>('/api/rule-sources'),
+  listRuleSources: (): Promise<RuleSourcesResponse> =>
+    api.get<RuleSourcesResponse>('/api/rule-sources'),
   updateRuleSources: (): Promise<{ results: RuleSourceUpdateResult[] }> =>
     api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update', {}),
   rollbackRuleSource: (name: string): Promise<{ path: string }> =>
@@ -317,8 +394,43 @@ export const endpoints = {
   generateMRS: (name: string, behavior: string): Promise<{ path: string; bytes: number }> =>
     api.post<{ path: string; bytes: number }>('/api/rule-sources/mrs', { name, behavior }),
 
-  listSettings: (): Promise<SettingItem[]> => api.get<{ settings: SettingItem[] }>('/api/settings').then((r) => r.settings),
-  updateSettings: (body: SettingItem[]): Promise<OkResponse> => api.put<OkResponse>('/api/settings', body),
+  listSettings: (): Promise<{ settings: SettingItem[] }> => api.get<{ settings: SettingItem[] }>('/api/settings'),
+  updateSettings: (values: Record<string, string>): Promise<{ settings: SettingItem[] }> => api.put<{ settings: SettingItem[] }>('/api/settings', { settings: values }),
+
+  refreshAllAirports: (withRules = false): Promise<TrafficRefreshResponse> =>
+    api.post<TrafficRefreshResponse>('/api/airports/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
+  refreshAirport: (id: number | string): Promise<{ result: TrafficRefreshResult }> =>
+    api.post<{ result: TrafficRefreshResult }>('/api/airports/' + id + '/refresh', {}),
+  importAirportRules: (id: number | string): Promise<ImportRulesResult> =>
+    api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', {}),
+  checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[] }> =>
+    api.post<{ results: SubscheckResult[] }>('/api/airports/check', ids === undefined ? {} : { ids }),
+  lastAirportCheck: (): Promise<{ results: SubscheckResult[]; at?: number }> =>
+    api.get<{ results: SubscheckResult[]; at?: number }>('/api/airports/check/last'),
+
+  getTrafficStrategy: (): Promise<{ strategy: TrafficStrategy }> =>
+    api.get<{ strategy: TrafficStrategy }>('/api/traffic/strategy'),
+  setTrafficStrategy: (s: TrafficStrategy): Promise<{ strategy: TrafficStrategy }> =>
+    api.put<{ strategy: TrafficStrategy }>('/api/traffic/strategy', s),
+  previewTraffic: (strategy?: TrafficStrategy): Promise<TrafficPreview> =>
+    api.get<TrafficPreview>('/api/traffic/preview', strategy !== undefined ? { query: { strategy: JSON.stringify(strategy) } } : undefined),
+
+  getTemplate: (): Promise<TemplateFile> => api.get<TemplateFile>('/api/template'),
+  putTemplate: (content: string): Promise<{ ok: boolean }> =>
+    api.put<{ ok: boolean }>('/api/template', { content }),
+  getOverride: (): Promise<TemplateFile> => api.get<TemplateFile>('/api/override'),
+  putOverride: (content: string): Promise<{ ok: boolean }> =>
+    api.put<{ ok: boolean }>('/api/override', { content }),
+
+  listAlertChannels: (): Promise<{ channels: AlertChannel[] }> =>
+    api.get<{ channels: AlertChannel[] }>('/api/alert-channels'),
+  putAlertChannels: (channels: AlertChannel[]): Promise<{ channels: AlertChannel[] }> =>
+    api.put<{ channels: AlertChannel[] }>('/api/alert-channels', { channels }),
+  testAlertChannel: (index: number): Promise<AlertTestResult> =>
+    api.post<AlertTestResult>('/api/alert-channels/test', { index }),
+
+  initRuleManifest: (force = false): Promise<{ path: string; created: boolean }> =>
+    api.post<{ path: string; created: boolean }>('/api/rule-sources/init', {}, force ? { query: { force: 1 } } : undefined),
 }
 
 export function subscribeUrl(origin: string, token: string): string {

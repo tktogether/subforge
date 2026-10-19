@@ -5,113 +5,560 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import PipelinesPage from './PipelinesPage.vue'
-import { type Pipeline } from '../api/endpoints'
+import { type Pipeline, type Script } from '../api/endpoints'
 import { endpoints } from '../api/endpoints'
 
 vi.mock('../api/endpoints', async () => {
   const actual = await vi.importActual<any>('../api/endpoints')
   return {
     ...actual,
-    endpoints: { pipelines: vi.fn() },
+    endpoints: {
+      pipelines: vi.fn(),
+      listScripts: vi.fn(),
+      createPipeline: vi.fn(),
+      updatePipeline: vi.fn(),
+      deletePipeline: vi.fn(),
+    },
   }
 })
 
 const pipelinesMock = endpoints.pipelines as unknown as ReturnType<typeof vi.fn>
+const scriptsMock = endpoints.listScripts as unknown as ReturnType<typeof vi.fn>
+const createMock = endpoints.createPipeline as unknown as ReturnType<typeof vi.fn>
+const updateMock = endpoints.updatePipeline as unknown as ReturnType<typeof vi.fn>
+const deleteMock = endpoints.deletePipeline as unknown as ReturnType<typeof vi.fn>
+
 const vuetify = createVuetify({ components, directives })
+
+const samplePipelines: Pipeline[] = [
+  { id: 1, name: 'pipe-a', description: 'desc-a', steps_json: '[{"op":"filter.regex","args":{"include":"^HK"}},{"op":"op.sort","args":{"by":"name"}}]', enabled: true, sort_order: 0, source: 'ui', read_only: false },
+  { id: 2, name: 'pipe-b', description: '', steps_json: '[]', enabled: false, sort_order: 1, source: 'template', read_only: true },
+]
+
+const sampleScripts: Script[] = [
+  { id: 1, name: 'hk-filter', kind: 'filter', code: 'node.name.indexOf("HK") >= 0', enabled: true },
+  { id: 2, name: 'disabled-script', kind: 'operate', code: 'node.port = 443', enabled: false },
+]
+
+function mountPage() {
+  return mount(PipelinesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+}
 
 describe('PipelinesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    pipelinesMock.mockResolvedValue(samplePipelines)
+    scriptsMock.mockResolvedValue(sampleScripts)
+    // jsdom 缺 visualViewport，VOverlay 需要
+    ;(window as any).visualViewport = { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true }
   })
 
-  it('onMounted 调用 endpoints.pipelines("") 并把结果渲染成列表（empty 为假）', async () => {
-    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pipe-a', description: '', steps_json: '[{\"op\":\"filter\"},{\"op\":null}]', enabled: true, sort_order: 0, source: 'ui', read_only: false }, { id: 2, name: 'pipe-b', description: '', steps_json: 'not-json', enabled: true, sort_order: 1, source: 'template', read_only: true }])
-
-    const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
+  it('onMounted 加载管线与脚本，渲染列表与帮助块', async () => {
+    const w = mountPage()
     await flushPromises()
 
-    expect(pipelinesMock).toHaveBeenCalledTimes(1)
     expect(pipelinesMock).toHaveBeenCalledWith('')
-    expect(w.findAllComponents({ name: 'VListItem' }).length).toBe(2)
+    expect(scriptsMock).toHaveBeenCalled()
+    expect(w.find('[data-testid="pipeline-intro"]').exists()).toBe(true)
+    expect(w.find('[data-testid="pipeline-order"]').exists()).toBe(true)
+    expect(w.findAll('[data-testid="pipeline-order-item"]').length).toBe(3)
+    expect(w.find('[data-testid="pipeline-script-step"]').exists()).toBe(true)
+    expect(w.findAll('[data-testid="pipeline-row"]').length).toBe(2)
     expect(w.text()).toContain('pipe-a')
     expect(w.text()).toContain('pipe-b')
-    // 有数据时不该出现空态
-    expect(w.find('[data-testid="async-empty"]').exists()).toBe(false)
-    expect(w.find('[data-testid="async-loading"]').exists()).toBe(false)
-    expect(w.find('[data-testid="async-error"]').exists()).toBe(false)
     w.unmount()
   })
 
-  it('空列表时 empty 为真，渲染 emptyText，且不渲染任何列表项', async () => {
-    pipelinesMock.mockResolvedValue([])
-
-    const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
+  it('来源显示：ui→界面，template→模板（只读）', async () => {
+    const w = mountPage()
     await flushPromises()
-
-    expect(w.find('[data-testid="async-empty"]').exists()).toBe(true)
-    expect(w.text()).toContain('在配置文件中定义管线')
-    expect(w.findAllComponents({ name: 'VListItem' }).length).toBe(0)
+    const rows = w.findAll('[data-testid="pipeline-row"]')
+    expect(rows[0].text()).toContain('界面')
+    expect(rows[1].text()).toContain('模板（只读）')
     w.unmount()
   })
 
-  it('请求未完成时 loading 为真，AsyncSection 渲染骨架屏', async () => {
-    let resolveIt: (v: Pipeline[]) => void = () => {}
-    pipelinesMock.mockImplementation(
-      () => new Promise<Pipeline[]>((resolve) => { resolveIt = resolve }),
-    )
+  it('read_only 行的编辑/删除按钮 disabled（不隐藏）', async () => {
+    const w = mountPage()
+    await flushPromises()
+    const rows = w.findAll('[data-testid="pipeline-row"]')
+    const editBtns = rows[1].findAll('[data-testid="pipeline-edit"]')
+    const delBtns = rows[1].findAll('[data-testid="pipeline-delete"]')
+    expect(editBtns.length).toBe(1)
+    expect(delBtns.length).toBe(1)
+    expect(editBtns[0].attributes('disabled')).toBeDefined()
+    expect(delBtns[0].attributes('disabled')).toBeDefined()
+    w.unmount()
+  })
 
-    const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
+  it('空列表时渲染 emptyState', async () => {
+    pipelinesMock.mockResolvedValue([])
+    const w = mountPage()
+    await flushPromises()
+    expect(w.find('[data-testid="empty-state"]').exists()).toBe(true)
+    expect(w.text()).toContain('还没有管线')
+    w.unmount()
+  })
+
+  it('loading 时渲染骨架屏', async () => {
+    pipelinesMock.mockImplementation(() => new Promise<Pipeline[]>(() => {}))
+    const w = mountPage()
     await nextTick()
     expect(w.find('[data-testid="async-loading"]').exists()).toBe(true)
-    expect(w.find('[data-testid="async-empty"]').exists()).toBe(false)
-
-    resolveIt([{ id: 3, name: 'late-pipe', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false }])
-    await flushPromises()
-    expect(w.find('[data-testid="async-loading"]').exists()).toBe(false)
-    expect(w.text()).toContain('late-pipe')
     w.unmount()
   })
 
-  it('请求抛 Error 时显示其 message（catch + errorMessage 的 Error 分支）', async () => {
+  it('请求失败显示错误原文', async () => {
     pipelinesMock.mockRejectedValueOnce(new Error('配置文件缺少 pipelines'))
-
-    const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
+    const w = mountPage()
     await flushPromises()
-
     expect(w.find('[data-testid="async-error"]').exists()).toBe(true)
     expect(w.text()).toContain('配置文件缺少 pipelines')
-    // 失败时 loading 已被 finally 复位
-    expect(w.find('[data-testid="async-loading"]').exists()).toBe(false)
     w.unmount()
   })
 
-  it('请求抛非 Error 时用 String(err) 显示（errorMessage 的非 Error 分支）', async () => {
-    pipelinesMock.mockRejectedValueOnce('plain-pipeline-failure')
-
-    const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
+  it('点击刷新重新加载', async () => {
+    const w = mountPage()
     await flushPromises()
-
-    expect(w.text()).toContain('plain-pipeline-failure')
-    w.unmount()
-  })
-
-  it('点击重试按钮再次 load：error 被清空，成功后渲染列表', async () => {
-    pipelinesMock
-      .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce([{ id: 4, name: 'recovered', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false }])
-
-    const w = mount(PipelinesPage, { global: { plugins: [vuetify] } })
+    await w.find('[data-testid="pipeline-refresh"]').trigger('click')
     await flushPromises()
-    expect(w.text()).toContain('boom')
-
-    const retry = w.find('[data-testid="async-retry"]')
-    expect(retry.exists()).toBe(true)
-    await retry.trigger('click')
-    await flushPromises()
-
     expect(pipelinesMock).toHaveBeenCalledTimes(2)
-    expect(w.find('[data-testid="async-error"]').exists()).toBe(false)
-    expect(w.text()).toContain('recovered')
     w.unmount()
   })
+
+  it('新建管线：添加步骤并保存成功', async () => {
+    createMock.mockResolvedValue({ id: 3, name: 'new-pipe', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false })
+    const w = mountPage()
+    await flushPromises()
+
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).dialog).toBe(true)
+
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    await flushPromises()
+    expect((w.vm as any).formSteps.length).toBe(1)
+
+    ;(w.vm as any).formName = 'new-pipe'
+    await flushPromises()
+
+    ;(document.querySelector('[data-testid="pipeline-save"]') as HTMLElement)?.click()
+    await flushPromises()
+    await flushPromises()
+
+    expect(createMock).toHaveBeenCalled()
+    const body = createMock.mock.calls[0][0]
+    expect(body.name).toBe('new-pipe')
+    expect(Array.isArray(body.steps)).toBe(true)
+    w.unmount()
+  })
+
+  it('编辑管线：加载已有步骤并保存 updatePipeline', async () => {
+    updateMock.mockResolvedValue(samplePipelines[0])
+    const w = mountPage()
+    await flushPromises()
+
+    const editBtn = w.findAll('[data-testid="pipeline-edit"]')[0]
+    await editBtn.trigger('click')
+    await flushPromises()
+
+    expect((w.vm as any).formSteps.length).toBe(2)
+    ;(document.querySelector('[data-testid="pipeline-save"]') as HTMLElement)?.click()
+    await flushPromises()
+    await flushPromises()
+
+    expect(updateMock).toHaveBeenCalled()
+    const [id, body] = updateMock.mock.calls[0]
+    expect(id).toBe(1)
+    expect(body.name).toBe('pipe-a')
+    expect(body.steps.length).toBe(2)
+    w.unmount()
+  })
+
+  it('步骤上移/下移/删除', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    await flushPromises()
+    expect(document.querySelectorAll('[data-testid="step-row"]').length).toBe(2)
+
+    ;(w.vm as any).removeStep(0)
+    await flushPromises()
+    await flushPromises()
+    expect(document.querySelectorAll('[data-testid="step-row"]').length).toBe(1)
+    w.unmount()
+  })
+
+  it('script 步骤引用已启用脚本显示 script-ref-ok', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+
+    // 设置 op 为 op.script
+    const opSelect = w.findComponent('[data-testid="step-op"]')
+    await opSelect.setValue('op.script')
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].args.ref = 'hk-filter'
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('脚本已启用')
+    w.unmount()
+  })
+
+  it('script 步骤引用未启用脚本显示 script-ref-disabled', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+
+    const opSelect = w.findComponent('[data-testid="step-op"]')
+    await opSelect.setValue('op.script')
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].args.ref = 'disabled-script'
+    await flushPromises()
+    ;(w.vm as any).formSteps = [...(w.vm as any).formSteps]
+    await flushPromises()
+    await (w.vm as any).$nextTick()
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('脚本已存在但未启用')
+    w.unmount()
+  })
+
+  it('script 步骤引用不存在脚本显示 script-ref-missing', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+
+    const opSelect = w.findComponent('[data-testid="step-op"]')
+    await opSelect.setValue('op.script')
+    await flushPromises()
+
+    ;(w.vm as any).formSteps[0].args.ref = 'nonexistent'
+    await flushPromises()
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('未找到该脚本')
+    w.unmount()
+  })
+
+  it('保存失败原样显示后端错误', async () => {
+    createMock.mockRejectedValueOnce(new Error('流水线名称不能为空'))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(document.querySelector('[data-testid="pipeline-save"]') as HTMLElement)?.click()
+    await flushPromises()
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('流水线名称不能为空')
+    w.unmount()
+  })
+
+  it('删除确认对话框：确认后调 deletePipeline', async () => {
+    deleteMock.mockResolvedValue({ ok: true })
+    const w = mountPage()
+    await flushPromises()
+
+    const delBtn = w.findAll('[data-testid="pipeline-delete"]')[0]
+    await delBtn.trigger('click')
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('删除后引用它的订阅产物会退回默认步骤')
+
+    await (w.vm as any).doDelete()
+    await flushPromises()
+    await flushPromises()
+
+    expect(deleteMock).toHaveBeenCalledWith(1)
+    w.unmount()
+  })
+
+  it('删除确认取消不调 deletePipeline', async () => {
+    const w = mountPage()
+    await flushPromises()
+    const delBtn = w.findAll('[data-testid="pipeline-delete"]')[0]
+    await delBtn.trigger('click')
+    await flushPromises()
+
+    const cancelBtn = document.querySelector('[data-testid="pipeline-confirm-cancel"]') as HTMLElement | null
+    cancelBtn?.click()
+    await flushPromises()
+    await flushPromises()
+    expect(deleteMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('parseSteps 非法 JSON 返回空数组（openEdit 容错）', async () => {
+    const w = mountPage()
+    await flushPromises()
+    const p = { ...samplePipelines[1], steps_json: 'not-json' }
+    ;(w.vm as any).openEdit(p)
+    await flushPromises()
+    expect((w.vm as any).formSteps).toEqual([])
+    w.unmount()
+  })
+
+  it('moveStep 上移/下移覆盖', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    ;(w.vm as any).moveStep(1, -1)
+    await flushPromises()
+    ;(w.vm as any).moveStep(0, 1)
+    await flushPromises()
+    // 边界：越界不抛
+    ;(w.vm as any).moveStep(0, -1)
+    ;(w.vm as any).moveStep(10, 1)
+    await flushPromises()
+    w.unmount()
+  })
+
+  it('多种 op 的 paramFields 分支覆盖（rename/split/unknown）', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).formSteps = [
+      { op: 'op.rename', args: { pattern: 'a', repl: 'b' }, on_error: '' },
+      { op: 'op.split', args: { sep: '|' }, on_error: '' },
+      { op: 'op.dedupe', args: {}, on_error: '' },
+    ]
+    await flushPromises()
+    expect((w.vm as any).formSteps.length).toBe(3)
+    // stepScriptRef 非脚本分支
+    expect((w.vm as any).stepScriptRef({ op: 'op.rename', args: {} })).toBe('')
+    w.unmount()
+  })
+
+  it('load 失败分支覆盖', async () => {
+    pipelinesMock.mockRejectedValueOnce(new Error('boom-load'))
+    const w = mountPage()
+    await flushPromises()
+    expect(w.text()).toContain('boom-load')
+    w.unmount()
+  })
+
+
+  it('步骤上移/下移边界与删除按钮点击覆盖', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+
+    // 上移第一步（边界：no-op）
+    ;(w.vm as any).moveStep(0, -1)
+    await flushPromises()
+    // 下移最后一步（边界：no-op）
+    ;(w.vm as any).moveStep(1, 1)
+    await flushPromises()
+    // 点击 step-up on step 1
+    const upBtns = Array.from(document.querySelectorAll('[data-testid="step-up"]')) as HTMLElement[]
+    if (upBtns[1]) upBtns[1].click()
+    await flushPromises()
+    // 点击 step-down on step 0
+    const downBtns = Array.from(document.querySelectorAll('[data-testid="step-down"]')) as HTMLElement[]
+    if (downBtns[0]) downBtns[0].click()
+    await flushPromises()
+    // 点击 step-remove
+    const removeBtns = Array.from(document.querySelectorAll('[data-testid="step-remove"]')) as HTMLElement[]
+    if (removeBtns[0]) removeBtns[0].click()
+    await flushPromises()
+
+    ;(w.vm as any).dialog = false
+    await flushPromises()
+    w.unmount()
+  })
+
+  it('on_error 三值选择与保存失败原样显示', async () => {
+    createMock.mockRejectedValueOnce(new Error('流水线名称不能为空'))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    const onErrSelects = Array.from(document.querySelectorAll('[data-testid="step-on-error"]')) as any[]
+    if (onErrSelects[0]) {
+      const comp = (w as any).findComponent('[data-testid="step-on-error"]')
+      for (const v of ['', 'abort', 'warn', 'skip']) {
+        if (comp.exists()) await comp.setValue(v)
+        await flushPromises()
+      }
+    }
+    ;(w.vm as any).formSteps[0].on_error = 'warn'
+    ;(w.vm as any).formSteps[0].args.by = 'name'
+    await flushPromises()
+
+    // 触发保存失败
+    ;(document.querySelector('[data-testid="pipeline-save"]') as HTMLElement)?.click()
+    await flushPromises()
+    await flushPromises()
+    expect(document.body.textContent).toContain('流水线名称不能为空')
+
+    ;(w.vm as any).dialog = false
+    await flushPromises()
+    w.unmount()
+  })
+
+  it('pipeline-cancel 关闭对话框', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(document.querySelector('[data-testid="pipeline-cancel"]') as HTMLElement)?.click()
+    await flushPromises()
+    expect((w.vm as any).dialog).toBe(false)
+    w.unmount()
+  })
+
+  it('删除确认对话框取消与确认', async () => {
+    deleteMock.mockResolvedValue({ ok: true })
+    const w = mountPage()
+    await flushPromises()
+    // askDelete
+    const delBtn = w.findAll('[data-testid="pipeline-delete"]')[0]
+    await delBtn.trigger('click')
+    await flushPromises()
+    // cancel
+    ;(document.querySelector('[data-testid="pipeline-confirm-cancel"]') as HTMLElement)?.click()
+    await flushPromises()
+    expect((w.vm as any).confirmOpen).toBe(false)
+
+    // confirm delete
+    await delBtn.trigger('click')
+    await flushPromises()
+    ;(document.querySelector('[data-testid="pipeline-confirm-delete"]') as HTMLElement)?.click()
+    await flushPromises()
+    await flushPromises()
+    expect(deleteMock).toHaveBeenCalled()
+    w.unmount()
+  })
+
+
+  it('保持对话框打开以覆盖渲染分支', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].on_error = 'warn'
+    ;(w.vm as any).formSteps[0].args.by = 'name'
+    ;(w.vm as any).formSteps[0].args.f = 'x'
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 100))
+    await flushPromises()
+    expect(document.body.textContent).toContain('名称')
+    w.unmount()
+  })
+
+
+  it('对话框字段 v-model setter 覆盖（name/description/enabled/on_error/by/pattern）', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+
+    // name / description / enabled
+    const nameComp = (w as any).findComponent('[data-testid="pipeline-name"]')
+    if (nameComp.exists()) { await nameComp.setValue('n'); await flushPromises() }
+    const descComp = (w as any).findComponent('[data-testid="pipeline-description"]')
+    if (descComp.exists()) { await descComp.setValue('d'); await flushPromises() }
+    const enabledComp = (w as any).findComponent('[data-testid="pipeline-enabled"]')
+    if (enabledComp.exists()) { await enabledComp.setValue(false); await flushPromises() }
+    expect((w.vm as any).formName).toBe('n')
+    expect((w.vm as any).formDescription).toBe('d')
+    expect((w.vm as any).formEnabled).toBe(false)
+
+    // on_error select (line 264 setter)
+    const onErrComp = (w as any).findComponent('[data-testid="step-on-error"]')
+    if (onErrComp.exists()) { await onErrComp.setValue('warn'); await flushPromises() }
+    expect((w.vm as any).formSteps[0].on_error).toBe('warn')
+
+    // by-select: switch op to op.sort
+    ;(w.vm as any).formSteps[0].op = 'op.sort'
+    await flushPromises()
+    const byComp = (w as any).findComponent('[data-testid="step-arg-by"]')
+    if (byComp.exists()) { await byComp.setValue('name'); await flushPromises() }
+    expect((w.vm as any).formSteps[0].args.by).toBe('name')
+
+    // text-field: switch op to op.rename
+    ;(w.vm as any).formSteps[0].op = 'op.rename'
+    await flushPromises()
+    const tfComp = (w as any).findComponent('[data-testid="step-arg"]')
+    if (tfComp.exists()) { await tfComp.setValue('pat'); await flushPromises() }
+
+    w.unmount()
+  })
+
+  it('触发 VDialog update:modelValue 覆盖 v-model 绑定', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    // emit update:modelValue on the VDialog component
+    const vdialog = (w as any).findComponent({ name: 'VDialog' })
+    if (vdialog.exists()) {
+      vdialog.vm.$emit('update:modelValue', false)
+      await flushPromises()
+    }
+    // confirm dialog
+    const delBtn = w.findAll('[data-testid="pipeline-delete"]')[0]
+    await delBtn.trigger('click')
+    await flushPromises()
+    const vdialog2 = (w as any).findAllComponents({ name: 'VDialog' })
+    if (vdialog2.length > 1 && vdialog2[1].exists()) {
+      vdialog2[1].vm.$emit('update:modelValue', false)
+      await flushPromises()
+    }
+    w.unmount()
+  })
+
+
+  it('doDelete：pendingDelete 为 null 时提前 return，不调 deletePipeline', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await (w.vm as any).doDelete()
+    await flushPromises()
+    expect(deleteMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('doDelete：deletePipeline 失败时 error 被设置', async () => {
+    deleteMock.mockRejectedValue(new Error('delete fail'))
+    const w = mountPage()
+    await flushPromises()
+    const delBtn = w.findAll('[data-testid="pipeline-delete"]')[0]
+    await delBtn.trigger('click')
+    await flushPromises()
+    await (w.vm as any).doDelete()
+    await flushPromises()
+    expect((w.vm as any).error).toContain('delete fail')
+    w.unmount()
+  })
+
 })

@@ -17,7 +17,7 @@ describe('AsyncSection', () => {
     expect(wrapper.find('[data-testid="slot-content"]').exists()).toBe(false)
   })
 
-  it('分支1 重试：点击 async-retry 触发 retry 事件，emitted 长度为 1', async () => {
+  it('分支1 重试：点击 async-retry 触发 retry 事件', async () => {
     const wrapper = mount(AsyncSection, {
       props: { loading: false, error: '炸了', empty: false, emptyText: '空' },
       global: { plugins: [vuetify] },
@@ -60,5 +60,65 @@ describe('AsyncSection', () => {
     expect(wrapper.find('[data-testid="async-error"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="async-loading"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="async-empty"]').exists()).toBe(false)
+  })
+
+  it('hint 非空 + error 非空时渲染 async-hint', () => {
+    const wrapper = mount(AsyncSection, {
+      props: { loading: false, error: '炸了', empty: false, emptyText: '空', hint: '检查机场地址是否可达' },
+      global: { plugins: [vuetify] },
+    })
+    const h = wrapper.find('[data-testid="async-hint"]')
+    expect(h.exists()).toBe(true)
+    expect(h.text()).toContain('检查机场地址是否可达')
+  })
+
+  it('hint 非空但 error 为空时不渲染 async-hint', () => {
+    const wrapper = mount(AsyncSection, {
+      props: { loading: false, error: '', empty: true, emptyText: '空', hint: '提示' },
+      global: { plugins: [vuetify] },
+    })
+    expect(wrapper.find('[data-testid="async-hint"]').exists()).toBe(false)
+  })
+
+  it('empty 给 EmptyStateHelp 对象时渲染 empty-state', () => {
+    const wrapper = mount(AsyncSection, {
+      props: {
+        loading: false, error: '', empty: { title: '还没有机场', detail: '点新增添加' }, emptyText: '空',
+      },
+      global: { plugins: [vuetify] },
+    })
+    const e = wrapper.find('[data-testid="empty-state"]')
+    expect(e.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="empty-state-title"]').text()).toContain('还没有机场')
+    expect(wrapper.find('[data-testid="empty-state-detail"]').text()).toContain('点新增添加')
+  })
+
+  it('empty 的 action 有 to 时渲染 empty-state-action 为链接', () => {
+    const wrapper = mount(AsyncSection, {
+      props: {
+        loading: false, error: '',
+        empty: { title: 't', detail: 'd', action: { label: '去添加', to: '/airports' } },
+        emptyText: '空',
+      },
+      global: { plugins: [vuetify] },
+    })
+    const a = wrapper.find('[data-testid="empty-state-action"]')
+    expect(a.exists()).toBe(true)
+    expect(a.text()).toContain('去添加')
+  })
+
+  it('empty 的 action 无 to 时渲染 empty-state-action 为按钮', () => {
+    const wrapper = mount(AsyncSection, {
+      props: {
+        loading: false, error: '',
+        empty: { title: 't', detail: 'd', action: { label: '刷新' } },
+        emptyText: '空',
+      },
+      global: { plugins: [vuetify] },
+    })
+    const a = wrapper.find('[data-testid="empty-state-action"]')
+    expect(a.exists()).toBe(true)
+    expect(a.text()).toContain('刷新')
+    expect(a.attributes('href')).toBeFalsy()
   })
 })

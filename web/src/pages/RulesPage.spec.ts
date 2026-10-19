@@ -47,7 +47,7 @@ describe('RulesPage', () => {
   it('onMounted 加载三块数据', async () => {
     listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
     listRuleProvidersMock.mockResolvedValue([{ id: 1, name: 'rp', raw_json: '{}', source: 'local', enabled: true, sort_order: 1, created_at: '', updated_at: '' }])
-    listSuggestionsMock.mockResolvedValue([{ Anomaly: { Type: 'node_unreachable', Message: 'm', Source: 's', Timestamp: 't', Raw: 'r' }, Action: 'prepend', Rule: 'RULE', Reason: 'reason', AutoApply: false }])
+    listSuggestionsMock.mockResolvedValue([{ Anomaly: { Type: 'node_unreachable', Message: 'm', Source: 's', Timestamp: 't', Raw: 'r' }, Action: 'prepend', Rule: 'RULE', Reason: 'reason', AutoApply: true }])
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect(listRulesMock).toHaveBeenCalled()
@@ -155,8 +155,8 @@ describe('RulesPage', () => {
     const tabs = w.findAll('.v-tab')
     if (tabs.length >= 4) await tabs[3].trigger('click')
     await flushPromises()
-    const confirmBtn = w.findAll('button').find((b) => b.text().includes('Confirm'))
-    const rejectBtn = w.findAll('button').find((b) => b.text().includes('Reject'))
+    const confirmBtn = w.find('[data-testid="suggestion-confirm"]')
+    const rejectBtn = w.find('[data-testid="suggestion-reject"]')
     const applyBtn = w.findAll('button').find((b) => b.text().includes('应用已确认建议'))
     await confirmBtn?.trigger('click')
     await flushPromises()
@@ -190,10 +190,10 @@ describe('RulesPage', () => {
     const tabs = w.findAll('.v-tab')
     if (tabs.length >= 4) await tabs[3].trigger('click')
     await flushPromises()
-    const confirmBtn = w.findAll('button').find((b) => b.text().includes('Confirm'))
+    const confirmBtn = w.find('[data-testid="suggestion-confirm"]')
     await confirmBtn?.trigger('click')
     await flushPromises()
-    const rejectBtn = w.findAll('button').find((b) => b.text().includes('Reject'))
+    const rejectBtn = w.find('[data-testid="suggestion-reject"]')
     await rejectBtn?.trigger('click')
     await flushPromises()
     w.unmount()
@@ -305,6 +305,69 @@ describe('RulesPage', () => {
     w.unmount()
     // restore
     listRulesMock.mockResolvedValue([])
+  })
+
+  it('导入候选：启用本机场全部按前缀取 ids 调用 bulk', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' },
+      { id: 2, rule_type: 't2', rule_param: 'p2', rule_config: 5, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:x' },
+      { id: 3, rule_type: 't3', rule_param: 'p3', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 3, source: 'manual' },
+      { id: 4, rule_type: 't4', rule_param: 'p4', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 4, source: null },
+    ])
+    bulkRulesMock.mockResolvedValue({ updated: 2 })
+    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    const allBtn = w.find('[data-testid="enable-all-airport"]')
+    await allBtn.trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledWith({ ids: [1, 2], enabled: true })
+    w.unmount()
+  })
+
+  it('help-panel 含 oneLiner', async () => {
+    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="help-panel"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('导入候选：启用本机场全部无机场规则', async () => {
+    let data: unknown[] = [{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }]
+    listRulesMock.mockImplementation(() => Promise.resolve(data))
+    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    // 现在列表里已经没有机场规则了
+    data = [{ id: 3, rule_type: 't3', rule_param: 'p3', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 3, source: 'manual' }]
+    const allBtn = w.find('[data-testid="enable-all-airport"]')
+    await allBtn.trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('coverage: AutoApply chip / disabled provider / null source', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: null },
+    ])
+    listRuleProvidersMock.mockResolvedValue([
+      { id: 1, name: 'rp', raw_json: '{}', source: 'local', enabled: false, sort_order: 1, created_at: '', updated_at: '' },
+    ])
+    listSuggestionsMock.mockResolvedValue([{ Anomaly: { Type: 't', Message: 'm', Source: 's', Timestamp: 't', Raw: 'r' }, Action: 'a', Rule: 'r', Reason: 'r', AutoApply: true }])
+    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 2) await tabs[1].trigger('click')
+    await flushPromises()
+    if (tabs.length >= 4) await tabs[3].trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('自动应用')
+    w.unmount()
   })
 
 })
