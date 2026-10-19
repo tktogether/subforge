@@ -31,6 +31,16 @@ const mrsDialog = ref(false)
 const mrsName = ref('')
 const mrsBehavior = ref('domain')
 
+const addDialog = ref(false)
+const addName = ref('')
+const addUrl = ref('')
+const addFormat = ref('')
+const addSaving = ref(false)
+const removeDialog = ref(false)
+const removeName = ref('')
+const removeSaving = ref(false)
+const updatingOne = ref('')
+
 const updateResults = ref<RuleSourceUpdateResult[]>([])
 const showUpdateResults = ref(false)
 
@@ -140,6 +150,67 @@ function cancelMrs(): void {
   mrsDialog.value = false
 }
 
+function openAdd(): void {
+  addName.value = ''
+  addUrl.value = ''
+  addFormat.value = ''
+  addDialog.value = true
+}
+
+async function confirmAdd(): Promise<void> {
+  if (!addUrl.value.trim() || addSaving.value) return
+  addSaving.value = true
+  try {
+    await endpoints.addRuleSource({
+      name: addName.value.trim() || undefined,
+      url: addUrl.value.trim(),
+      input_format: addFormat.value.trim() || undefined,
+    })
+    addDialog.value = false
+    notify('已添加: ' + (addName.value.trim() || addUrl.value.trim()), 'ok')
+    await load()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    addSaving.value = false
+  }
+}
+
+function openRemove(name: string): void {
+  removeName.value = name
+  removeDialog.value = true
+}
+
+async function confirmRemove(): Promise<void> {
+  if (removeSaving.value) return
+  removeSaving.value = true
+  try {
+    await endpoints.removeRuleSource(removeName.value)
+    removeDialog.value = false
+    notify('已删除: ' + removeName.value, 'ok')
+    await load()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    removeSaving.value = false
+  }
+}
+
+async function updateOne(name: string): Promise<void> {
+  if (updatingOne.value) return
+  updatingOne.value = name
+  try {
+    const r = await endpoints.updateRuleSourceOne(name)
+    updateResults.value = r.results ?? []
+    showUpdateResults.value = true
+    await load()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    updatingOne.value = ''
+  }
+}
+
 onMounted(() => {
   void load()
 })
@@ -152,6 +223,7 @@ onMounted(() => {
         生成默认清单
       </v-btn>
       <v-btn data-testid="update-all" variant="tonal" @click="updateAll">全部更新</v-btn>
+      <v-btn data-testid="source-add" variant="tonal" @click="openAdd">新增规则源</v-btn>
     </template>
   </PageHeader>
 
@@ -196,9 +268,10 @@ onMounted(() => {
             <span v-else>{{ s.latest }}</span>
           </td>
           <td>
-            <v-btn size="small" variant="text" data-testid="source-update" @click="updateAll">更新</v-btn>
+            <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" @click="updateOne(s.name)">更新</v-btn>
             <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
             <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
+            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1" @click="openRemove(s.name)">删除</v-btn>
           </td>
         </tr>
       </tbody>
@@ -281,6 +354,36 @@ onMounted(() => {
         <v-spacer />
         <v-btn variant="text" @click="cancelMrs">取消</v-btn>
         <v-btn color="primary" @click="doMrs">生成</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- Add rule source dialog -->
+  <v-dialog v-model="addDialog" max-width="520">
+    <v-card data-testid="add-dialog">
+      <v-card-title>新增规则源</v-card-title>
+      <v-card-text>
+        <v-text-field data-testid="add-name" v-model="addName" label="名称（留空自动取 URL 末段）" />
+        <v-text-field data-testid="add-url" v-model="addUrl" label="订阅地址" placeholder="https://… 支持 http/https" />
+        <v-text-field data-testid="add-format" v-model="addFormat" label="输入格式（可选：ini / clash / auto）" />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn data-testid="add-cancel" variant="text" @click="addDialog = false">取消</v-btn>
+        <v-btn data-testid="add-confirm" :loading="addSaving" @click="confirmAdd">添加</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- Remove rule source dialog -->
+  <v-dialog v-model="removeDialog" max-width="420">
+    <v-card data-testid="remove-dialog">
+      <v-card-title>删除规则源</v-card-title>
+      <v-card-text>确定删除「{{ removeName }}」？该源的本地版本文件不会被删除。</v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn data-testid="remove-cancel" variant="text" @click="removeDialog = false">取消</v-btn>
+        <v-btn data-testid="remove-confirm" :loading="removeSaving" @click="confirmRemove">删除</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

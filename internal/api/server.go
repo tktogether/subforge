@@ -243,6 +243,10 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/api/rule-sources/update", s.handleAPIRuleSourcesUpdate)
 	r.Post("/api/rule-sources/rollback", s.handleAPIRuleSourcesRollback)
 	r.Post("/api/rule-sources/mrs", s.handleAPIRuleSourcesMRS)
+	r.Post("/api/rule-sources", s.handleAPIRuleSourcesAdd)
+	r.Post("/api/rule-sources/remove", s.handleAPIRuleSourcesRemove)
+	r.Post("/api/rule-sources/update-one", s.handleAPIRuleSourcesUpdateOne)
+	r.Get("/api/configs", s.handleAPIConfigs)
 	r.Route("/api/settings", func(r chi.Router) {
 		r.Get("/", s.handleAPISettings)
 		r.Put("/", s.handleAPISettings)

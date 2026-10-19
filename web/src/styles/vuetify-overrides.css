@@ -125,3 +125,34 @@
 .v-field {
   transition-duration: var(--sf-dur-micro);
 }
+
+/* ---- 开关对比度修复：未选中态从半透明改成实心描边（用户反馈与背景重合） ---- */
+.v-switch .v-selection-control:not(.v-selection-control--dirty) .v-switch__track {
+  background: var(--sf-border-strong);
+  opacity: 1;
+}
+.v-switch .v-selection-control:not(.v-selection-control--dirty) .v-switch__thumb {
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-border-strong);
+  color: var(--sf-text-faint);
+}
+/* ---- 开关选中态：与主题主色对齐 ---- */
+.v-switch .v-selection-control--dirty .v-switch__track {
+  background: var(--sf-accent);
+  opacity: 1;
+}
+.v-switch .v-selection-control--dirty .v-switch__thumb {
+  background: var(--sf-accent-fg);
+}
+
+/* ---- 对话框防顶部裁切：card 限高 + 内部滚动 ---- */
+.v-dialog > .v-overlay__content > .v-card,
+.v-dialog > .v-overlay__content > form > .v-card {
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+.v-dialog > .v-overlay__content > .v-card > .v-card-text,
+.v-dialog > .v-overlay__content > form > .v-card > .v-card-text {
+  overflow-y: auto;
+}

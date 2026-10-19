@@ -71,11 +71,40 @@ async function loadTargets(): Promise<void> {
     loadingTargets.value = false
   }
 }
+// pipeline / config 候选：弹窗打开时懒加载，失败退化空数组不阻塞表单（与 target 一致）。
+const pipelineOptions = ref<string[]>([])
+const loadingPipelines = ref(false)
+async function loadPipelineOptions(): Promise<void> {
+  loadingPipelines.value = true
+  try {
+    const list = await endpoints.pipelines('')
+    pipelineOptions.value = list.map((p: { name: string }) => p.name)
+  } catch {
+    pipelineOptions.value = []
+  } finally {
+    loadingPipelines.value = false
+  }
+}
+const configOptions = ref<string[]>([])
+const loadingConfigs = ref(false)
+async function loadConfigOptions(): Promise<void> {
+  loadingConfigs.value = true
+  try {
+    const r = await endpoints.configs()
+    configOptions.value = r.configs ?? []
+  } catch {
+    configOptions.value = []
+  } finally {
+    loadingConfigs.value = false
+  }
+}
 function openCreateToken(): void {
   editingToken.value = null
   tokenForm.value = emptyTokenForm()
   tokenDialog.value = true
   void loadTargets()
+  void loadPipelineOptions()
+  void loadConfigOptions()
 }
 function openEditToken(t: SubToken): void {
   editingToken.value = t
@@ -90,6 +119,8 @@ function openEditToken(t: SubToken): void {
   }
   tokenDialog.value = true
   void loadTargets()
+  void loadPipelineOptions()
+  void loadConfigOptions()
 }
 // v-select 带 clearable 时，清空给的是 null；后端 *string 语义里 null/缺失等于「不改动」，
 // 只有空串才是「清空该定制」。所以提交前统一归一成空串。
@@ -107,8 +138,8 @@ async function saveToken(): Promise<void> {
       await endpoints.updateToken(f.token, {
         name: textOrEmpty(f.name),
         target: textOrEmpty(f.target),
-        pipeline: textOrEmpty(f.pipeline),
-        config: textOrEmpty(f.config),
+        pipeline: textOrEmpty(f.pipeline ?? ''),
+        config: textOrEmpty(f.config ?? ''),
         include: textOrEmpty(f.include),
         exclude: textOrEmpty(f.exclude),
       })
@@ -358,8 +389,26 @@ onMounted(() => {
           <v-expansion-panel>
             <v-expansion-panel-title>高级选项</v-expansion-panel-title>
             <v-expansion-panel-text eager>
-              <v-text-field v-model="tokenForm.pipeline" label="Pipeline" hint="留空 = 用全局 subscribe.pipeline" persistent-hint data-testid="pipeline-field" />
-              <v-text-field v-model="tokenForm.config" label="Config" hint="留空 = 用全局默认配置" persistent-hint data-testid="config-field" />
+              <v-combobox
+                data-testid="token-pipeline"
+                v-model="tokenForm.pipeline"
+                :items="pipelineOptions"
+                :loading="loadingPipelines"
+                label="处理管线"
+                clearable
+                persistent-hint
+                hint="留空用默认；可从下拉选模板里定义的命名管线"
+              />
+              <v-combobox
+                data-testid="token-config"
+                v-model="tokenForm.config"
+                :items="configOptions"
+                :loading="loadingConfigs"
+                label="配置模板"
+                clearable
+                persistent-hint
+                hint="留空用默认；可下拉选模板推荐的，也可手填远程 URL"
+              />
               <v-text-field v-model="tokenForm.include" label="包含" hint="逗号分隔列表，例如 香港,日本；留空 = 不筛选" persistent-hint data-testid="include-field" />
               <v-text-field v-model="tokenForm.exclude" label="排除" hint="逗号分隔列表，例如 过期,剩余；留空 = 不排除" persistent-hint data-testid="exclude-field" />
             </v-expansion-panel-text>

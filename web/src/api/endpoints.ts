@@ -359,6 +359,9 @@ export const endpoints = {
   updatePipeline: (id: number, body: PipelineInput): Promise<Pipeline> => api.put<{ pipeline: Pipeline }>('/api/pipelines/' + id, body).then((r) => r.pipeline),
   deletePipeline: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/pipelines/' + id),
   targets: (): Promise<string[]> => api.get<string[]>('/api/targets'),
+  // GET /api/configs → { configs: string[], default: string }（T5 已交付，见 internal/api/configs_api.go）
+  configs: (): Promise<{ configs: string[]; default: string }> =>
+    api.get<{ configs: string[]; default: string }>('/api/configs'),
   rulesets: (config: string): Promise<RulesetsResponse> => api.get<RulesetsResponse>('/api/rulesets', { query: { config } }),
   logs: (since: number): Promise<LogsResponse> => api.get<LogsResponse>('/api/logs', { query: { since } }),
   convert: (body: ConvertRequest): Promise<ConvertResponse> => api.post<ConvertResponse>('/api/convert', body),
@@ -416,6 +419,12 @@ export const endpoints = {
     api.post<{ path: string }>('/api/rule-sources/rollback', { name }),
   generateMRS: (name: string, behavior: string): Promise<{ path: string; bytes: number }> =>
     api.post<{ path: string; bytes: number }>('/api/rule-sources/mrs', { name, behavior }),
+  addRuleSource: (body: { name?: string; url: string; input_format?: string }): Promise<{ path: string; created: boolean }> =>
+    api.post<{ path: string; created: boolean }>('/api/rule-sources', body),
+  removeRuleSource: (name: string): Promise<OkResponse> =>
+    api.post<OkResponse>('/api/rule-sources/remove', { name }),
+  updateRuleSourceOne: (name: string): Promise<{ results: RuleSourceUpdateResult[] }> =>
+    api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update-one', { name }),
 
   listSettings: (): Promise<{ settings: SettingItem[] }> => api.get<{ settings: SettingItem[] }>('/api/settings'),
   updateSettings: (values: Record<string, string>): Promise<{ settings: SettingItem[] }> => api.put<{ settings: SettingItem[] }>('/api/settings', { settings: values }),

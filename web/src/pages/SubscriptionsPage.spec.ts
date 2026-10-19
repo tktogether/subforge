@@ -13,6 +13,8 @@ vi.mock('../api/endpoints', async () => {
       createToken: vi.fn(),
       updateToken: vi.fn(),
       targets: vi.fn(),
+      pipelines: vi.fn(),
+      configs: vi.fn(),
       deleteToken: vi.fn(),
       getTrafficStrategy: vi.fn(),
       setTrafficStrategy: vi.fn(),
@@ -715,7 +717,7 @@ describe('SubscriptionsPage', () => {
     expect(title.exists()).toBe(true)
     await title.trigger('click')
     await flushPromises()
-    for (const id of ['pipeline-field', 'config-field', 'include-field', 'exclude-field']) {
+    for (const id of ['token-pipeline', 'token-config', 'include-field', 'exclude-field']) {
       expect(w.find('[data-testid="' + id + '"]').exists()).toBe(true)
     }
     w.unmount()
@@ -743,8 +745,8 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     await openTokenDialog(w, 'edit')
     dialogSet(w, 'name-field', 'n1b')
-    dialogSet(w, 'pipeline-field', '')
-    dialogSet(w, 'config-field', '')
+    dialogSet(w, 'token-pipeline', '')
+    dialogSet(w, 'token-config', '')
     dialogSet(w, 'exclude-field', '')
     await nextTick()
     dialogClick(w, 'token-save')
@@ -861,6 +863,21 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     await openTokenDialog(w, 'create')
     expect(endpoints.targets).toHaveBeenCalledTimes(2)
+    w.unmount()
+  })
+
+  it('打开令牌对话框后加载 pipeline/config 候选', async () => {
+    ;(endpoints.pipelines as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([{ name: 'clean' }])
+    ;(endpoints.configs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ configs: ['http://x/a.ini'], default: 'http://x/a.ini' })
+    const w = mountSubsPage()
+    const vm = w.vm as any
+    await flushPromises()
+    vm.openCreateToken()
+    await flushPromises()
+    expect(endpoints.pipelines).toHaveBeenCalled()
+    expect(endpoints.configs).toHaveBeenCalled()
+    expect(vm.pipelineOptions).toEqual(['clean'])
+    expect(vm.configOptions).toEqual(['http://x/a.ini'])
     w.unmount()
   })
 })

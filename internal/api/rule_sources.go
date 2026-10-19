@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tktogether/subforge/internal/manifest"
 	"github.com/tktogether/subforge/internal/mrs"
 	"github.com/tktogether/subforge/internal/subforge"
 )
@@ -207,4 +208,127 @@ func (s *Server) handleAPIRuleSourcesMRS(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"path": dstPath, "bytes": info.Size()})
+}
+
+// handleAPIRuleSourcesAdd 处理 POST /api/rule-sources（新增规则源）。
+func (s *Server) handleAPIRuleSourcesAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		URL         string `json:"url"`
+		InputFormat string `json:"input_format"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.URL) == "" {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("url 不能为空"))
+		return
+	}
+	path, created, err := m.AddRuleSource(r.Context(), manifest.Source{Name: req.Name, URL: req.URL, InputFormat: req.InputFormat})
+	if err != nil {
+		if strings.Contains(err.Error(), "已存在") {
+			s.writeAPIError(w, r, http.StatusConflict, err)
+			return
+		}
+		if strings.Contains(err.Error(), "不存在") {
+			s.writeAPIError(w, r, http.StatusNotFound, err)
+			return
+		}
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"path": path, "created": created})
+}
+
+// handleAPIRuleSourcesRemove 处理 POST /api/rule-sources/remove（删除规则源）。
+func (s *Server) handleAPIRuleSourcesRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("name 不能为空"))
+		return
+	}
+	path, err := m.RemoveRuleSource(r.Context(), strings.TrimSpace(req.Name))
+	if err != nil {
+		if strings.Contains(err.Error(), "不存在") {
+			s.writeAPIError(w, r, http.StatusNotFound, err)
+			return
+		}
+		if strings.Contains(err.Error(), "至少保留") {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": path})
+}
+
+// handleAPIRuleSourcesUpdateOne 处理 POST /api/rule-sources/update-one（单源更新）。
+func (s *Server) handleAPIRuleSourcesUpdateOne(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("name 不能为空"))
+		return
+	}
+	results, err := m.UpdateRuleSourceOne(r.Context(), strings.TrimSpace(req.Name))
+	if err != nil {
+		if strings.Contains(err.Error(), "不存在") {
+			s.writeAPIError(w, r, http.StatusNotFound, err)
+			return
+		}
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(results))
+	for _, res := range results {
+		errStr := ""
+		if res.Err != nil {
+			errStr = res.Err.Error()
+		}
+		out = append(out, map[string]any{
+			"source":     res.Source,
+			"version":    res.Version,
+			"path":       res.Path,
+			"from_cache": res.FromCache,
+			"err":        errStr,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"results": out})
 }

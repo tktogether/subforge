@@ -14,6 +14,9 @@ vi.mock('../api/endpoints', () => ({
     updateRuleSources: vi.fn(),
     rollbackRuleSource: vi.fn(),
     generateMRS: vi.fn(),
+    addRuleSource: vi.fn(),
+    removeRuleSource: vi.fn(),
+    updateRuleSourceOne: vi.fn(),
     rulesets: vi.fn(),
   },
 }))
@@ -25,6 +28,9 @@ const initMock = endpoints.initRuleManifest as unknown as ReturnType<typeof vi.f
 const updateMock = endpoints.updateRuleSources as unknown as ReturnType<typeof vi.fn>
 const rollbackMock = endpoints.rollbackRuleSource as unknown as ReturnType<typeof vi.fn>
 const mrsMock = endpoints.generateMRS as unknown as ReturnType<typeof vi.fn>
+const addMock = endpoints.addRuleSource as unknown as ReturnType<typeof vi.fn>
+const removeMock = endpoints.removeRuleSource as unknown as ReturnType<typeof vi.fn>
+const updateOneMock = endpoints.updateRuleSourceOne as unknown as ReturnType<typeof vi.fn>
 
 function makeSources() {
   return [
@@ -55,6 +61,9 @@ describe('RuleSourcesPage', () => {
     updateMock.mockResolvedValue({ results: [] })
     rollbackMock.mockResolvedValue({ path: '/rb/v1' })
     mrsMock.mockResolvedValue({ path: '/d/v2.mrs', bytes: 1024 })
+    addMock.mockResolvedValue({ path: '/m/manifest.yaml', created: true })
+    removeMock.mockResolvedValue({ ok: true })
+    updateOneMock.mockResolvedValue({ results: [{ source: 'src1', version: 'v3', path: '/p/v3', from_cache: false, err: '' }] })
   })
 
   it('onMounted 加载 listRuleSources 渲染列表与 testids', async () => {
@@ -411,6 +420,43 @@ describe('RuleSourcesPage', () => {
       await btn.trigger('click')
       await flushPromises()
     }
+    w.unmount()
+  })
+
+  it('新增对话框：填表确认调用 addRuleSource 并重载列表', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="source-add"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).addDialog).toBe(true)
+    ;(w.vm as any).addUrl = 'http://example.com/new.yaml'
+    ;(w.vm as any).addName = 'new'
+    await (w.vm as any).confirmAdd()
+    await flushPromises()
+    expect(addMock).toHaveBeenCalledWith({ name: 'new', url: 'http://example.com/new.yaml', input_format: undefined })
+    expect((w.vm as any).addDialog).toBe(false)
+    w.unmount()
+  })
+
+  it('删除对话框：确认调用 removeRuleSource', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).openRemove('src2')
+    await flushPromises()
+    await (w.vm as any).confirmRemove()
+    await flushPromises()
+    expect(removeMock).toHaveBeenCalledWith('src2')
+    expect((w.vm as any).removeDialog).toBe(false)
+    w.unmount()
+  })
+
+  it('行内更新调用 updateRuleSourceOne（不是 updateAll）', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).updateOne('src1')
+    await flushPromises()
+    expect(updateOneMock).toHaveBeenCalledWith('src1')
+    expect(updateMock).not.toHaveBeenCalled()
     w.unmount()
   })
 
