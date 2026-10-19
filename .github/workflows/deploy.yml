@@ -1,0 +1,129 @@
+name: Deploy (test machine 210)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY to confirm manual rollout'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-210
+  cancel-in-progress: false
+
+env:
+  CGO_ENABLED: "0"
+
+jobs:
+  deploy:
+    if: github.event.inputs.confirm == 'DEPLOY'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Build web dist
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cross compile linux/amd64 (buildinfo 打点)
+        run: |
+          SHORT=$(git rev-parse --short=8 HEAD)
+          echo "SHORT=$SHORT" >> "$GITHUB_ENV"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -mod=vendor \
+            -ldflags "-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=dev -X github.com/tktogether/subforge/internal/buildinfo.Commit=$SHORT -X github.com/tktogether/subforge/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/subforge-linux-amd64 ./cmd/subforge
+      - name: Verify ELF magic (D.11 规程)
+        run: |
+          magic=$(head -c 4 dist/subforge-linux-amd64 | od -An -tx1 | tr -d ' \n')
+          [ "$magic" = "7f454c46" ] || { echo "not an ELF binary: $magic"; exit 1; }
+
+      - name: Upload binary
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          source: dist/subforge-linux-amd64
+          target: /tmp/
+          strip_components: 1
+
+      - name: Switch + healthcheck (远端脚本文件，不依赖通道存活)
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SHORT: ${{ env.SHORT }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          envs: SHORT
+          script: |
+            set -eu
+            mv /tmp/subforge-linux-amd64 /tmp/subforge.new$SHORT
+            chmod +x /tmp/subforge.new$SHORT
+            cat > /tmp/switch-ci.sh <<'SWITCH_EOF'
+            #!/bin/bash
+            set -u
+            SHORT=${1:?usage: switch-ci.sh <short-sha>}
+            OLD=$(pgrep -o '[s]ubforge') || OLD=none
+            TS=$(date -u +%Y%m%dT%H%M%SZ)
+            cp /tmp/subforge /tmp/subforge.bak-$TS
+            cp /tmp/subforge-data/subforge.db /tmp/subforge.db.pre-$SHORT 2>/dev/null || true
+            if [ "$OLD" != "none" ]; then
+              kill "$OLD"
+              for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$OLD" 2>/dev/null || break; sleep 1; done
+              kill -0 "$OLD" 2>/dev/null && kill -9 "$OLD"
+            fi
+            mv /tmp/subforge.new$SHORT /tmp/subforge && chmod +x /tmp/subforge
+            setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tmp/subforge-data >> /tmp/subforge.log 2>&1 < /dev/null &
+            sleep 2
+            echo "old pid: $OLD -> new pid: $(pgrep -o '[s]ubforge')"
+            echo "backup: /tmp/subforge.bak-$TS"
+            SWITCH_EOF
+            sed -i 's/^ *//' /tmp/switch-ci.sh
+            bash /tmp/switch-ci.sh "$SHORT"
+            rm -f /tmp/switch-ci.sh
+
+      - name: Acceptance (version 必须含新 commit)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          script: |
+            set -e
+            curl -fsS http://127.0.0.1:21009/healthz
+            version=$(curl -fsS http://127.0.0.1:21009/version)
+            echo "$version"
+            echo "$version" | grep -q "$SHORT" || { echo "version mismatch, expect $SHORT"; exit 1; }
+
+      - name: Rollback hint on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          script: |
+            echo "恢复上一版：用最新 /tmp/subforge.bak-* 覆盖 /tmp/subforge 后按同参数重启"
+            ls -1t /tmp/subforge.bak-* 2>/dev/null | head -3 || true
