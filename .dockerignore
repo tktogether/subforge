@@ -3,4 +3,3 @@ dist/
 *.exe
 .git/
 *.test
-go.sum
