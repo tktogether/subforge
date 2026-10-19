@@ -424,6 +424,18 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
+  it('W8A 开关在 table 之前渲染', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const html = w.html()
+    const switchIdx = html.indexOf('data-testid="with-rules"')
+    const tableIdx = html.indexOf('data-testid="table"')
+    expect(switchIdx).toBeGreaterThan(-1)
+    expect(tableIdx).toBeGreaterThan(-1)
+    expect(switchIdx).toBeLessThan(tableIdx)
+    w.unmount()
+  })
+
   it('pageHelp oneLiner 渲染在 PageHeader subtitle', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()

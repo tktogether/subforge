@@ -248,6 +248,10 @@ async function restoreLastCheck(): Promise<void> {
       </template>
     </PageHeader>
 
+    <div class="airports-page__toolbar">
+      <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact" :hide-details="true"></v-switch>
+    </div>
+
     <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
       <template v-slot:default>
         <v-data-table :headers="headers" :items="rows" data-testid="table" class="airports-table">
@@ -300,9 +304,6 @@ async function restoreLastCheck(): Promise<void> {
     </AsyncSection>
 
     <div class="airports-page__extras">
-      <div class="airports-page__section">
-        <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact" :hide-details="true"></v-switch>
-      </div>
 
       <div v-if="refreshSummary !== null" data-testid="refresh-summary" class="airports-page__summary">
         刷新完成：成功 {{ refreshSummary.ok }}，失败 {{ refreshSummary.fail }}
@@ -445,6 +446,21 @@ async function restoreLastCheck(): Promise<void> {
   background: var(--sf-surface);
 }
 .airports-page__section :deep(.v-label) {
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+/* W8A：开关挪到表格上方的右对齐工具行，复用 section 容器语言 + 右对齐 */
+.airports-page__toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  padding: 4px 12px 4px 4px;
+  background: var(--sf-surface);
+  justify-content: flex-end;
+}
+.airports-page__toolbar :deep(.v-label) {
   font-size: 13px;
   color: var(--sf-text-muted);
 }
