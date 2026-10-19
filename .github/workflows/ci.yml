@@ -5,8 +5,6 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: '0 18 * * 1'
 
 permissions:
   contents: read
@@ -167,7 +165,7 @@ jobs:
           path: coverage.out
 
   condition-nightly:
-    name: condition-nightly
+    name: condition-audit (manual)
     needs: web
     if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
