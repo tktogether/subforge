@@ -31,9 +31,9 @@ type RemoteRuleset struct {
 // Doc 是 Parse 的输出。两种形态互斥：
 // Form==FormCustom 时 RulesetRefs 有值；Form==FormRule 时 PlainRules 有值。
 type Doc struct {
-	Form         Form
-	RulesetRefs  []RemoteRuleset
-	PlainRules   []string
+	Form        Form
+	RulesetRefs []RemoteRuleset
+	PlainRules  []string
 }
 
 // Form 标识 INI 的规则形态。

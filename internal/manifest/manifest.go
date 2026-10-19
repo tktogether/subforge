@@ -125,7 +125,6 @@ func extForFormat(format string) string {
 	}
 }
 
-
 // shouldExpandINI 判断某 source 是否按 INI 规则源处理。
 // input_format 取值：auto（缺省/空）/ ini；auto 时嗅探内容。
 func shouldExpandINI(inputFormat string, data []byte) bool {
