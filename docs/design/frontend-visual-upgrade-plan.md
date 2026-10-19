@@ -580,3 +580,20 @@ Lead 亲自逐条复跑，**全部命中**：
 ### 部署后状态
 - 提交链：2ac8d4b → d326ed5 → 2da8597 → c4bfd67。工作区 clean。
 - 待办：teammate 派发恢复需 roster 插件适配 0.2.1-rc.2（8 席满员 7 僵尸）。
+
+## D.13 批二交付与第七次部署验收（2026-10-19）
+
+### 批二内容（F6-F15 收口，commit 78f3507）
+- 23 文件 +1067/−18：T7 规则集启停 API（store.go:989-1003 + ruleproviders.go:44-76 + server.go:237）、T9 机场页 withRules hint + 启用行内开关、T12 日志关键字过滤、T11 转换页 config 下拉（F12 管线参数下拉经锚点校对证实已在库 W7D，跳过）、T10 rule_config 分组下拉（ResourcePage/RulesPage）、T8 providers 行内开关；任务书六份落 docs/design/tasks/。
+- 门禁（Lead 亲跑）：go vet 0 / go test ./... -count=1 exit 0（33 包）；web typecheck 0 / 35 文件 655 tests exit 0 无 unhandled / build 0。
+- 裁定在案：F7（设置文案）不立项——settingDefs 已带中文 Label+Description；F8 用户纠偏为「机场拉取失败时订阅输出的优先级与降级」，侦察至 subscription.go:640-730 段前被叫停，待重开。
+
+### 第七次部署（78f3507 → 210.us1.firadio.net）
+- 交叉编译 bin/subforge-78f3507：40,075,426 B，ELF 魔数 7f 45 4c 46 上传前已验，sha256 8fbc80cadbad2f07ba0716edfbe8a91cd7b057e95a5955a89add4cdba6f98104，buildinfo Commit=78f3507 / Date=2026-10-19T15:07:21Z。
+- 切换走远端脚本文件 /tmp/switch7.sh（先 sed 清 CRLF + bash -n 再执行），无通道中断：pid 79101 → 82867，备份 /tmp/subforge.bak-20261019T150940Z + subforge.db.pre-78f3507。
+- 验收：healthz ok；version "subforge dev (commit 78f3507, built 2026-10-19T15:07:21Z)"；GET / 引 index-2ULrrM5Y.js（与本地构建同名，css index-DH4Hlwdt.css）；deep link /subscriptions 200；/api/nope 404；10 端点 md5 存档新基线（airports be84e94a / tokens dcf00444 与 D.12 逐字全同=令牌数据无损 / rule-providers 9a44495f / rule-sources 79e208c5 / pipelines 58e0494c / targets 1d0220bb / configs 9fa96f73 / groups c375ce57 / scripts 0b318cb7 / logs 6b45836c）；日志 error/panic/fatal = 0（tail 200 行）；公网 healthz 200。
+- 回滚点：/tmp/subforge.bak-20261019T150940Z（c4bfd67 二进制）+ /tmp/subforge.db.pre-78f3507。
+
+### 部署后状态
+- 提交链：2ac8d4b → d326ed5 → 2da8597 → c4bfd67 → 7fd06c8 → 78f3507。工作区 clean。
+- 待办：F8 优先级/降级策略（用户口径：某机场拉取失败时订阅不得报错/变空，按优先级取上次成功数据或跳过）待用户重开。
