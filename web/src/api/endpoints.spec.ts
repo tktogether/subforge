@@ -626,4 +626,55 @@ it('listScripts 解包 .scripts', async () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/pipelines/1', expect.objectContaining({ method: 'DELETE' }))
   })
 
+  // 规则集/规则源写接口（T7/T3 的 endpoint 层契约，页面 spec 全 mock endpoints，这里是真调用点）
+  it('updateRuleProvider(7,true) → PUT /api/rule-providers/7/enabled body {enabled:true}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.updateRuleProvider(7, true)
+    expect(r.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-providers/7/enabled', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+      signal: undefined,
+    })
+  })
+
+  it('addRuleSource(body) → POST /api/rule-sources 解出 {path,created}', async () => {
+    const body = { name: 'n', url: 'http://x', input_format: undefined }
+    fetchMock.mockResolvedValue(respond({ path: '/m/manifest.yaml', created: true }))
+    const r = await endpoints.addRuleSource(body)
+    expect(r.created).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: undefined,
+    })
+  })
+
+  it('removeRuleSource("n") → POST /api/rule-sources/remove body {name:"n"}', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.removeRuleSource('n')
+    expect(r.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'n' }),
+      signal: undefined,
+    })
+  })
+
+  it('updateRuleSourceOne("n") → POST /api/rule-sources/update-one body {name:"n"}', async () => {
+    const results = [{ source: 'n', version: 'v3', path: '/p/v3', from_cache: false, err: '' }]
+    fetchMock.mockResolvedValue(respond({ results }))
+    const r = await endpoints.updateRuleSourceOne('n')
+    expect(r.results).toEqual(results)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/update-one', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'n' }),
+      signal: undefined,
+    })
+  })
+
 })

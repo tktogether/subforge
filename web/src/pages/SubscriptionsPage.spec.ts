@@ -880,4 +880,17 @@ describe('SubscriptionsPage', () => {
     expect(vm.configOptions).toEqual(['http://x/a.ini'])
     w.unmount()
   })
+
+  it('选择字段级预设自动填入 4 个策略字段（T12 补 onPresetChange 展开分支）', async () => {
+    const w = mountSubsPage()
+    const vm = w.vm as unknown as SubscriptionsPageVm
+    await flushPromises()
+    vm.onPresetChange('min')
+    expect(vm.preset).toBe('min')
+    expect(vm.upload).toBe('min')
+    expect(vm.download).toBe('min')
+    expect(vm.total).toBe('min')
+    expect(vm.expire).toBe('min')
+    w.unmount()
+  })
 })

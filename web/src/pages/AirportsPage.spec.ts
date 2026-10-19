@@ -675,4 +675,16 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
+  it('行内开关失败：notify error 且 toggling 归位（T9 补 catch 分支）', async () => {
+    updateMock.mockRejectedValueOnce(new Error('toggle fail'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const row = (w.vm as unknown as { rows: { id: number; name: string; subscription_url: string; remarks: string; enabled: boolean }[] }).rows[0]
+    await (w.vm as unknown as { toggleEnabled: (r: unknown, v: boolean) => Promise<void> }).toggleEnabled(row, false)
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(row.id, expect.objectContaining({ enabled: false }))
+    expect((w.vm as unknown as { toggling: number | null }).toggling).toBeNull()
+    w.unmount()
+  })
+
 })

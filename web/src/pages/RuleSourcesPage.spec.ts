@@ -460,4 +460,128 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
+  // ---- coverage 补测：guard 分支 / catch 分支 / template 内联 handler ----
+
+  it('coverage: confirmAdd 空 URL 直接 return（guard 分支）', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).openAdd()
+    await flushPromises()
+    ;(w.vm as any).addUrl = '   '
+    await (w.vm as any).confirmAdd()
+    await flushPromises()
+    expect(addMock).not.toHaveBeenCalled()
+    expect((w.vm as any).addDialog).toBe(true)
+    w.unmount()
+  })
+
+  it('coverage: confirmAdd 失败走 catch 通知错误', async () => {
+    addMock.mockRejectedValueOnce(new Error('add fail'))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).openAdd()
+    ;(w.vm as any).addUrl = 'http://x.yaml'
+    await (w.vm as any).confirmAdd()
+    await flushPromises()
+    expect(addMock).toHaveBeenCalled()
+    expect((w.vm as any).addDialog).toBe(true)
+    expect((w.vm as any).addSaving).toBe(false)
+    w.unmount()
+  })
+
+  it('coverage: confirmRemove 防重入 guard（removeSaving=true 直接 return）', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).removeSaving = true
+    ;(w.vm as any).removeName = 'src2'
+    await (w.vm as any).confirmRemove()
+    await flushPromises()
+    expect(removeMock).not.toHaveBeenCalled()
+    ;(w.vm as any).removeSaving = false
+    w.unmount()
+  })
+
+  it('coverage: confirmRemove 失败走 catch 通知错误', async () => {
+    removeMock.mockRejectedValueOnce(new Error('rm fail'))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).openRemove('src2')
+    await (w.vm as any).confirmRemove()
+    await flushPromises()
+    expect(removeMock).toHaveBeenCalledWith('src2')
+    expect((w.vm as any).removeDialog).toBe(true)
+    expect((w.vm as any).removeSaving).toBe(false)
+    w.unmount()
+  })
+
+  it('coverage: updateOne 防重入 guard（updatingOne 非空直接 return）', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).updatingOne = 'src1'
+    await (w.vm as any).updateOne('src2')
+    await flushPromises()
+    expect(updateOneMock).not.toHaveBeenCalled()
+    ;(w.vm as any).updatingOne = ''
+    w.unmount()
+  })
+
+  it('coverage: updateOne 失败走 catch 通知错误且 updatingOne 归位', async () => {
+    updateOneMock.mockRejectedValueOnce(new Error('upd fail'))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).updateOne('src1')
+    await flushPromises()
+    expect(updateOneMock).toHaveBeenCalledWith('src1')
+    expect((w.vm as any).updatingOne).toBe('')
+    w.unmount()
+  })
+
+  it('coverage: 对话框内联 handler——add 表单 v-model、add-cancel/remove-cancel、行内 source-update/source-remove 按钮', async () => {
+    const w = mount(RuleSourcesPage, {
+      global: {
+        plugins: [vuetify],
+        stubs: { teleport: true, VDialog: { template: '<div class="dlgstub"><button class="dlg-emit" @click="$emit(\'update:modelValue\', false)">x</button><slot /></div>' } },
+      },
+    })
+    await flushPromises()
+    // add 对话框：v-model 内联 onUpdate + 取消按钮
+    await w.find('[data-testid="source-add"]').trigger('click')
+    await flushPromises()
+    // v-text-field 的 testid 落在根 div，setValue 必须作用于内层 input
+    await w.find('[data-testid="add-name"] input').setValue('n1')
+    await w.find('[data-testid="add-url"] input').setValue('http://u1.yaml')
+    await w.find('[data-testid="add-format"] input').setValue('ini')
+    await flushPromises()
+    expect((w.vm as any).addName).toBe('n1')
+    expect((w.vm as any).addUrl).toBe('http://u1.yaml')
+    expect((w.vm as any).addFormat).toBe('ini')
+    await w.find('[data-testid="add-cancel"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).addDialog).toBe(false)
+    // remove 对话框：取消按钮
+    ;(w.vm as any).openRemove('src2')
+    await flushPromises()
+    await w.find('[data-testid="remove-cancel"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).removeDialog).toBe(false)
+    // 表格行内联 @click：source-update / source-remove
+    await w.find('[data-testid="source-update"]').trigger('click')
+    await flushPromises()
+    expect(updateOneMock).toHaveBeenCalledWith('src1')
+    await w.find('[data-testid="source-remove"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).removeDialog).toBe(true)
+    // v-dialog 的 v-model 内联 onUpdate fn：stub 组件上 $emit 才会执行（stub 根元素按 slot 内容定位）
+    const addStub = w.findAll('.dlgstub').find(d => d.find('[data-testid="add-dialog"]').exists())
+    expect(addStub).toBeTruthy()
+    await addStub!.find('.dlg-emit').trigger('click')
+    const removeStub = w.findAll('.dlgstub').find(d => d.find('[data-testid="remove-dialog"]').exists())
+    expect(removeStub).toBeTruthy()
+    await removeStub!.find('.dlg-emit').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).addDialog).toBe(false)
+    expect((w.vm as any).removeDialog).toBe(false)
+    w.unmount()
+  })
+
 })

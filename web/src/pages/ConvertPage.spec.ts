@@ -147,7 +147,11 @@ describe('ConvertPage', () => {
     expect(endpoints.configs).toHaveBeenCalledTimes(1)
     const sel = w.find('[data-testid="config"]')
     expect(sel.exists()).toBe(true)
-    vm.configValue = 'http://y/b.ini'
+    // 走组件事件而不是直接给 vm 赋值：v-model 的内联 onUpdate 函数需要被执行才计入覆盖
+    const cfgSel = w.findAllComponents({ name: 'VSelect' }).find(c => c.attributes('data-testid') === 'config')
+    expect(cfgSel).toBeTruthy()
+    ;(cfgSel!.vm as unknown as { $emit: (e: string, v?: unknown) => void }).$emit('update:modelValue', 'http://y/b.ini')
+    await flushPromises()
     vm.urls = 'http://a.com'
     vi.mocked(endpoints.convert).mockResolvedValue({ body: 'OUT', format: '', warnings: null, failures: null, nodes: 0, rawNodes: 0, cached: 0 })
     await vm.submit()

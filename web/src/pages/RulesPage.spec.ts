@@ -447,4 +447,12 @@ describe('RulesPage', () => {
     expect(createMock.mock.calls[0][0].rule_config).toBe(3)
     w.unmount()
   })
+
+  it('loadGroups 失败软化：groups 归空数组，页面主功能不炸（T10 补 catch 分支）', async () => {
+    listGroupsMock.mockRejectedValueOnce(new Error('groups boom'))
+    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect((w.vm as unknown as { groups: unknown[] }).groups).toEqual([])
+    w.unmount()
+  })
 })
