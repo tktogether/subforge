@@ -518,3 +518,14 @@ Lead 亲自逐条复跑，**全部命中**：
 - 并行卡的中间态会让别人的 typecheck 变红（例：W6C 正在改 HelpPanel.vue 时 W6A 看到 TS6133 'hasWhen'），**不能当失败证据**；全量门禁只由 Lead 在全部落地后跑一次。
 - String.raw 模板里 \${f} 不会插值（会写成字面量导致 ENOENT），Windows 路径拼接要用普通字符串。
 
+### D.8 第三次部署到测试机（2026-10-19，commit e82048b）
+
+- 交叉编译：`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -mod=vendor -ldflags "-s -w -X …buildinfo.Version=dev -X …Commit=e82048b -X …Date=2026-10-19T08:37:45Z" -o bin/subforge-linux-amd64 ./cmd/subforge` → **40,005,794 B**，sha256 `e27f4d412c994a2470b9d43bc9aa4f7f35eb373c0a17748c766882e4533e52ba`。
+- 上传 → 远端 sha256 校验 → `chmod 0755` → `mv -f` 原子替换 `/tmp/subforge` → 同参数 `setsid nohup` 重启（新 pid 73227）。备份 `/tmp/subforge.bak-20261019T083843Z` + `subforge.db.pre-e82048b`。
+- **数据零丢失**：8/8 端点 `curl | md5sum` 升级前后完全一致（airports/groups/rules/tokens/self-nodes/pipelines/rule-providers/traffic-strategy）。
+- **前端切换**：`GET /` → `/assets/index-BqEBUwB6.js`（200 / 648,698 B）+ `index-BG5Oc447.css`（200 / 837,627 B），旧 `index-DaRdirkZ.js` 404；deep link 200；`/api/nope` 404；启动日志无 error/panic/fatal；公网端点全 200。
+- 真机截图（无头 Chrome 80 公网 URL，入 `docs/design/screenshots/prod-210-*.png` 4 张）：深色主题在真实环境生效（含固定顶栏、无首帧闪白），帮助面板收成「使用说明」一行。
+- 详细验收表与回滚命令见 `docs/design/ui-copy-and-config-plan.md` §5.6。
+- **未改的遗留观感问题**：真实机场仅 1 条时，`traffic_err` 原文在「流量」与「状态」两列重复出现、各撑 3–5 行（行高约 130px）。限行会削弱 §6.2「错误原文完整呈现」的验收点，故保留并交用户拍板。
+- 工具链教训：`tools/rsh210.py run` 打印含非 GBK 字符的远端日志会抛 `UnicodeEncodeError`（加 `tr -cd '\11\12\15\40-\176'` 过滤）；`setsid nohup … &` 会让 SSH 通道挂着直到 paramiko 超时——**部署其实已成功，必须用独立只读脚本复核**。
+

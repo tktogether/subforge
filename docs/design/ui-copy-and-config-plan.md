@@ -438,6 +438,51 @@ cd /root && setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tm
 
 ---
 
+### 5.6 部署验收证据（2026-10-19 第三次部署：前端视觉升级 e82048b）
+
+把「D1 Instrument 设计系统落地（W1–W6）」部署到测试机 `210.us1.firadio.net:21009`，沿用 §5.4 流程。
+
+| 项 | 值 |
+| --- | --- |
+| 本地构建 | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -mod=vendor -ldflags "-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=dev -X github.com/tktogether/subforge/internal/buildinfo.Commit=e82048b -X github.com/tktogether/subforge/internal/buildinfo.Date=2026-10-19T08:37:45Z" -o bin/subforge-linux-amd64 ./cmd/subforge`（前置：`pnpm -C web run build` 已把前端打进 `internal/api/web/dist` 供 go:embed） |
+| 新二进制 | 40,005,794 B，sha256 `e27f4d412c994a2470b9d43bc9aa4f7f35eb373c0a17748c766882e4533e52ba`，`version` → `subforge dev (commit e82048b, built 2026-10-19T08:37:45Z)` |
+| 被替换版本 | commit `bb851bf`（39,989,410 B，sha256 `dfb7c6cb…`，pid 66069）→ 新 pid **73227** |
+| 备份 | `/tmp/subforge.bak-20261019T083843Z`、`/tmp/subforge-data/subforge.db.pre-e82048b` |
+| 上传校验 | SFTP 上传到 `/tmp/subforge.new` 后远端 `sha256sum` 与本地一致才 `chmod 0755` + `mv -f` 原子替换 |
+| 重启方式 | 同参数裸进程：`cd /root && setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tmp/subforge-data >> /tmp/subforge.log 2>&1 < /dev/null &` |
+
+**数据零丢失核对**（升级前后逐端点 `curl | md5sum`）：airports `69e1babb…` / groups `c375ce57…` / rules `c9beaa90…` / tokens `5ad10464…` / self-nodes `a79ada4b…` / pipelines `58e0494c…` / rule-providers `9a44495f…` / traffic/strategy `6eced011…` = **8/8 完全一致**。
+
+**前端切换证据（本轮的重点）**：
+
+| 检查 | 结果 |
+| --- | --- |
+| `GET /`（SPA 外壳） | 200 / 393 B，引用 `/assets/index-BqEBUwB6.js` |
+| `/assets/index-BqEBUwB6.js` | **200 / 648,698 B**（与本地 `pnpm build` 产物同名同大小） |
+| `/assets/index-BG5Oc447.css` | 200 / 837,627 B |
+| 旧资源 `/assets/index-DaRdirkZ.js` | 404（已被替换，符合预期） |
+| `/some/deep/link`（SPA 兜底） | 200 |
+| `/api/nope` | 404 text/plain |
+| 启动日志 | `tail -200 /tmp/subforge.log | grep -Ei "error|panic|fatal"` **无输出** |
+| 公网可达 | `http://210.us1.firadio.net:21009/` 与 `/healthz` `/version` `/api/airports` 全部 **200** |
+
+**真机截图证据**：用无头 Chrome（CDP，1600×1000，写 `localStorage['subforge.theme']` + 模拟 `prefers-color-scheme`）直接拍**公网 URL**，产物入库 `docs/design/screenshots/prod-210-{airports-light,airports-dark,overview-light,groups-dark}.png`。深色主题在真实环境同样生效（含固定顶栏，无首帧闪白残留）；帮助面板在真实页面收成「使用说明」一行。
+
+**本轮发现的遗留观感问题（未改，待拍板）**：机场页只有 1 条真实机场时，`traffic_err` 原文同时在「流量(已用/总量)」与「状态」两列出现，各占 3–5 行、把该行撑到约 130px。这与 §6.2「错误原文必须完整呈现」的既有口径冲突（限行会削弱该验收点），故保留原样并记录。
+
+**回滚命令**：
+
+```sh
+kill $(pgrep -x subforge) && sleep 1
+cp -a /tmp/subforge.bak-20261019T083843Z /tmp/subforge
+cp -a /tmp/subforge-data/subforge.db.pre-e82048b /tmp/subforge-data/subforge.db
+cd /root && setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tmp/subforge-data >> /tmp/subforge.log 2>&1 < /dev/null &
+```
+
+> 工具链提醒：`tools/rsh210.py run` 把远端输出直接写本机 stdout，**远端日志里的非 GBK 字符会让它在 Windows 控制台抛 `UnicodeEncodeError`**（本次 tail 日志时踩到）。取远端日志要加 ASCII 过滤：`tail -8 /tmp/subforge.log | tr -cd '\11\12\15\40-\176'`。另：脚本里的 `setsid nohup … &` 会让 SSH 通道保持打开直到超时（paramiko 报 `TimeoutError`），**部署脚本已执行成功但调用方可能报超时**，验收要用独立的只读检查脚本复核，不要凭调用方返回码判断。
+
+---
+
 ## §6 失败与降级语义（后端已定，UI 必须讲清楚）
 
 > 依据 `docs/design/m2-m4-design.md`：§1.1「单步失败可 skip/abort/warn 三策略」、§1.3「部分失败 → 成功节点仍输出 + warn 日志」、§2.1「失败处理 → 保留上一版本 + warn」、§2.3「失败重试 3 次指数退避」、§2.5「测活默认关闭」。
