@@ -561,3 +561,22 @@ Lead 亲自逐条复跑，**全部命中**：
 - **部署事实**：二进制 40,038,562 B，sha256 60fde837…，buildinfo Date=2026-10-19T11:31:00Z；备份 /tmp/subforge.bak-20261019T112341Z + db.pre-d326ed5；新 pid **77576**。
 - **验收**：healthz ok；version → commit d326ed5；8 端点 md5 对比 7/8 SAME（零丢失），tokens CHANGED 为 W8D 预期（5 新字段 target/pipeline/config/include/exclude 空默认已出现在响应）；GET / 引 index-DjKcmap-.js（与本地构建同名）；deep link 200；/api/nope 404；日志 error/panic/fatal 0 命中（仅 1 条 PE 事故残留 bash 文本）；公网 healthz 200。
 - **并行完成**：dsh-subagent-model-config 插件接缝修复（startContinuable→startActivation 17 处，0.3.2）+ 用户配置修复（规则 match:"*-free" → llmio/free/high，CONFIG_FILE 在 E:\Projects\dsh-subagent-model-config\config.json），teammate 模型路由打通；probe 取证仅 debug:true 时写，debug:false 无日志≠未触发。
+
+## D.12 W8F 交付与第六次部署验收（2026-10-19）
+
+### W8F 订阅令牌字段级定制（前端）
+- 派发通道：任务卡 e5fd17ce（钉 llmio/free + high）——spawn_teammate 报 Team member limit 8（7 个僵尸队友占席，roster 插件版本漂移不可用），走任务卡执行通道绕过。执行会话 session-3ac91bb8，succeeded。
+- 交付：c4bfd67。endpoints.ts SubToken 扩 5 字段 + created_at、SubTokenUpdate 与后端 6 个 *string 对齐、updateToken → PUT /api/tokens/{encodeURIComponent(token)} 解包 .token（subscription.go:451 响应形状 {"token": t}）；SubscriptionsPage 弹窗 target 下拉懒加载 /api/targets（失败降级「留空 = 默认 clash.meta」）+ pipeline/config/include/exclude 折叠进默认收起的「高级选项」；clearable 清空给 null 会被后端当「不改动」，提交前归一空串；新建分支只发 {token, name}。
+- Lead 复核：写范围仅 3 文件 ✓；补 endpoints.spec.ts updateToken 用例 1 条（teammate 汇报的 coverage 缺口 endpoints.ts:385）。
+- 门禁（Lead 亲跑）：typecheck 0；test 35 files / 642 tests（632→642）exit 0；coverage exit 0（All files 100/98.02/100/100）；build exit 0（index-6sKpCJhT.js 648.85 kB / gzip 206.94）。
+
+### 第六次部署（c4bfd67 → 210.us1.firadio.net）
+- 二进制 40,038,562 B，ELF 魔数 7f 45 4c 46 上传前已验，sha256 c6cd645b6d0bde77a0bf74aa0de753ff714677bb2fcc59a70d7cfbdc684f70ff，buildinfo Date=2026-10-19T12:30:00Z Commit=c4bfd67。
+- 切换走远端脚本文件 /tmp/switch6.sh（D.11 事故规程），无通道中断：pid 77576 → 79101，备份 /tmp/subforge.bak-20261019T121302Z + subforge.db.pre-c4bfd67。
+- 验收：healthz ok；version "subforge dev (commit c4bfd67, built 2026-10-19T12:30:00Z) backend"；GET / 引 index-6sKpCJhT.js（与本地构建同名）；deep link 200；/api/nope 404；8 端点 md5 与 D.11 基线逐字全同（tokens dcf00444 含新字段与 created_at，确认 W8D 迁移数据无损）；日志 error/panic/fatal = 0；公网 healthz 200。
+- 环境坑：python 的 user site 是相对路径 ~\Python\Python314（pip 在仓库目录跑 --user 就装进仓库）→ paramiko 重装到固定 PYTHONUSERBASE=C:\Users\橙先生\.dsh-py-user，rsh210.py 调用需带该 env；rsh210 远端输出含非 GBK 字符（如 µ）时 sys.stdout 崩（gbk codec），探针输出加 LC_ALL 或过滤。
+- 交叉编译 ldflags：-s -w -X …buildinfo.{Version=dev,Commit=c4bfd67,Date=…}；env 三件套 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 不可漏。
+
+### 部署后状态
+- 提交链：2ac8d4b → d326ed5 → 2da8597 → c4bfd67。工作区 clean。
+- 待办：teammate 派发恢复需 roster 插件适配 0.2.1-rc.2（8 席满员 7 僵尸）。
