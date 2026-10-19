@@ -265,6 +265,20 @@ describe('endpoints', () => {
     expect(result).toEqual({ ok: true })
   })
 
+  it('updateToken("a b") → PUT /api/tokens/a%20b 并解包 .token', async () => {
+    const token = { token: 't2', name: 'n2', target: 'mihomo' }
+    const input = { name: 'n2', target: 'mihomo' }
+    fetchMock.mockResolvedValue(respond({ token }))
+    const result = await endpoints.updateToken('a b', input)
+    expect(fetchMock).toHaveBeenCalledWith('/api/tokens/a%20b', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: undefined,
+    })
+    expect(result).toEqual(token)
+  })
+
   // 自建节点
   it('listSelfNodes 解包 .self_nodes', async () => {
     const self_nodes = [{ id: 1, link: 'l', name: 'n', enabled: true, sort_order: 1 }]

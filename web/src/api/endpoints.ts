@@ -52,6 +52,27 @@ export interface Rule {
 export interface SubToken {
   token: string
   name: string
+  // 字段级定制 5 列：后端 internal/store/store.go:245-254 的 json tag 逐字为
+  // target/pipeline/config/include/exclude/created_at，且 SELECT 用 COALESCE 兜底，
+  // 列表与详情必定返回这 6 个字段。这里声明为可选，是为了不被迫改写既有 spec 里的
+  // 老 fixture（必填会让 SubscriptionsPage.spec.ts:87 / :355 的 toEqual 精确匹配断言失败）。
+  target?: string
+  pipeline?: string
+  config?: string
+  include?: string
+  exclude?: string
+  created_at?: string // RFC3339 字符串；后端 store.SubToken.CreatedAt json tag 为 created_at
+}
+
+// PUT /api/tokens/{token} 的 body：与后端 *string 语义对齐——字段缺失=不改动，空串=清空。
+// 见 internal/api/subscription.go:415-426（6 个 *string 字段）。
+export interface SubTokenUpdate {
+  name?: string
+  target?: string
+  pipeline?: string
+  config?: string
+  include?: string
+  exclude?: string
 }
 
 export interface HistoryEntry {
@@ -360,6 +381,8 @@ export const endpoints = {
 
   listTokens: (): Promise<SubToken[]> => api.get<{ tokens: SubToken[] }>('/api/tokens').then((r) => r.tokens),
   createToken: (body: { token: string; name: string }): Promise<SubToken> => api.post<{ token: SubToken }>('/api/tokens', body).then((r) => r.token),
+  updateToken: (token: string, body: SubTokenUpdate): Promise<SubToken> =>
+    api.put<{ token: SubToken }>('/api/tokens/' + encodeURIComponent(token), body).then((r) => r.token),
   deleteToken: (token: string): Promise<OkResponse> => api.del<OkResponse>('/api/tokens/' + encodeURIComponent(token)),
 
   listSelfNodes: (): Promise<SelfNode[]> => api.get<{ self_nodes: SelfNode[] }>('/api/self-nodes').then((r) => r.self_nodes),

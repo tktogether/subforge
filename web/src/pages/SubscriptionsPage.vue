@@ -39,23 +39,79 @@ const resource = {
 }
 
 // token dialog
+interface TokenForm {
+  token: string
+  name: string
+  target: string
+  pipeline: string
+  config: string
+  include: string
+  exclude: string
+}
 const tokenDialog = ref(false)
 const editingToken = ref<SubToken | null>(null)
-const tokenForm = ref({ token: '', name: '' })
+function emptyTokenForm(): TokenForm {
+  return { token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '' }
+}
+const tokenForm = ref<TokenForm>(emptyTokenForm())
+// target 候选来自 GET /api/targets（endpoints.ts:340 现成封装）；弹窗首次打开时懒加载一次，
+// 失败不阻塞弹窗（下拉退化成「留空 = 默认 clash.meta」），失败后下次打开会重试。
+const targetOptions = ref<string[]>([])
+const targetsLoaded = ref(false)
+const loadingTargets = ref(false)
+async function loadTargets(): Promise<void> {
+  if (targetsLoaded.value || loadingTargets.value) return
+  loadingTargets.value = true
+  try {
+    targetOptions.value = await endpoints.targets()
+    targetsLoaded.value = true
+  } catch {
+    targetOptions.value = []
+  } finally {
+    loadingTargets.value = false
+  }
+}
 function openCreateToken(): void {
   editingToken.value = null
-  tokenForm.value = { token: '', name: '' }
+  tokenForm.value = emptyTokenForm()
   tokenDialog.value = true
+  void loadTargets()
 }
 function openEditToken(t: SubToken): void {
   editingToken.value = t
-  tokenForm.value = { token: t.token, name: t.name }
+  tokenForm.value = {
+    token: t.token,
+    name: t.name,
+    target: t.target ?? '',
+    pipeline: t.pipeline ?? '',
+    config: t.config ?? '',
+    include: t.include ?? '',
+    exclude: t.exclude ?? '',
+  }
   tokenDialog.value = true
+  void loadTargets()
+}
+// v-select 带 clearable 时，清空给的是 null；后端 *string 语义里 null/缺失等于「不改动」，
+// 只有空串才是「清空该定制」。所以提交前统一归一成空串。
+function textOrEmpty(v: string | null | undefined): string {
+  return v ?? ''
 }
 async function saveToken(): Promise<void> {
   try {
     if (editingToken.value === null) {
+      // 新建分支保持原样：只发 token + name，不扩散 5 个定制字段。
       await endpoints.createToken({ token: tokenForm.value.token, name: tokenForm.value.name })
+    } else {
+      const f = tokenForm.value
+      // 编辑分支 6 个字段全部显式发送：空串=清空，字段缺失=不改动（后端 *string 语义）。
+      await endpoints.updateToken(f.token, {
+        name: textOrEmpty(f.name),
+        target: textOrEmpty(f.target),
+        pipeline: textOrEmpty(f.pipeline),
+        config: textOrEmpty(f.config),
+        include: textOrEmpty(f.include),
+        exclude: textOrEmpty(f.exclude),
+      })
     }
     tokenDialog.value = false
     await resource.list()
@@ -288,6 +344,27 @@ onMounted(() => {
       <v-card-text>
         <v-text-field v-model="tokenForm.token" label="令牌" hint="建议留空由后端生成，或自定义（唯一）" persistent-hint data-testid="token-field" />
         <v-text-field v-model="tokenForm.name" label="名称" hint="自己认得出的备注，例如「手机」「给朋友」" persistent-hint data-testid="name-field" />
+        <v-select
+          v-model="tokenForm.target"
+          :items="targetOptions"
+          label="目标格式"
+          hint="留空 = 默认 clash.meta"
+          persistent-hint
+          clearable
+          :loading="loadingTargets"
+          data-testid="target-select"
+        />
+        <v-expansion-panels class="mt-2" data-testid="token-advanced">
+          <v-expansion-panel>
+            <v-expansion-panel-title>高级选项</v-expansion-panel-title>
+            <v-expansion-panel-text eager>
+              <v-text-field v-model="tokenForm.pipeline" label="Pipeline" hint="留空 = 用全局 subscribe.pipeline" persistent-hint data-testid="pipeline-field" />
+              <v-text-field v-model="tokenForm.config" label="Config" hint="留空 = 用全局默认配置" persistent-hint data-testid="config-field" />
+              <v-text-field v-model="tokenForm.include" label="包含" hint="逗号分隔列表，例如 香港,日本；留空 = 不筛选" persistent-hint data-testid="include-field" />
+              <v-text-field v-model="tokenForm.exclude" label="排除" hint="逗号分隔列表，例如 过期,剩余；留空 = 不排除" persistent-hint data-testid="exclude-field" />
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
