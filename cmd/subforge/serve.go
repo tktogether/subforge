@@ -156,7 +156,7 @@ func cmdServe(args []string) error {
 	})
 
 	if dataDir != "" {
-		mgr, err := subforge.NewManager(filepath.Join(dataDir, "subforge.db"))
+		mgr, err := subforge.NewManagerWithDataDir(filepath.Join(dataDir, "subforge.db"), dataDir)
 		if err != nil {
 			return fmt.Errorf("初始化订阅管理: %w", err)
 		}

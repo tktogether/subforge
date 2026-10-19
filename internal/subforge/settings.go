@@ -20,6 +20,8 @@ type SettingItem struct {
 	Kind        string `json:"kind"`
 	Label       string `json:"label"`
 	Description string `json:"description"`
+	Placeholder string `json:"placeholder,omitempty"`
+	IsDefault   bool   `json:"is_default"`
 }
 
 type settingDef struct {
@@ -74,6 +76,7 @@ func (m *Manager) ListSettings(ctx context.Context) ([]SettingItem, error) {
 		if err != nil {
 			return nil, err
 		}
+		isDefault := strings.TrimSpace(v) == ""
 		if d.kind == SettingKindBool {
 			nb, err := normalizeBoolForList(v)
 			if err != nil {
@@ -83,18 +86,32 @@ func (m *Manager) ListSettings(ctx context.Context) ([]SettingItem, error) {
 		} else {
 			v = strings.TrimSpace(v)
 		}
-		out = append(out, SettingItem{
+		item := SettingItem{
 			Key:         d.key,
 			Value:       v,
 			Kind:        d.kind,
 			Label:       d.label,
 			Description: d.description,
-		})
+			IsDefault:   isDefault,
+		}
+		if d.kind == SettingKindPath {
+			if d.key == RuleManifestPathKey {
+				if rp, rerr := m.ResolveRuleManifestPath(ctx); rerr == nil {
+					item.Placeholder = rp
+				}
+			} else if d.key == RulesOutputDirKey {
+				if rp, rerr := m.ResolveRulesOutputDir(ctx); rerr == nil {
+					item.Placeholder = rp
+				}
+			}
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }
 
 func (m *Manager) SetSettings(ctx context.Context, kv map[string]string) error {
+	// 先全量校验，再写，保持原子性。
 	for key, raw := range kv {
 		def, ok := findSettingDef(key)
 		if !ok {
@@ -111,6 +128,12 @@ func (m *Manager) SetSettings(ctx context.Context, kv map[string]string) error {
 		}
 	}
 	for key, v := range kv {
+		if strings.TrimSpace(v) == "" {
+			if err := m.deleteConfig(ctx, key); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := m.setConfig(ctx, key, v); err != nil {
 			return err
 		}

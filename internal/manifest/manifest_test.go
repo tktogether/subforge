@@ -144,3 +144,76 @@ func TestRollback_ReturnsPrevious(t *testing.T) {
 		t.Fatalf("rollback = %s, want previous version", p)
 	}
 }
+
+func TestLoadManifest_RelativeOutputPathResolved(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "manifest.yaml")
+	content := "sources:\n  - name: a\n    url: https://example.com/a.yaml\noutput:\n  format: clash-meta\n  path: ./rules\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	want := filepath.Join(dir, "rules")
+	if m.Output.Path != want {
+		t.Fatalf("Output.Path = %q, want %q", m.Output.Path, want)
+	}
+	if !filepath.IsAbs(m.Output.Path) {
+		t.Fatalf("Output.Path 应为绝对路径, got %q", m.Output.Path)
+	}
+}
+
+func TestLoadManifest_AbsoluteOutputPathKept(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "abs-out")
+	p := filepath.Join(dir, "manifest.yaml")
+	content := "sources:\n  - name: a\n    url: https://example.com/a.yaml\noutput:\n  format: clash-meta\n  path: " + filepath.ToSlash(outDir) + "\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.Output.Path != filepath.ToSlash(outDir) {
+		t.Fatalf("Output.Path = %q, want %q", m.Output.Path, filepath.ToSlash(outDir))
+	}
+}
+
+func TestLoadManifest_RelativeOutputPathEndToEnd(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("rules:\n  - DOMAIN,example.com,PROXY\n"))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "manifest.yaml")
+	content := "sources:\n  - name: rel\n    url: " + srv.URL + "/a.yaml\noutput:\n  format: clash-meta\n  path: ./rules\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(p)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	res, err := m.Update(context.Background())
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("results = %+v", res)
+	}
+	wantDir := filepath.Join(dir, "rules")
+	if filepath.Dir(res[0].Path) != wantDir {
+		t.Fatalf("输出目录 = %q, want %q", filepath.Dir(res[0].Path), wantDir)
+	}
+	entries, err := os.ReadDir(wantDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("版本文件数 = %d, want 1", len(entries))
+	}
+}

@@ -54,6 +54,12 @@ func LoadManifest(path string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	m.applyDefaults()
+	// 相对 output.path 相对 manifest 文件自身解析成绝对路径，避免 Update 写与 ResolveRulesOutputDir 读落在进程 cwd。
+	if abs, err := filepath.Abs(path); err == nil {
+		if !filepath.IsAbs(m.Output.Path) {
+			m.Output.Path = filepath.Clean(filepath.Join(filepath.Dir(abs), m.Output.Path))
+		}
+	}
 	return m, nil
 }
 

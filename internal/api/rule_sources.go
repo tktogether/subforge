@@ -22,10 +22,14 @@ func (s *Server) handleAPIRuleSources(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	manifestPath, err := m.GetRuleManifestPath(r.Context())
+	manifestPath, err := m.ResolveRuleManifestPath(r.Context())
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
+	}
+	defaultManifestPath := manifestPath
+	if dp, derr := m.DefaultRuleManifestPath(r.Context()); derr == nil {
+		defaultManifestPath = dp
 	}
 	sources, err := m.ListRuleSources(r.Context())
 	if err != nil {
@@ -35,7 +39,43 @@ func (s *Server) handleAPIRuleSources(w http.ResponseWriter, r *http.Request) {
 	if sources == nil {
 		sources = []subforge.RuleSourceStatus{}
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"manifest_path": manifestPath, "sources": sources})
+	resp := map[string]any{
+		"manifest_path":         manifestPath,
+		"default_manifest_path": defaultManifestPath,
+		"sources":               sources,
+		"manifest_template":     subforge.RuleManifestTemplate(),
+	}
+	if outDir, err := m.ResolveRulesOutputDir(r.Context()); err == nil {
+		resp["output_dir"] = outDir
+	}
+	if _, statErr := os.Stat(manifestPath); statErr != nil {
+		resp["exists"] = false
+		resp["hint"] = "未找到规则源清单文件，可点击「生成默认清单」在本机创建一份模板，或在上方设置里改路径。"
+	} else {
+		resp["exists"] = true
+	}
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// handleAPIRuleSourcesInit 处理 POST /api/rule-sources/init：不存在时写入默认清单模板。
+// 可选 ?force=1 覆盖已有文件（覆盖前备份为 <path>.bak）。
+// → 200 {"path":"...","created":bool}；非 POST → 405「仅支持 POST」。
+func (s *Server) handleAPIRuleSourcesInit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	force := isTruthyQuery(r.URL.Query().Get("force"))
+	path, created, err := m.EnsureRuleManifest(r.Context(), force)
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"path": path, "created": created})
 }
 
 // handleAPIRuleSourcesUpdate 处理 POST /api/rule-sources/update。

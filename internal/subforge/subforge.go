@@ -10,6 +10,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tktogether/subforge/internal/store"
@@ -18,17 +20,40 @@ import (
 
 // Manager 是订阅管理的业务入口。
 type Manager struct {
-	db *store.DB
+	db      *store.DB
+	dataDir string
+}
+
+// defaultDataDirFromDSN 从 DSN 推导数据根目录；无法推导时返回 ""（表示落 cwd）。
+func defaultDataDirFromDSN(dsn string) string {
+	s := strings.TrimSpace(dsn)
+	if s == "" || s == ":memory:" || strings.Contains(s, "?") {
+		return ""
+	}
+	dir := filepath.Dir(s)
+	if dir == "." || dir == "" {
+		return ""
+	}
+	return dir
 }
 
 // NewManager 创建 Manager，打开（或创建）SQLite 数据库。
 func NewManager(dsn string) (*Manager, error) {
+	return NewManagerWithDataDir(dsn, defaultDataDirFromDSN(dsn))
+}
+
+// NewManagerWithDataDir 创建 Manager，打开（或创建）SQLite 数据库，并显式指定数据根目录。
+// dataDir 为空表示「未指定，落 cwd」。
+func NewManagerWithDataDir(dsn, dataDir string) (*Manager, error) {
 	db, err := store.Open(dsn)
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{db: db}, nil
+	return &Manager{db: db, dataDir: dataDir}, nil
 }
+
+// DataDir 返回数据根目录；空串表示未指定，落 cwd。
+func (m *Manager) DataDir() string { return m.dataDir }
 
 // Close 关闭数据库连接。
 func (m *Manager) Close() error { return m.db.Close() }
@@ -418,5 +443,11 @@ func (m *Manager) setConfig(ctx context.Context, key, value string) error {
 	_, err := m.db.Raw().ExecContext(ctx,
 		"INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 		key, value)
+	return err
+}
+
+// deleteConfig 删除配置键（把设置项恢复默认）。
+func (m *Manager) deleteConfig(ctx context.Context, key string) error {
+	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM config WHERE key = ?", key)
 	return err
 }

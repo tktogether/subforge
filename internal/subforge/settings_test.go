@@ -153,6 +153,86 @@ func TestListSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestListSettingsIsDefault 覆盖 IsDefault 字段：未配置为 true，已配置为 false。
+func TestListSettingsIsDefault(t *testing.T) {
+	ctx := context.Background()
+	m := newSettingsManager(t)
+	items, err := m.ListSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListSettings: %v", err)
+	}
+	for _, it := range items {
+		if !it.IsDefault {
+			t.Errorf("%s 初始应 is_default=true", it.Key)
+		}
+	}
+	if err := m.SetSettings(ctx, map[string]string{"script.enabled": "true"}); err != nil {
+		t.Fatalf("SetSettings: %v", err)
+	}
+	items, err = m.ListSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListSettings 二次: %v", err)
+	}
+	for _, it := range items {
+		if it.Key == "script.enabled" && it.IsDefault {
+			t.Errorf("script.enabled 配置后应 is_default=false")
+		}
+		if it.Key != "script.enabled" && !it.IsDefault {
+			t.Errorf("%s 未配置应 is_default=true", it.Key)
+		}
+	}
+}
+
+// TestListSettingsPlaceholder 覆盖 path 类型填 Placeholder、bool 留空。
+func TestListSettingsPlaceholder(t *testing.T) {
+	ctx := context.Background()
+	m := newSettingsManager(t)
+	items, err := m.ListSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListSettings: %v", err)
+	}
+	for _, it := range items {
+		if it.Kind == SettingKindPath && it.Placeholder == "" {
+			t.Errorf("%s(path) 应有非空 Placeholder", it.Key)
+		}
+		if it.Kind == SettingKindBool && it.Placeholder != "" {
+			t.Errorf("%s(bool) 的 Placeholder 应为空", it.Key)
+		}
+	}
+}
+
+// TestSetSettingsEmptyStringDeletes 覆盖空串删键：删除后 is_default 变 true。
+func TestSetSettingsEmptyStringDeletes(t *testing.T) {
+	ctx := context.Background()
+	m := newSettingsManager(t)
+	if err := m.SetSettings(ctx, map[string]string{"rules.manifest_path": "/tmp/x.yaml"}); err != nil {
+		t.Fatalf("SetSettings 配置: %v", err)
+	}
+	v, err := m.GetConfig(ctx, "rules.manifest_path")
+	if err != nil || v != "/tmp/x.yaml" {
+		t.Fatalf("配置后应存在, got %q err=%v", v, err)
+	}
+	if err := m.SetSettings(ctx, map[string]string{"rules.manifest_path": ""}); err != nil {
+		t.Fatalf("SetSettings 空串: %v", err)
+	}
+	v, err = m.GetConfig(ctx, "rules.manifest_path")
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	if v != "" {
+		t.Fatalf("空串应删键, got %q", v)
+	}
+	items, err := m.ListSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListSettings: %v", err)
+	}
+	for _, it := range items {
+		if it.Key == "rules.manifest_path" && !it.IsDefault {
+			t.Errorf("删键后 is_default 应为 true")
+		}
+	}
+}
+
 func TestListSettingsAfterClose(t *testing.T) {
 	ctx := context.Background()
 	m := newSettingsManager(t)
