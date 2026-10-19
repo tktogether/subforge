@@ -392,6 +392,50 @@ condgate  -engine=profile -profile coverage.out -min 80    # 条件 >= 80%
 重新交叉编译 → `tools/rsh210.py` 上传 → 原子替换 `/tmp/subforge` → 同参数重启 → 验收（沿用 2026-10-19 的部署流程与回滚路径）。
 
 
+
+### 5.5 部署验收证据（2026-10-19 第二次部署）
+
+把本轮改动（配置默认兜底 + 13 页文案引导 + 失败降级语义 + 前端覆盖率门禁接线）部署到测试机 `210.us1.firadio.net:21009`，沿用 5.4 的流程。
+
+| 项 | 值 |
+| --- | --- |
+| 本地构建 | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -mod=vendor -ldflags "-s -w -X ...Version=dev -X ...Commit=bb851bf -X ...Date=2026-10-19T03:12:56Z" -o bin/subforge-linux-amd64 ./cmd/subforge` |
+| 新二进制 | 39,989,410 B，sha256 `dfb7c6bcea3e0cfb087b7f3dd6eb7b50f65b93e8458cbcf844abb167f2e4209b`，`version` → `subforge dev (commit bb851bf, built 2026-10-19T03:12:56Z)` |
+| 被替换的版本 | commit `3710d50`（39,878,818 B，sha256 `76e0cfec…`） |
+| 备份 | `/tmp/subforge.bak-20261019T032001Z`、`/tmp/subforge-data/subforge.db.pre-bb851bf` |
+| 重启方式 | 同参数裸进程：`cd /root && setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tmp/subforge-data >> /tmp/subforge.log 2>&1 < /dev/null &`；新 pid 66069，`PPid=1`、`NSsid=66069`、`cwd=/root`、fd0→/dev/null、fd1/2→/tmp/subforge.log（真正脱离 SSH 会话） |
+
+**数据零丢失核对**（升级前后逐端点 `cmp`）：airports / groups / rules / tokens / self-nodes / pipelines / rule-providers / traffic.strategy = **8/8 字节完全一致**。
+`stats` 有差异且**只差内存态计数器**：`history.total 1→0`、`logs 366→8`——历史缓冲（上限 20）与日志缓冲（上限 200）都在进程内存里，重启即清零，**不是数据丢失**（见 §2 对「最近记录条数」的口径说明）。
+
+**两个用户报的问题在真实环境下的前后对比**：
+
+| 端点 | 旧版 3710d50 | 新版 bb851bf |
+| --- | --- | --- |
+| `GET /api/rule-sources` | **500** `{"error":"未配置规则源清单路径（rules.manifest_path）"}` | **200** `{"default_manifest_path":"/tmp/subforge-data/manifest.yaml","exists":false,"hint":"未找到规则源清单文件，可点击「生成默认清单」在本机创建一份模板，或在上方设置里改路径。","manifest_path":…,"manifest_template":…,"output_dir":"/tmp/subforge-data/rules","sources":[]}` |
+| `GET /api/settings` | 638 B，只有 4 项 key/value | 800 B，path 类补 `placeholder`（`/tmp/subforge-data/manifest.yaml`、`/tmp/subforge-data/rules`）+ 四项 `is_default:true` |
+| `GET /` | 旧多页前端（`/app.css`、`/app.js`、`/js/*.js`） | 新 SPA 393 B：`<div id="app">` + `/assets/index-DaRdirkZ.js`(642,956 B) + `/assets/index-7f-yQz0k.css`(832,890 B)，无 `app.css` |
+
+**端到端核对（对应 §5.3）**：
+
+1. 冷启动后 `GET /api/settings` 返回 4 项 + path 占位符 ✅
+2. `POST /api/rule-sources/init` → `{"created":true,"path":"/tmp/subforge-data/manifest.yaml"}`；再 GET → `exists:true`，`output_dir` 仍是 `/tmp/subforge-data/rules`（**不是 `rules/rules`**，证明相对 `output.path` 按清单自身解析）✅
+3. 真实转换：`GET /sub?target=clash&url=http://127.0.0.1:21999/subforge-fixture.txt` → 200 / 1627 B，产物头部即 `commit bb851bf` ✅（fixture 用远端 `python3 -m http.server 21999` 提供，hermetic）
+4. `GET /api/traffic/preview` → `{"header":"","ok":false,"usage":{…全 0}}` ✅ —— 与 §7.6 第 1、4 条一致：**首次刷新前不写 `Subscription-Userinfo` 头**
+5. `/sub` 响应头无 `Subscription-Userinfo` ✅（同上，符合预期）
+
+**新端点可达性**（新版）：`/api/tasks` `/api/scripts` `/api/alert-channels` `/api/suggestions` `/api/metrics` 均 200；`/api/template` 与 `/api/override` 404（路径未配置的业务 404，非路由缺失）；SPA 兜底 `/some/deep/link` 200；`/api/nope` 404 text/plain。公网 `http://210.us1.firadio.net:21009/` 与全部上述端点均 200。
+升级后日志无 `error`/`panic`/`fatal`。
+
+**回滚命令**：
+
+```sh
+kill $(pgrep -x subforge) && sleep 1
+cp -a /tmp/subforge.bak-20261019T032001Z /tmp/subforge
+cp -a /tmp/subforge-data/subforge.db.pre-bb851bf /tmp/subforge-data/subforge.db
+cd /root && setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tmp/subforge-data >> /tmp/subforge.log 2>&1 < /dev/null &
+```
+
 ---
 
 ## §6 失败与降级语义（后端已定，UI 必须讲清楚）
