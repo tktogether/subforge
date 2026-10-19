@@ -15,11 +15,9 @@ make cross    # 产物在 dist/
 | --- | --- | --- |
 | linux/amd64 | 23,154,850 B（22.1 MiB） | ELF 64-bit x86-64，`ldd` 报 not a dynamic executable |
 | linux/arm64 | 21,495,970 B（20.5 MiB） | ELF 64-bit ARM aarch64，静态 |
-| linux/mipsle | 24,641,729 B（23.5 MiB） | ELF 32-bit MIPS32，`GOMIPS=softfloat`（软路由） |
 | windows/amd64 | 22,009,856 B（21.0 MiB） | PE32+ console x86-64 |
 
-四个目标都在 15–25 MB 预算内。交叉编译在 linux/amd64 主机上完成，不需要
-mipsle 或 arm64 的交叉工具链。
+三个目标都在 15–25 MB 预算内。交叉编译在 linux/amd64 主机上完成，无需目标平台工具链。
 
 ## 2. systemd 单元
 

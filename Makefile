@@ -34,11 +34,6 @@ cross:
 	      go build $(GOFLAGS) -o bin/subforge-$$(echo $$target | tr / -) ./cmd/subforge && \
 	    echo "ok: $$target"; \
 	done
-	@for target in linux/mipsle linux/mips; do \
-	    GOOS=$${target%/*} GOARCH=$${target#*/} GOMIPS=softfloat CGO_ENABLED=0 \
-	      go build $(GOFLAGS) -o bin/subforge-$$(echo $$target | tr / -)-softfloat ./cmd/subforge && \
-	    echo "ok: $$target (softfloat)"; \
-	done
 
 docker:
 	docker build -t subforge:$(VERSION) .

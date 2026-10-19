@@ -87,12 +87,6 @@ jobs:
               -o "dist/subforge-${target/\//-}" ./cmd/subforge
             echo "ok: $target"
           done
-          for target in linux/mipsle linux/mips; do
-            GOOS=${target%/*} GOARCH=${target#*/} GOMIPS=softfloat go build -trimpath -mod=vendor \
-              -ldflags "-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=$VER -X github.com/tktogether/subforge/internal/buildinfo.Commit=$SHORT -X github.com/tktogether/subforge/internal/buildinfo.Date=$DATE" \
-              -o "dist/subforge-${target/\//-}-softfloat" ./cmd/subforge
-            echo "ok: $target (softfloat)"
-          done
           # Windows 后缀
           mv dist/subforge-windows-amd64 dist/subforge-windows-amd64.exe
       - name: ELF magic spot-check (linux/amd64)

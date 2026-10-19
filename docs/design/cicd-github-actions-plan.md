@@ -18,7 +18,7 @@
 
 - **触发**：push tag `v*`（正式发布）或 workflow_dispatch（手动打包快照）。
 - **产物**（`dist/`）：
-  - 二进制矩阵与 `make cross` 逐字一致：linux/amd64 arm64 arm、windows/amd64（.exe）、darwin/amd64 arm64、freebsd/amd64 + linux mips/mipsle softfloat，共 9 个；
+  - 二进制矩阵与 `make cross` 逐字一致：linux/amd64 arm64 arm、windows/amd64（.exe）、darwin/amd64 arm64、freebsd/amd64，共 7 个（mips/mipsle 已移除：modernc.org/sqlite 不提供该平台构建，交叉编译必炸 build constraints exclude——2026-10-19 CI cross job 实测，本地 GOOS=linux GOARCH=mips 复现 13 包 exclude）；
   - `sha256sums.txt` 校验清单；
   - docker 镜像 scratch（Dockerfile）→ `ghcr.io/<owner>/subforge:<tag>` + `:latest`（仅 tag push 推送）。
 - **质量门**（打包前自动拦）：ELF 魔数抽查（D.11 规程）+ `./subforge-linux-amd64 version` 冒烟（buildinfo 非 dev、commit 可追）。

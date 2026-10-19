@@ -30,7 +30,7 @@ M1 范围：mihomo 嵌入解析 + 全 target 渲染 + `/sub` 兼容 API + INI �
 - [x] I7 渲染器铺开 —— 18 个 target 全部完成（clash.meta / clash-json / sing-box / list / mixed / ss / ssd / ssr / trojan / v2ray / surge / quan / quanx / loon / surfboard / ss-sub / ss-sub-b64 / mellow）
 - [x] I8 兼容金测固化 —— subconverter 对拍 + Aethersailor 语义对拍 + mihomo 实机加载，37 项测试全部通过
 - [x] I9 性能与交付 —— bench 已固化（parse/transform 包）；Dockerfile / systemd 已落地；
-      交叉编译矩阵实测通过（linux/{amd64,arm64,arm,mipsle,mips}、windows/amd64、darwin/{amd64,arm64}、freebsd/amd64），
+      交叉编译矩阵实测通过（linux/{amd64,arm64,arm}、windows/amd64、darwin/{amd64,arm64}、freebsd/amd64；mips/mipsle 因 modernc.org/sqlite 平台约束不支持，已移出矩阵），
       CI 已固化（.github/workflows/ci.yml）；二进制 25~30 MB
 
 ## 当前状态：M2 定制化开发中
@@ -269,7 +269,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/subforge
 ```
 
-等价的 Makefile 目标：`make cross`（交付矩阵：linux/amd64|arm64|arm、windows/amd64、darwin/amd64|arm64、freebsd/amd64、linux/mipsle|mips softfloat）。
+等价的 Makefile 目标：`make cross`（交付矩阵：linux/amd64|arm64|arm、windows/amd64、darwin/amd64|arm64、freebsd/amd64；mips/mipsle 不受支持——modernc.org/sqlite 无该平台构建）。
 
 ## 目录结构
 
