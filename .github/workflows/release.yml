@@ -78,27 +78,27 @@ jobs:
       - name: Cross compile release binaries
         run: |
           VER=${{ github.ref_type == 'tag' && github.ref_name || 'snapshot' }}
-          SHORT=\$(git rev-parse --short=8 HEAD)
-          DATE=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          SHORT=$(git rev-parse --short=8 HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           mkdir -p dist
           for target in linux/amd64 linux/arm64 linux/arm windows/amd64 darwin/amd64 darwin/arm64 freebsd/amd64; do
-            GOOS=\${target%/*} GOARCH=\${target#*/} go build -trimpath -mod=vendor \
-              -ldflags "-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=\$VER -X github.com/tktogether/subforge/internal/buildinfo.Commit=\$SHORT -X github.com/tktogether/subforge/internal/buildinfo.Date=\$DATE" \
-              -o "dist/subforge-\${target/\//-}" ./cmd/subforge
-            echo "ok: \$target"
+            GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -mod=vendor \
+              -ldflags "-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=$VER -X github.com/tktogether/subforge/internal/buildinfo.Commit=$SHORT -X github.com/tktogether/subforge/internal/buildinfo.Date=$DATE" \
+              -o "dist/subforge-${target/\//-}" ./cmd/subforge
+            echo "ok: $target"
           done
           for target in linux/mipsle linux/mips; do
-            GOOS=\${target%/*} GOARCH=\${target#*/} GOMIPS=softfloat go build -trimpath -mod=vendor \
-              -ldflags "-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=\$VER -X github.com/tktogether/subforge/internal/buildinfo.Commit=\$SHORT -X github.com/tktogether/subforge/internal/buildinfo.Date=\$DATE" \
-              -o "dist/subforge-\${target/\//-}-softfloat" ./cmd/subforge
-            echo "ok: \$target (softfloat)"
+            GOOS=${target%/*} GOARCH=${target#*/} GOMIPS=softfloat go build -trimpath -mod=vendor \
+              -ldflags "-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=$VER -X github.com/tktogether/subforge/internal/buildinfo.Commit=$SHORT -X github.com/tktogether/subforge/internal/buildinfo.Date=$DATE" \
+              -o "dist/subforge-${target/\//-}-softfloat" ./cmd/subforge
+            echo "ok: $target (softfloat)"
           done
           # Windows 后缀
           mv dist/subforge-windows-amd64 dist/subforge-windows-amd64.exe
       - name: ELF magic spot-check (linux/amd64)
         run: |
-          magic=\$(head -c 4 dist/subforge-linux-amd64 | od -An -tx1 | tr -d ' \n')
-          [ "\$magic" = "7f454c46" ] || { echo "bad magic: \$magic"; exit 1; }
+          magic=$(head -c 4 dist/subforge-linux-amd64 | od -An -tx1 | tr -d ' \n')
+          [ "$magic" = "7f454c46" ] || { echo "bad magic: $magic"; exit 1; }
       - name: Smoke test (linux/amd64 version)
         run: ./dist/subforge-linux-amd64 version
       - name: Checksums
