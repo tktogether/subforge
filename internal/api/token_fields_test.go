@@ -74,9 +74,13 @@ func firstDiffSnippet(a, b string) string {
 // 同时兼容 list 分享链接里 URL 编码的形式（Mozilla%2F5.0%20...&）。
 var randomUARe = regexp.MustCompile("Mozilla(?:/|%2F)5\\.0[^&\n\"']*")
 
+// generatedAtRe 匹配注释头里的秒级生成时间（RFC3339）。两次渲染跨秒时该字面
+// 不同，逐字节比较会随机失败（CI linux 慢，比本地更易跨秒）——比较前折叠。
+var generatedAtRe = regexp.MustCompile("生成时间: \\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:Z|[+-]\\d{2}:\\d{2})")
+
 // normalizeRandomUA 把随机 UA 折叠成固定占位符，供订阅正文比较使用。
 func normalizeRandomUA(s string) string {
-	return randomUARe.ReplaceAllString(s, "UA")
+	return generatedAtRe.ReplaceAllString(randomUARe.ReplaceAllString(s, "UA"), "生成时间: TS")
 }
 
 // tokenTestEnv 造一个「一个启用机场 + 若干令牌」的订阅服务。
