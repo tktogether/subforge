@@ -31,12 +31,12 @@ cross:
 	    windows/amd64 darwin/amd64 darwin/arm64 \
 	    freebsd/amd64; do \
 	    GOOS=$${target%/*} GOARCH=$${target#*/} CGO_ENABLED=0 \
-	      go build $(GOFLAGS) -o bin/subforge-$${target//\//-} ./cmd/subforge && \
+	      go build $(GOFLAGS) -o bin/subforge-$$(echo $$target | tr / -) ./cmd/subforge && \
 	    echo "ok: $$target"; \
 	done
 	@for target in linux/mipsle linux/mips; do \
 	    GOOS=$${target%/*} GOARCH=$${target#*/} GOMIPS=softfloat CGO_ENABLED=0 \
-	      go build $(GOFLAGS) -o bin/subforge-$${target//\//-}-softfloat ./cmd/subforge && \
+	      go build $(GOFLAGS) -o bin/subforge-$$(echo $$target | tr / -)-softfloat ./cmd/subforge && \
 	    echo "ok: $$target (softfloat)"; \
 	done
 
