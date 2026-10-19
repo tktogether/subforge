@@ -970,7 +970,7 @@ func TestWebUI_SubscribeLiveCompile(t *testing.T) {
 	if _, err := mgr.AddRule(ctx, "GEOIP", "CN", 0, false, true); err != nil {
 		t.Fatalf("插入 DIRECT rule: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("插入 sub token: %v", err)
 	}
 
@@ -1010,7 +1010,7 @@ func TestWebUI_SubscribeBypassesAccessToken(t *testing.T) {
 	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "", true); err != nil {
 		t.Fatalf("插入 airport: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("插入 sub token: %v", err)
 	}
 

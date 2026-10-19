@@ -297,16 +297,24 @@ func (m *Manager) DeleteRule(ctx context.Context, id int64) error {
 type SubToken = store.SubToken
 
 // CreateSubToken 新增订阅令牌。
-func (m *Manager) CreateSubToken(ctx context.Context, token, name string) error {
-	_, err := m.db.Raw().ExecContext(ctx, "INSERT INTO sub_tokens (token, name) VALUES (?, ?)", token, name)
+// target/pipeline/config/include/exclude 是令牌的订阅默认值，空串表示不定制
+// （沿用现有回落链）。优先级：query 显式参数 > 令牌字段 > 原回落链。
+func (m *Manager) CreateSubToken(ctx context.Context, token, name, target, pipeline, configName, include, exclude string) error {
+	_, err := m.db.Raw().ExecContext(ctx,
+		"INSERT INTO sub_tokens (token, name, target, pipeline, config, include, exclude) "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?)",
+		token, name, target, pipeline, configName, include, exclude)
 	return err
 }
 
-// GetSubToken 返回订阅令牌。
+// GetSubToken 返回订阅令牌。五个定制列用 COALESCE 兜底为空串，与 ListSubTokens 一致。
 func (m *Manager) GetSubToken(ctx context.Context, token string) (*SubToken, error) {
 	var t SubToken
-	err := m.db.Raw().QueryRowContext(ctx, "SELECT token, name, created_at FROM sub_tokens WHERE token = ?", token).
-		Scan(&t.Token, &t.Name, &t.CreatedAt)
+	err := m.db.Raw().QueryRowContext(ctx,
+		"SELECT token, COALESCE(name, ''), COALESCE(target, ''), COALESCE(pipeline, ''), "+
+			"COALESCE(config, ''), COALESCE(include, ''), COALESCE(exclude, ''), created_at "+
+			"FROM sub_tokens WHERE token = ?", token).
+		Scan(&t.Token, &t.Name, &t.Target, &t.Pipeline, &t.Config, &t.Include, &t.Exclude, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("令牌 %s 不存在", token)
 	}
@@ -314,6 +322,12 @@ func (m *Manager) GetSubToken(ctx context.Context, token string) (*SubToken, err
 		return nil, err
 	}
 	return &t, nil
+}
+
+// UpdateSubToken 按 token 部分更新订阅令牌：只更新非 nil 字段，nil 字段保持原值；
+// 非 nil 空串 = 清空该字段。token 不存在返回 sql.ErrNoRows。转发到 store 层。
+func (m *Manager) UpdateSubToken(ctx context.Context, token string, u store.SubTokenUpdate) error {
+	return m.db.UpdateSubToken(ctx, token, u)
 }
 
 // DeleteSubToken 删除订阅令牌。

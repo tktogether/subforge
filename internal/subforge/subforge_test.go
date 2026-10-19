@@ -333,7 +333,7 @@ func TestSubTokenCRUD(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
 
-	if err := m.CreateSubToken(ctx, "tok1", "n1"); err != nil {
+	if err := m.CreateSubToken(ctx, "tok1", "n1", "", "", "", "", ""); err != nil {
 		t.Fatalf("CreateSubToken: %v", err)
 	}
 	tok, err := m.GetSubToken(ctx, "tok1")
@@ -344,7 +344,7 @@ func TestSubTokenCRUD(t *testing.T) {
 		t.Fatalf("Name 应为 n1, got %q", tok.Name)
 	}
 
-	if err := m.CreateSubToken(ctx, "tok2", "n2"); err != nil {
+	if err := m.CreateSubToken(ctx, "tok2", "n2", "", "", "", "", ""); err != nil {
 		t.Fatalf("CreateSubToken tok2: %v", err)
 	}
 	list, err := m.ListSubTokens(ctx)
@@ -368,7 +368,7 @@ func TestSubTokenCRUD(t *testing.T) {
 	}
 
 	// 重复 token 触发主键冲突（非 nil 错误）
-	if err := m.CreateSubToken(ctx, "tok2", "dup"); err == nil {
+	if err := m.CreateSubToken(ctx, "tok2", "dup", "", "", "", "", ""); err == nil {
 		t.Fatal("重复 token 应返回错误")
 	}
 }
@@ -512,7 +512,7 @@ func TestManagerDBClosedErrors(t *testing.T) {
 	if err := m.DeleteRule(ctx, 1); err == nil {
 		t.Fatal("DeleteRule 应返回错误")
 	}
-	if err := m.CreateSubToken(ctx, "t", "n"); err == nil {
+	if err := m.CreateSubToken(ctx, "t", "n", "", "", "", "", ""); err == nil {
 		t.Fatal("CreateSubToken 应返回错误")
 	}
 	if _, err := m.GetSubToken(ctx, "t"); err == nil {

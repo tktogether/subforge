@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/tktogether/subforge/internal/fetch"
+	"github.com/tktogether/subforge/internal/ini_rules"
 )
 
 // DefaultRetention 保留的最近版本数。
@@ -32,6 +33,7 @@ type Source struct {
 	URL            string `yaml:"url"`
 	Type           string `yaml:"type"`
 	UpdateInterval string `yaml:"update_interval"`
+	InputFormat    string `yaml:"input_format"`
 }
 
 // Output 是输出配置。
@@ -116,8 +118,25 @@ func extForFormat(format string) string {
 		return "json"
 	case "mrs":
 		return "mrs"
+	case "text", "txt", "plain":
+		return "txt"
 	default:
 		return "yaml"
+	}
+}
+
+
+// shouldExpandINI 判断某 source 是否按 INI 规则源处理。
+// input_format 取值：auto（缺省/空）/ ini；auto 时嗅探内容。
+func shouldExpandINI(inputFormat string, data []byte) bool {
+	v := strings.ToLower(strings.TrimSpace(inputFormat))
+	switch v {
+	case "ini":
+		return true
+	case "auto", "":
+		return ini_rules.IsINI(data)
+	default:
+		return false
 	}
 }
 
@@ -184,7 +203,9 @@ func (m Manifest) Update(ctx context.Context, opts ...UpdateOption) ([]UpdateRes
 			src := m.Sources[i]
 			name := src.SourceName()
 			r := UpdateResult{Source: name}
-			if res.Err != nil {
+			// 容忍「嗅探失败但原文非空」仅限真正走 INI 展开的源；其它源（如 200+HTML 错误页）照旧报错，
+			// 防止垃圾内容被当作规则落盘。
+			if res.Err != nil && !(len(res.Content) > 0 && shouldExpandINI(src.InputFormat, res.Content)) {
 				r.Err = res.Err
 				out[i] = r
 				return
@@ -192,7 +213,31 @@ func (m Manifest) Update(ctx context.Context, opts ...UpdateOption) ([]UpdateRes
 			version := time.Now().UTC().Format("20060102-150405")
 			filename := fmt.Sprintf("%s-%s.%s", name, version, ext)
 			fullPath := filepath.Join(m.Output.Path, filename)
-			if err := os.WriteFile(fullPath, res.Content, 0o644); err != nil {
+
+			// INI 规则源：input_format=ini 或 auto 命中嗅探 → 展开 → 按 output.format 落盘。
+			content := res.Content
+			if shouldExpandINI(src.InputFormat, res.Content) {
+				doc, err := ini_rules.Parse(res.Content)
+				if err != nil {
+					r.Err = fmt.Errorf("解析 INI 规则源 %s: %w", name, err)
+					out[i] = r
+					return
+				}
+				rules, err := ini_rules.Expand(ctx, doc, ini_rules.NewRuleFetcher(fetcher))
+				if err != nil {
+					r.Err = fmt.Errorf("展开 INI 规则源 %s: %w", name, err)
+					out[i] = r
+					return
+				}
+				if strings.ToLower(strings.TrimSpace(m.Output.Format)) == "text" ||
+					strings.ToLower(strings.TrimSpace(m.Output.Format)) == "txt" ||
+					strings.ToLower(strings.TrimSpace(m.Output.Format)) == "plain" {
+					content = ini_rules.FormatRulesText(rules)
+				} else {
+					content = ini_rules.FormatRulesYAML(rules)
+				}
+			}
+			if err := os.WriteFile(fullPath, content, 0o644); err != nil {
 				r.Err = fmt.Errorf("写入 %s: %w", fullPath, err)
 				out[i] = r
 				return

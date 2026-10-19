@@ -198,6 +198,9 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/", s.handleAPITokens)
 		r.Post("/", s.handleAPITokens)
 	})
+	// 单项令牌：GET 读、PUT 部分更新（五字段 + name，省略即不动、空串即清空）、DELETE 删。
+	r.Get("/api/tokens/{token}", s.handleAPIToken)
+	r.Put("/api/tokens/{token}", s.handleAPIToken)
 	r.Delete("/api/tokens/{token}", s.handleAPIToken)
 	r.Route("/api/self-nodes", func(r chi.Router) {
 		r.Get("/", s.handleAPISelfNodes)

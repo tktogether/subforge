@@ -4,6 +4,7 @@ package api
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/tktogether/subforge/internal/convert"
 	"github.com/tktogether/subforge/internal/render"
+	"github.com/tktogether/subforge/internal/store"
 	"github.com/tktogether/subforge/internal/subforge"
 	"github.com/tktogether/subforge/internal/traffic"
 )
@@ -360,8 +362,13 @@ func (s *Server) handleAPITokens(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens})
 	case http.MethodPost:
 		var req struct {
-			Token string `json:"token"`
-			Name  string `json:"name"`
+			Token    string `json:"token"`
+			Name     string `json:"name"`
+			Target   string `json:"target"`
+			Pipeline string `json:"pipeline"`
+			Config   string `json:"config"`
+			Include  string `json:"include"`
+			Exclude  string `json:"exclude"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -375,7 +382,8 @@ func (s *Server) handleAPITokens(w http.ResponseWriter, r *http.Request) {
 			}
 			req.Token = hex.EncodeToString(buf)
 		}
-		if err := m.CreateSubToken(r.Context(), req.Token, req.Name); err != nil {
+		if err := m.CreateSubToken(r.Context(), req.Token, req.Name,
+			req.Target, req.Pipeline, req.Config, req.Include, req.Exclude); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -404,6 +412,43 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"token": t})
+	case http.MethodPut:
+		// 部分更新：JSON 里省略的字段指针为 nil → 不动该列；
+		// 显式提供（含空串）→ 写入该值，空串即清空。
+		// 全部用 *string 才能区分「未提供」与「清空」。
+		var req struct {
+			Name     *string `json:"name"`
+			Target   *string `json:"target"`
+			Pipeline *string `json:"pipeline"`
+			Config   *string `json:"config"`
+			Include  *string `json:"include"`
+			Exclude  *string `json:"exclude"`
+		}
+		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		upd := store.SubTokenUpdate{
+			Name:     req.Name,
+			Target:   req.Target,
+			Pipeline: req.Pipeline,
+			Config:   req.Config,
+			Include:  req.Include,
+			Exclude:  req.Exclude,
+		}
+		if err := m.UpdateSubToken(r.Context(), token, upd); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				s.writeAPIError(w, r, http.StatusNotFound, errors.New("令牌 "+token+" 不存在"))
+				return
+			}
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		t, err := m.GetSubToken(r.Context(), token)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"token": t})
 	case http.MethodDelete:
 		if err := m.DeleteSubToken(r.Context(), token); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -411,7 +456,7 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
-		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/DELETE"))
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/PUT/DELETE"))
 	}
 }
 
@@ -522,26 +567,44 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("缺少 token 参数"))
 		return
 	}
-	if _, err := m.GetSubToken(r.Context(), token); err != nil {
+	subTok, err := m.GetSubToken(r.Context(), token)
+	if err != nil {
 		s.writeAPIError(w, r, http.StatusNotFound, err)
 		return
 	}
 
+	// 五个定制字段的取值优先级：query 显式参数 > 令牌字段 > 原回落链。
+	// 令牌字段为空串（未定制）时逐字节等价于改动前的行为。
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	if target == "" {
+		target = strings.TrimSpace(subTok.Target)
+	}
 	if target == "" {
 		target = "clash.meta"
 	}
 
-	// pipeline：显式 query 优先；为空时回落到 config 表的 subscribe.pipeline。
+	// pipeline：显式 query 优先；其次令牌字段；都为空时回落到 config 表的 subscribe.pipeline。
 	pipeline := strings.TrimSpace(r.URL.Query().Get("pipeline"))
+	if pipeline == "" {
+		pipeline = strings.TrimSpace(subTok.Pipeline)
+	}
 	if pipeline == "" {
 		if v, err := m.GetConfig(r.Context(), "subscribe.pipeline"); err == nil {
 			pipeline = strings.TrimSpace(v)
 		}
 	}
 	configName := strings.TrimSpace(r.URL.Query().Get("config"))
+	if configName == "" {
+		configName = strings.TrimSpace(subTok.Config)
+	}
 	includeList := splitListQuery(r.URL.Query().Get("include"))
+	if len(includeList) == 0 {
+		includeList = splitListQuery(subTok.Include)
+	}
 	excludeList := splitListQuery(r.URL.Query().Get("exclude"))
+	if len(excludeList) == 0 {
+		excludeList = splitListQuery(subTok.Exclude)
+	}
 
 	// 1. 启用的订阅源（ListAirports 已按 sort_order, id 排序）。
 	airports, err := m.ListAirports(r.Context())

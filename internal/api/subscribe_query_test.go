@@ -42,7 +42,7 @@ func TestSubscribeQueryInclude(t *testing.T) {
 	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true); err != nil {
 		t.Fatalf("插入 airport: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("插入 sub token: %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestSubscribeQueryExclude(t *testing.T) {
 	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true); err != nil {
 		t.Fatalf("插入 airport: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("插入 sub token: %v", err)
 	}
 	status, _, body := uiGet(t, ts, "/subscribe?token=sub-token-1&target=clash.meta&exclude=vmess")
@@ -86,7 +86,7 @@ func TestSubscribeQueryConfig(t *testing.T) {
 	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true); err != nil {
 		t.Fatalf("插入 airport: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("插入 sub token: %v", err)
 	}
 	// baseline without config
@@ -106,7 +106,7 @@ func TestSubscribeQueryPipelineFallback(t *testing.T) {
 	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true); err != nil {
 		t.Fatalf("插入 airport: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("插入 sub token: %v", err)
 	}
 	// write subscribe.pipeline into config table
@@ -135,7 +135,7 @@ func TestSubscribeQueryRegression(t *testing.T) {
 	if _, err := mgr.AddRule(ctx, "DOMAIN-SUFFIX", "example.com", group.ID, true, true); err != nil {
 		t.Fatalf("插入 rule: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("插入 sub token: %v", err)
 	}
 	status, hdr, body := uiGet(t, ts, "/subscribe?token=sub-token-1&target=clash.meta")

@@ -23,7 +23,7 @@ func TestSubscribeTrafficHeaderDefaultSum(t *testing.T) {
 	}, 5, ""); err != nil {
 		t.Fatalf("UpdateAirportTraffic: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("CreateSubToken: %v", err)
 	}
 
@@ -60,7 +60,7 @@ func TestSubscribeTrafficHeaderSumsAirports(t *testing.T) {
 	}, 2, ""); err != nil {
 		t.Fatalf("UpdateAirportTraffic2: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("CreateSubToken: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func TestSubscribeTrafficHeaderOffPreset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetTrafficStrategy: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("CreateSubToken: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestSubscribeTrafficHeaderFirstPreset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetTrafficStrategy: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("CreateSubToken: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestSubscribeTrafficHeaderAbsentWithoutTraffic(t *testing.T) {
 	if _, err := mgr.AddAirport(ctx, "a1", u, "", true); err != nil {
 		t.Fatalf("AddAirport: %v", err)
 	}
-	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试"); err != nil {
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
 		t.Fatalf("CreateSubToken: %v", err)
 	}
 

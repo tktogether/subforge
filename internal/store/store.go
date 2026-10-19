@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -237,17 +238,29 @@ type RuleProvider struct {
 }
 
 // SubToken 是 sub_tokens 表的一行。
+//
+// 五个定制字段 target/pipeline/config/include/exclude 是订阅默认值：
+// 空串表示「不定制，沿用现有回落链」。优先级为 query 显式参数 > 令牌字段 > 原回落链，
+// 详见 internal/api/subscription.go handleSubscribe。
 type SubToken struct {
 	Token     string    `json:"token"`
 	Name      string    `json:"name"`
+	Target    string    `json:"target"`
+	Pipeline  string    `json:"pipeline"`
+	Config    string    `json:"config"`
+	Include   string    `json:"include"`
+	Exclude   string    `json:"exclude"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 // ListSubTokens 返回所有订阅令牌，按创建时间与令牌排序。
-// name 列可为 NULL，用 COALESCE 兜底，避免扫描时报 "converting NULL to string"。
+// name 与五个定制列可为 NULL（老库迁移前或未写），统一用 COALESCE 兜底为空串，
+// 避免扫描时报 "converting NULL to string"。
 func (d *DB) ListSubTokens(ctx context.Context) ([]SubToken, error) {
 	rows, err := d.db.QueryContext(ctx,
-		"SELECT token, COALESCE(name, ''), created_at FROM sub_tokens ORDER BY created_at, token")
+		"SELECT token, COALESCE(name, ''), COALESCE(target, ''), COALESCE(pipeline, ''), "+
+			"COALESCE(config, ''), COALESCE(include, ''), COALESCE(exclude, ''), created_at "+
+			"FROM sub_tokens ORDER BY created_at, token")
 	if err != nil {
 		return nil, err
 	}
@@ -255,12 +268,81 @@ func (d *DB) ListSubTokens(ctx context.Context) ([]SubToken, error) {
 	out := []SubToken{}
 	for rows.Next() {
 		var t SubToken
-		if err := rows.Scan(&t.Token, &t.Name, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.Token, &t.Name, &t.Target, &t.Pipeline, &t.Config,
+			&t.Include, &t.Exclude, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// SubTokenUpdate 是 UpdateSubToken 的部分更新输入：nil 指针 = 不动该列，
+// 非 nil 指针 = 写入该值（空串 = 清空）。Name 同样按指针判定是否更新。
+type SubTokenUpdate struct {
+	Name     *string
+	Target   *string
+	Pipeline *string
+	Config   *string
+	Include  *string
+	Exclude  *string
+}
+
+// UpdateSubToken 按 token 部分更新订阅令牌：只 SET 非 nil 字段，nil 字段保持原值。
+// 任何字段都没有提供（全 nil）时直接成功返回（幂等空更新）。
+// token 不存在时返回 sql.ErrNoRows，与 store 内其他 Update 函数一致。
+//
+// 动态拼 SET 子句：列名是代码内常量（不来自用户输入），值走占位符，无注入面。
+func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate) error {
+	sets := make([]string, 0, 6)
+	args := make([]any, 0, 7)
+	if u.Name != nil {
+		sets = append(sets, "name = ?")
+		args = append(args, *u.Name)
+	}
+	if u.Target != nil {
+		sets = append(sets, "target = ?")
+		args = append(args, *u.Target)
+	}
+	if u.Pipeline != nil {
+		sets = append(sets, "pipeline = ?")
+		args = append(args, *u.Pipeline)
+	}
+	if u.Config != nil {
+		sets = append(sets, "config = ?")
+		args = append(args, *u.Config)
+	}
+	if u.Include != nil {
+		sets = append(sets, "include = ?")
+		args = append(args, *u.Include)
+	}
+	if u.Exclude != nil {
+		sets = append(sets, "exclude = ?")
+		args = append(args, *u.Exclude)
+	}
+	if len(sets) == 0 {
+		// 全 nil：仍需校验 token 是否存在，否则空更新会静默成功一个不存在的令牌。
+		var exists string
+		err := d.db.QueryRowContext(ctx, "SELECT token FROM sub_tokens WHERE token = ?", token).Scan(&exists)
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return err
+	}
+	query := "UPDATE sub_tokens SET " + strings.Join(sets, ", ") + " WHERE token = ?"
+	args = append(args, token)
+	res, err := d.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // GetProxyGroup 按 id 返回代理分组；不存在时返回 sql.ErrNoRows。
@@ -442,6 +524,20 @@ func migrate(db *sql.DB) error {
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("执行建表: %w", err)
+		}
+	}
+	// sub_tokens 五个定制列：老库用 ALTER 幂等补齐。
+	// 不改上面的 CREATE TABLE（建表语句保持三列历史形态），保证「新库/老库走同一条加列路径」，
+	// 列定义只有一处事实源。空串 = 现状行为（不定制，沿用回落链）。
+	for _, c := range []struct{ col, decl string }{
+		{"target", "TEXT NOT NULL DEFAULT ''"},
+		{"pipeline", "TEXT NOT NULL DEFAULT ''"},
+		{"config", "TEXT NOT NULL DEFAULT ''"},
+		{"include", "TEXT NOT NULL DEFAULT ''"},
+		{"exclude", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := addColumnIfMissing(db, "sub_tokens", c.col, c.decl); err != nil {
+			return fmt.Errorf("迁移 sub_tokens.%s: %w", c.col, err)
 		}
 	}
 	// airports 的流量元数据列：老库用 ALTER 幂等补齐。
