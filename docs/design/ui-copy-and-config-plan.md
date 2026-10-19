@@ -452,6 +452,22 @@ cd /root && setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tm
 | 重启方式 | 同参数裸进程：`cd /root && setsid nohup /tmp/subforge serve -listen 0.0.0.0:21009 -data-dir /tmp/subforge-data >> /tmp/subforge.log 2>&1 < /dev/null &` |
 
 **数据零丢失核对**（升级前后逐端点 `curl | md5sum`）：airports `69e1babb…` / groups `c375ce57…` / rules `c9beaa90…` / tokens `5ad10464…` / self-nodes `a79ada4b…` / pipelines `58e0494c…` / rule-providers `9a44495f…` / traffic/strategy `6eced011…` = **8/8 完全一致**。
+## 5.7 第四次部署验收（commit 3120fef → 测试机，2026-10-19 18:32 本地）
+
+W7 修复波（7 点反馈 + P3 配色 + 文案对齐，W7A–W7M）部署，流程同 §5.6。
+
+| 项 | 值 |
+| --- | --- |
+| 提交 | `3120fef` feat(web): W7 修复波——7 点反馈落地 + P3 配色 + 文案对齐（W7A-W7M），40 files +2327/−197（其中后端 Go 代码零改动，仅 web/** 与 docs/**） |
+| 新二进制 | 40,009,890 B，sha256 `f344b3996579483092616fb068151e92763823e6dfaca10d054a5f442c032398` |
+| 被替换版本 | commit `e82048b`（40,005,794 B，pid 73227）→ 新 pid **75673** |
+| 备份 | `/tmp/subforge.bak-20261019T103234Z`、`/tmp/subforge-data/subforge.db.pre-3120fef` |
+| 重启方式 | 部署脚本化（/tmp/deploy-w7.sh）：sha256 校验 → chmod → 备份 → kill 旧 pid → `mv -f` 原子替换 → `(setsid nohup … &)` 子壳启动，SSH 通道不再悬挂 |
+
+**验收结果**：`version` → commit `3120fef`；`healthz` 200；groups `c375ce57…` / rules `c9beaa90…` / tokens `5ad10464…` / self-nodes `a79ada4b…` / pipelines `58e0494c…` / rule-providers `9a44495f…` 六端点 md5 与 e82048b 时点**完全一致 = 零丢失**；airports 与 traffic/strategy 两端点 md5 变化为**运行期合法变更**（用户 08:47Z 在测试机新增第二条机场、traffic 策略被操作过，非部署丢失）；`GET /` 引 `/assets/index-kFHihQ-D.js`（本次构建产物同名）；deep link 200；`/api/nope` 404；日志 grep error/panic/fatal **0 命中**。
+
+**教训**：复验脚本路径拼错（`/api/traffic-strategy` 不存在，真路由 `/api/traffic/strategy`）会让「md5 一致」变成 404 响应体的假象——md5 对比必须先确认路由存在且 200。
+
 
 **前端切换证据（本轮的重点）**：
 

@@ -547,4 +547,10 @@ Lead 亲自逐条复跑，**全部命中**：
 - **W7M 文案卡**（094ea706，用户裁定 ③b/⑤ 走文案路线不实现功能）：调查确认 INI 只是「转换配置模板」（internal/template/ini.go:1、internal/config/override.go:79-86），与规则源无关；规则源落盘格式由清单 output.format 决定（internal/manifest/manifest.go:112-122、internal/subforge/rulesources.go:32-43）。help.ts:179/187/190-191/329 文案与实现对齐（「不含 INI 模板」+ output.format→扩展名映射）；令牌可长期复用写进 help.ts:233/236-238 与 SubscriptionsPage.vue:233（依据 internal/api/subscription.go:515-528 无过期逻辑）。help.spec.ts:142-161 与 SubscriptionsPage.spec.ts:187-194 新增钉住断言。终版门禁：typecheck 0 / **631 tests** coverage 0（All files 100/97.97/100/100）/ build 0（index-kFHihQ-D.js 648.85 kB）。
 - **遗留待用户拍板**：③b INI 规则源补实现方案、⑤订阅 per-token 定制化方案；机场页「刷新时同时导入规则」开关容器位置偏表格下方（样式已容器化，摆位未动）。
 
+### D.10 W7 部署（第四次部署，2026-10-19）
+
+- 用户拍板：1 提交+部署执行；2/3（③b INI、⑤ per-token）走文案路线不实现功能 → W7M 文案卡交付后随 W7 波一并提交部署。
+- 提交 **3120fef**（40 files +2327/−197，后端 Go 零改动）；交叉编译 40,009,890 B / sha256 f344b399…；部署测试机 210（pid 75673），备份 bak-20261019T103234Z + db.pre-3120fef；验收：6 端点 md5 与 e82048b 一致（零丢失）、airports/traffic 两端点为用户运行期合法变更、index-kFHihQ-D.js 上线、日志零错误。证据详录 ui-copy-and-config-plan.md §5.7。
+- 经验：复验脚本路径拼错（/api/traffic-strategy ≠ /api/traffic/strategy）会让 md5 对比变成 404 假象；md5 前必须确认 200。
+
 
