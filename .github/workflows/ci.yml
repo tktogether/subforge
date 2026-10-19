@@ -35,8 +35,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm run typecheck
-      - name: Test
-        run: pnpm run test
+      - name: Test + coverage gate
+        run: pnpm run coverage
       - name: Build
         run: pnpm run build
       - name: Upload web dist

@@ -90,5 +90,5 @@ condition-gate: coverage
 # --- Verify (one-shot local green) ---
 
 # 本机一把过：go build/vet/test + 门禁A + 门禁B快层 + 前端 typecheck/test/build。
-verify: build vet test coverage-gate web-typecheck web-test web-build
+verify: build vet test coverage-gate web-typecheck web-coverage web-build
 	@echo "verify: all green"

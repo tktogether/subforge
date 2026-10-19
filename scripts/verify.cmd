@@ -46,11 +46,11 @@ if defined HAVE_PNPM (
 )
 if errorlevel 1 exit /b 1
 
-echo [9/10] frontend test
+echo [9/10] frontend coverage gate (vitest run --coverage; thresholds in web/vitest.config.ts)
 if defined HAVE_PNPM (
-  pnpm -C web run test
+  pnpm -C web run coverage
 ) else (
-  cmd /c "cd web && node_modules\.bin\vitest.cmd run"
+  cmd /c "cd web && node_modules\.bin\vitest.cmd run --coverage"
 )
 if errorlevel 1 exit /b 1
 
