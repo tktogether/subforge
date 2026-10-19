@@ -553,4 +553,11 @@ Lead 亲自逐条复跑，**全部命中**：
 - 提交 **3120fef**（40 files +2327/−197，后端 Go 零改动）；交叉编译 40,009,890 B / sha256 f344b399…；部署测试机 210（pid 75673），备份 bak-20261019T103234Z + db.pre-3120fef；验收：6 端点 md5 与 e82048b 一致（零丢失）、airports/traffic 两端点为用户运行期合法变更、index-kFHihQ-D.js 上线、日志零错误。证据详录 ui-copy-and-config-plan.md §5.7。
 - 经验：复验脚本路径拼错（/api/traffic-strategy ≠ /api/traffic/strategy）会让 md5 对比变成 404 假象；md5 前必须确认 200。
 
+### D.11 W8 部署（第五次部署，2026-10-19，commit d326ed5）
 
+- **前置**：W8A 机场页开关摆位（**2ac8d4b**，web）+ W8D 订阅令牌字段级定制 + W8E INI 规则源展开（**d326ed5**，Go）。用户拍板：W8F 前端令牌弹窗派发 + commit+部署并行执行。
+- **门禁（Lead 亲跑）**：Go build/vet/test ./... -count=1 全 exit 0；web typecheck 0 / **35 files 632 tests** exit 0（632 = 628 + W8A 1 + W8D 3 文件内新增）。工作区提交后干净。
+- **事故与恢复（部署中断 + PE 二进制）**：①首次部署脚本因 SSH 通道中断死在 kill 之后 mv 之前，服务停机约 8 分钟；②恢复时发现第一次交叉编译**漏带 GOOS=linux GOARCH=amd64**，产出 Windows PE（MZ 头），远端 bash 报 `MZ@: not found`；③重编译显式 env 带 CGO_ENABLED=0 GOOS=linux GOARCH=amd64，本地校验 ELF 魔数（7f 45 4c 46）后再上传。**规程补充：交叉编译后必须先验 ELF 魔数再上传；远端 pgrep 用 `[s]` 类括号技巧防自匹配；多步部署脚本不可依赖 SSH 通道存活，须写成远端脚本文件执行。**
+- **部署事实**：二进制 40,038,562 B，sha256 60fde837…，buildinfo Date=2026-10-19T11:31:00Z；备份 /tmp/subforge.bak-20261019T112341Z + db.pre-d326ed5；新 pid **77576**。
+- **验收**：healthz ok；version → commit d326ed5；8 端点 md5 对比 7/8 SAME（零丢失），tokens CHANGED 为 W8D 预期（5 新字段 target/pipeline/config/include/exclude 空默认已出现在响应）；GET / 引 index-DjKcmap-.js（与本地构建同名）；deep link 200；/api/nope 404；日志 error/panic/fatal 0 命中（仅 1 条 PE 事故残留 bash 文本）；公网 healthz 200。
+- **并行完成**：dsh-subagent-model-config 插件接缝修复（startContinuable→startActivation 17 处，0.3.2）+ 用户配置修复（规则 match:"*-free" → llmio/free/high，CONFIG_FILE 在 E:\Projects\dsh-subagent-model-config\config.json），teammate 模型路由打通；probe 取证仅 debug:true 时写，debug:false 无日志≠未触发。
