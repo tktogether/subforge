@@ -225,12 +225,14 @@ describe('ConvertPage', () => {
     w.unmount()
   })
 
-  it('模板：help-panel 含 oneLiner 片段', async () => {
+  it('副标题承载 oneLiner；help-panel 入口行=使用说明且详情默认收起', async () => {
     const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     const panel = w.find('[data-testid="help-panel"]')
     expect(panel.exists()).toBe(true)
-    expect(panel.text()).toContain(pageHelp('convert').oneLiner)
+    expect(w.find('.page-header__subtitle').text()).toContain(pageHelp('convert').oneLiner)
+    expect(panel.find('[data-testid="help-toggle-label"]').text()).toBe('使用说明')
+    expect(panel.find('[data-testid="help-body"]').exists()).toBe(false)
     w.unmount()
   })
 

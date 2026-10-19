@@ -161,13 +161,15 @@ describe('SettingsPage', () => {
     w.unmount()
   })
 
-  it('PageHeader help-panel 含 oneLiner 片段', async () => {
+  it('页面副标题承载 oneLiner；help-panel 入口行=使用说明且详情默认收起', async () => {
     vi.mocked(endpoints.listSettings).mockResolvedValue({ settings: sampleSettings })
     const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     const panel = w.find('[data-testid="help-panel"]')
     expect(panel.exists()).toBe(true)
-    expect(panel.text()).toContain(pageHelp('settings').oneLiner.slice(0, 12))
+    expect(w.find('.page-header__subtitle').text()).toContain(pageHelp('settings').oneLiner)
+    expect(panel.find('[data-testid="help-toggle-label"]').text()).toBe('使用说明')
+    expect(panel.find('[data-testid="help-body"]').exists()).toBe(false)
     w.unmount()
   })
 

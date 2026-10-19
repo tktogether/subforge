@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import AppShell from './AppShell.vue'
+import { useThemeMode } from '../composables/useThemeMode'
 
 const { routeRef } = vi.hoisted(() => ({ routeRef: { value: { meta: {}, path: '/' } } }))
 
@@ -42,7 +44,17 @@ vi.mock('../composables/useNotify', () => ({
   snackbarColor: (k: string) => (k === 'error' ? 'error' : k === 'info' ? 'info' : 'success'),
 }))
 
-const vuetify = createVuetify({ components, directives })
+const vuetify = createVuetify({
+  components,
+  directives,
+  theme: {
+    defaultTheme: 'subforgeLight',
+    themes: {
+      subforgeLight: { dark: false, colors: {} },
+      subforgeDark: { dark: true, colors: {} },
+    },
+  },
+})
 
 describe('AppShell', () => {
   beforeEach(() => {
@@ -128,5 +140,31 @@ describe('AppShell', () => {
     await snack.vm.$emit('update:model-value', false)
     expect(closeNotify).toHaveBeenCalled()
     w.unmount()
+  })
+
+  it('深色接线：localStorage 为 dark 时 document.documentElement.dataset.theme=dark 且 VApp 带 v-theme--subforgeDark', async () => {
+    localStorage.setItem('subforge.theme', 'dark')
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(w.html()).toContain('v-theme--subforgeDark')
+    w.unmount()
+    localStorage.removeItem('subforge.theme')
+  })
+
+  it('深色实时切换：设置页侧 setMode("dark") 立即改动 data-theme 与 Vuetify 主题名（无需重挂载）', async () => {
+    const settingsApi = useThemeMode()
+    settingsApi.setMode('light')
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    settingsApi.setMode('dark')
+    await nextTick()
+    await flushPromises()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(w.html()).toContain('v-theme--subforgeDark')
+    w.unmount()
+    settingsApi.setMode('light')
+    localStorage.removeItem('subforge.theme')
   })
 })

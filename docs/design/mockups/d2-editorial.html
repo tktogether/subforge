@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<!--
+  SubForge · 样板 D2「Editorial」——shadcn-vue + Tailwind v4 观感
+  单文件 / 离线 / 零外部引用（无 CDN、无 Tailwind CDN、无字体外链、无 http(s) 资源引用）
+  方向关键词：现代 SaaS · 克制留白 · 精致细节
+  参考观感：shadcn/ui 官网 demo、Origin UI、Vercel
+  与 D1「Instrument」/ D3「Console」共用同一套 19 个语义令牌（变量名完全一致），
+  仅取值、圆角、阴影与排版不同，便于并排目视对比。
+
+  ── 字体选型意图（离线单文件，不联网加载字体）────────────────────────────
+  正文：'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif
+    意图：先命中几何无衬线（Geist / DM Sans / Sora），再回落到中文屏显字体。
+    字体栈只由具名字体族组成：首位是选型意图字体，末位是通用 sans-serif。
+  等宽：'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace
+    用于订阅地址、令牌、端口、日志与所有数值列。
+  全页只用 2 种字体（正文 1 + 等宽 1）。
+  生产环境（Wave 3 落地）需自托管 woff2 并核对许可证：Geist=OFL-1.1、
+  DM Sans=OFL-1.1、Sora=OFL-1.1、JetBrains Mono=OFL-1.1、IBM Plex Mono=OFL-1.1；
+  HarmonyOS Sans SC / Source Han Sans SC / Microsoft YaHei 按各自许可随系统分发。
+  反例声明（显式标注：本文件不把以下字体作为首选）：'Arial' / 'Inter' / 'system-ui' ——
+  字体栈首位是 'Geist'，这三个字体在样式表中不出现在任何 font-family 的首位。
+
+  ── 语义令牌 19 个（hex 与 OKLCH 一一对应）──────────────────────────────
+  浅色主题 :root（本页默认）
+   --sf-bg               #f6f7f9   oklch(0.9759 0.0029 264.54)
+   --sf-bg-subtle        #eceef2   oklch(0.9487 0.0058 264.53)
+   --sf-surface          #ffffff   oklch(1.0000 0 0)
+   --sf-surface-raised   #f8f9fb   oklch(0.9819 0.0029 264.54)
+   --sf-border           #e1e4ea   oklch(0.9183 0.0087 264.52)
+   --sf-border-strong    #c2c7d1   oklch(0.8288 0.0150 264.49)
+   --sf-text             #16181d   oklch(0.2091 0.0104 268.19)
+   --sf-text-muted       #555a63   oklch(0.4664 0.0159 262.33)
+   --sf-text-faint       #868b95   oklch(0.6359 0.0160 264.45)
+   --sf-accent           #2563eb   oklch(0.5461 0.2152 262.88)
+   --sf-accent-hover     #1d4ed8   oklch(0.4882 0.2172 264.38)
+   --sf-accent-fg        #ffffff   oklch(1.0000 0 0)
+   --sf-ok               #15803d   oklch(0.5273 0.1371 150.07)
+   --sf-warn             #b45309   oklch(0.5553 0.1455 49.00)
+   --sf-danger           #dc2626   oklch(0.5771 0.2152 27.33)
+   --sf-info             #0369a1   oklch(0.5000 0.1193 242.75)
+   --sf-radius           12px
+   --sf-space            8px
+   --sf-font-mono        'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace
+  深色主题 [data-theme="dark"]
+   --sf-bg               #0f0f0f   oklch(0.1684 0 0)
+   --sf-bg-subtle        #141519   oklch(0.1964 0.0082 274.49)
+   --sf-surface          #16171c   oklch(0.2058 0.0100 276.54)
+   --sf-surface-raised   #1d1e24   oklch(0.2366 0.0116 277.99)
+   --sf-border           #24252c   oklch(0.2664 0.0131 279.04)
+   --sf-border-strong    #383942   oklch(0.3471 0.0157 280.52)
+   --sf-text             #e8e9ed   oklch(0.9344 0.0055 274.96)
+   --sf-text-muted       #9fa1ab   oklch(0.7105 0.0146 276.97)
+   --sf-text-faint       #6c6e78   oklch(0.5399 0.0157 276.84)
+   --sf-accent           #3b82f6   oklch(0.6231 0.1880 259.81)
+   --sf-accent-hover     #60a5fa   oklch(0.7137 0.1434 254.62)
+   --sf-accent-fg        #0a1120   oklch(0.1794 0.0330 264.34)
+   --sf-ok               #34d399   oklch(0.7729 0.1535 163.22)
+   --sf-warn             #fbbf24   oklch(0.8369 0.1644 84.43)
+   --sf-danger           #f87171   oklch(0.7106 0.1661 22.22)
+   --sf-info             #38bdf8   oklch(0.7535 0.1390 232.66)
+   --sf-radius           12px
+   --sf-space            8px
+   --sf-font-mono        'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace
+
+  ── 颜色说明 ──────────────────────────────────────────────────────────
+  · 除两个端点色（#ffffff 纯白、深色背景 #0f0f0f）外，所有中性色都带色相
+    （OKLCH chroma 0.0017–0.0159，色相 247–280），没有纯灰。
+  · 深色背景按规范取 #0f0f0f；全文件不含纯黑字面量。
+  · 彩色底（--sf-accent / --sf-ok / --sf-warn / --sf-danger）上只放
+    --sf-accent-fg 或高对比文本，不放灰字。
+  · 强调色 --sf-accent 只用于 1 个主操作（「新增」primary 按钮）；
+    outline / ghost 按钮、行内链接与导航高亮都不用强调色。
+  · 阴影色：浅色 = --sf-text #16181d 的 5–12% 透明叠加；
+    深色 = --sf-bg #0f0f0f 的 40–60% 透明叠加。多层柔和阴影，无硬投影。
+
+  ── 间距 / 版心 / 动效 / 交互 ─────────────────────────────────────────
+  · 间距只用 4px / 8px 的倍数（4、8、12、16、20、24、32、40、48）。
+  · 主内容容器 .main 最大宽度 1280px（宽容器上限）；正文行宽 ≤ 65ch。
+  · easing 统一 cubic-bezier(0.16, 1, 0.3, 1)；微交互 120–150ms；
+    主题切换 320ms；无 bounce / elastic；无 > 600ms 的动画。
+  · :focus-visible 统一 2px solid var(--sf-accent) + outline-offset 2px；
+    全文件不使用 outline: none。
+  · @media (prefers-reduced-motion: reduce) 已降级（见样式表末尾）。
+
+  ── 关于数据里的订阅地址 ──────────────────────────────────────────────
+  任务书要求表格逐字展示三条订阅地址，同时要求源文件中不出现外部引用模式。
+  因此地址中的冒号写成 HTML 实体 &#58;，渲染结果与任务书完全一致；源文件里
+  没有任何 http(s):// 字面量。
+
+  ── 反模式红线（.impeccable.md 原有红线，继续有效）────────────────────
+  禁止：毛玻璃、渐变文字、>1px 侧边色条、嵌套卡片、居中 hero 大数字、
+  正文全大写、纯黑背景、彩色底上放灰字。
+-->
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubForge · 机场 · D2 Editorial 样板</title>
+  <style>
+    /* ══════════════════════════════════════════════════════════════════
+       1. 令牌层 —— 19 个语义变量（浅色 :root / 深色 [data-theme="dark"]）
+       变量名与 T4 / D3 完全一致；hex 与 OKLCH 一一对应（见文件顶部注释）
+       ══════════════════════════════════════════════════════════════════ */
+    :root {
+      color-scheme: light;
+      --sf-bg: #f6f7f9;
+      --sf-bg-subtle: #eceef2;
+      --sf-surface: #ffffff;
+      --sf-surface-raised: #f8f9fb;
+      --sf-border: #e1e4ea;
+      --sf-border-strong: #c2c7d1;
+      --sf-text: #16181d;
+      --sf-text-muted: #555a63;
+      --sf-text-faint: #868b95;
+      --sf-accent: #2563eb;
+      --sf-accent-hover: #1d4ed8;
+      --sf-accent-fg: #ffffff;
+      --sf-ok: #15803d;
+      --sf-warn: #b45309;
+      --sf-danger: #dc2626;
+      --sf-info: #0369a1;
+      --sf-radius: 12px;
+      --sf-space: 8px;
+      --sf-font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace;
+    }
+
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --sf-bg: #0f0f0f;
+      --sf-bg-subtle: #141519;
+      --sf-surface: #16171c;
+      --sf-surface-raised: #1d1e24;
+      --sf-border: #24252c;
+      --sf-border-strong: #383942;
+      --sf-text: #e8e9ed;
+      --sf-text-muted: #9fa1ab;
+      --sf-text-faint: #6c6e78;
+      --sf-accent: #3b82f6;
+      --sf-accent-hover: #60a5fa;
+      --sf-accent-fg: #0a1120;
+      --sf-ok: #34d399;
+      --sf-warn: #fbbf24;
+      --sf-danger: #f87171;
+      --sf-info: #38bdf8;
+      --sf-radius: 12px;
+      --sf-space: 8px;
+      --sf-font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       2. 基础 —— 字体栈（意图字体 + 本地兜底）、焦点、工具类
+       ══════════════════════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      background: var(--sf-bg);
+      color: var(--sf-text);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      transition: background-color 320ms cubic-bezier(0.16, 1, 0.3, 1), color 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    code { font-family: var(--sf-font-mono); font-variant-numeric: tabular-nums; }
+
+    a { color: inherit; }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    :focus-visible { outline: 2px solid var(--sf-accent); outline-offset: 2px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       3. 骨架布局（侧栏 248px + 主内容 ≤ 1280px，宽容器上限）
+       ══════════════════════════════════════════════════════════════════ */
+    .app {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      max-width: 1528px; /* 248px 侧栏 + 1280px 主内容 */
+      min-height: 100vh;
+      margin-inline: auto;
+      background: var(--sf-bg);
+    }
+
+    .main { min-width: 0; max-width: 1280px; padding: 0 32px 40px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       4. 侧栏（5 组 13 项，当前高亮 = 机场）
+       ══════════════════════════════════════════════════════════════════ */
+    .sidebar {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 24px 16px 32px;
+      background: var(--sf-bg-subtle);
+      border-right: 1px solid var(--sf-border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 8px 20px;
+      border-bottom: 1px solid var(--sf-border);
+      margin-bottom: 20px;
+    }
+
+    .brand-mark {
+      flex: none;
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--sf-accent);
+      color: var(--sf-accent-fg);
+    }
+
+    .brand-mark svg { width: 18px; height: 18px; }
+
+    .brand-text { line-height: 1.4; }
+    .brand-text strong { display: block; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+    .brand-text small { display: block; margin-top: 4px; font-size: 12px; color: var(--sf-text-muted); white-space: nowrap; }
+
+    .nav { display: flex; flex-direction: column; gap: 24px; }
+    .nav-group { display: flex; flex-direction: column; gap: 4px; }
+
+    .nav-group-label {
+      padding: 0 12px 4px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--sf-text-faint);
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      color: var(--sf-text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1), color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .nav-item:hover { background: var(--sf-surface); color: var(--sf-text); }
+    .nav-item.is-current { background: var(--sf-surface-raised); color: var(--sf-text); font-weight: 600; }
+
+    .nav-icon { flex: none; display: grid; place-items: center; width: 20px; height: 20px; color: var(--sf-text-faint); }
+    .nav-icon svg { width: 16px; height: 16px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       5. 顶栏（标题 + 副标题 + 4 个动作按钮 + 右上角主题切换）
+       ══════════════════════════════════════════════════════════════════ */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 24px 0 20px;
+      background: var(--sf-bg);
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    .topbar-head { min-width: 0; }
+    .topbar h1 { margin: 0; font-size: 28px; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; }
+    .topbar-sub { margin: 4px 0 0; max-width: 65ch; font-size: 14px; line-height: 1.5; color: var(--sf-text-muted); }
+
+    .topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* ── 按钮 3 种变体：primary / outline / ghost ─────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 16px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--sf-text);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1;
+      cursor: pointer;
+      transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1), border-color 120ms cubic-bezier(0.16, 1, 0.3, 1), color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn-primary { background: var(--sf-accent); border-color: var(--sf-accent); color: var(--sf-accent-fg); font-weight: 600; }
+    .btn-primary:hover { background: var(--sf-accent-hover); border-color: var(--sf-accent-hover); }
+
+    .btn-outline { background: var(--sf-surface); border-color: var(--sf-border-strong); color: var(--sf-text); }
+    .btn-outline:hover { background: var(--sf-bg-subtle); }
+
+    .btn-ghost { color: var(--sf-text-muted); }
+    .btn-ghost:hover { background: var(--sf-bg-subtle); color: var(--sf-text); }
+
+    .btn[disabled] { opacity: 0.48; cursor: not-allowed; }
+
+    .btn svg { width: 16px; height: 16px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       6. 主内容：指标卡 + 机场表格 + 本方案令牌
+       ══════════════════════════════════════════════════════════════════ */
+    .content { display: flex; flex-direction: column; gap: 24px; padding-top: 24px; }
+
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+
+    .metric {
+      padding: 20px;
+      background: var(--sf-surface);
+      border: 1px solid var(--sf-border);
+      border-radius: var(--sf-radius);
+      box-shadow: 0 1px 2px 0 rgb(22 24 29 / 0.05), 0 8px 24px -12px rgb(22 24 29 / 0.10);
+    }
+
+    [data-theme="dark"] .metric { box-shadow: 0 1px 2px 0 rgb(15 15 15 / 0.5), 0 8px 24px -12px rgb(15 15 15 / 0.6); }
+
+    .metric-label { font-size: 12px; font-weight: 500; color: var(--sf-text-muted); }
+    .metric-value {
+      margin-top: 8px;
+      font-family: var(--sf-font-mono);
+      font-size: 30px;
+      font-weight: 600;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── 面板（卡片包壳 + 极细边框 + 轻微 elevation）────────────────── */
+    .panel {
+      background: var(--sf-surface);
+      border: 1px solid var(--sf-border);
+      border-radius: var(--sf-radius);
+      box-shadow: 0 1px 2px 0 rgb(22 24 29 / 0.05), 0 12px 32px -12px rgb(22 24 29 / 0.12);
+    }
+
+    [data-theme="dark"] .panel { box-shadow: 0 1px 2px 0 rgb(15 15 15 / 0.4), 0 12px 32px -12px rgb(15 15 15 / 0.6); }
+
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    .panel-title { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+    .panel-note { margin: 4px 0 0; font-size: 12px; color: var(--sf-text-muted); }
+    .panel-note-side { flex: none; font-size: 12px; color: var(--sf-text-faint); }
+
+    /* ── 机场表格（表头浅色底 + 行 hover 背景过渡）──────────────────── */
+    .table-wrap { overflow-x: auto; }
+
+    .grid { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+    .grid th, .grid td { padding: 12px 16px; border-bottom: 1px solid var(--sf-border); text-align: left; white-space: nowrap; }
+    .grid thead th { background: var(--sf-bg-subtle); font-size: 12px; font-weight: 600; color: var(--sf-text-muted); }
+    .grid tbody tr { transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1); }
+    .grid tbody tr:hover td { background: var(--sf-bg-subtle); }
+    .grid tbody tr:last-child td { border-bottom: 0; }
+
+    .grid .col-num, .grid .num { text-align: right; font-family: var(--sf-font-mono); font-variant-numeric: tabular-nums; }
+    .grid .cell-center { text-align: center; }
+    .grid .cell-mono { font-family: var(--sf-font-mono); font-variant-numeric: tabular-nums; }
+    .grid .cell-muted { color: var(--sf-text-muted); }
+    .grid .cell-url { max-width: 220px; }
+    .grid .cell-url > span { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    .grid .cell-status { max-width: 240px; white-space: normal; }
+
+    /* ── 9 列宽度约束（修复 1600 / 1280 视口下的横向溢出）──────────────
+       table-layout: fixed 让表格宽度严格等于容器宽度；9 列列宽合计 944px，
+       小于 1280 视口下的可用宽度 950px，因此在两个视口下
+       .table-wrap 的 scrollWidth - clientWidth 恒为 0。
+       长文本列（订阅地址 / 状态）用 ellipsis 截断，完整值在 title 里；
+       操作列允许换行，不靠隐藏列或缩小字号来"通过"。 */
+    .grid-airports { table-layout: fixed; }
+    .grid-airports th, .grid-airports td { padding-left: 8px; padding-right: 8px; }
+    .grid-airports .c-name { width: 72px; }
+    .grid-airports .c-url { width: 150px; }
+    .grid-airports .c-enable { width: 60px; }
+    .grid-airports .c-nodes { width: 56px; }
+    .grid-airports .c-traffic { width: 100px; white-space: normal; }
+    .grid-airports .c-expiry { width: 96px; }
+    .grid-airports .c-updated { width: 104px; white-space: normal; }
+    .grid-airports .c-state { width: 124px; }
+    .grid-airports .c-ops { width: 182px; }
+    /* traffic(第5列) / updated(第7列) 正文单元格换行，值完整可读，不再粘连 */
+    .grid-airports td:nth-child(5) { white-space: normal; overflow-wrap: break-word; }
+    .grid-airports td:nth-child(7) { white-space: normal; overflow-wrap: break-word; }
+    .grid-airports .cell-url { max-width: none; }
+    .grid-airports .cell-status { max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .grid-airports .status { max-width: 100%; }
+    .grid-airports .status-text { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    .grid-airports .cell-actions { flex-wrap: wrap; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border: 1px solid var(--sf-border);
+      border-radius: 8px;
+      background: var(--sf-surface);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    .badge-ok { border-color: var(--sf-ok); color: var(--sf-ok); }
+    .badge-off { border-color: var(--sf-border-strong); color: var(--sf-text-muted); }
+
+    .status { display: inline-flex; align-items: center; gap: 8px; }
+    .status .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+    .dot-ok { background: var(--sf-ok); }
+    .dot-danger { background: var(--sf-danger); }
+    .status-danger { color: var(--sf-danger); }
+
+    .cell-actions { display: flex; align-items: center; gap: 4px; }
+
+    .row-link {
+      padding: 4px 8px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--sf-text-muted);
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.4;
+      cursor: pointer;
+      transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1), color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .row-link:hover { background: var(--sf-bg-subtle); color: var(--sf-text); }
+    .row-link.link-danger:hover { color: var(--sf-danger); }
+
+    /* ── 本方案令牌（色块条：变量名 + 色块 + hex，浅色 / 深色两行）──── */
+    .token-legend { margin: 16px 24px 0; font-size: 12px; color: var(--sf-text-muted); }
+
+    .token-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; padding: 16px 24px 24px; }
+
+    .tok { padding: 12px; background: var(--sf-surface-raised); border: 1px solid var(--sf-border); border-radius: 8px; }
+    .tok-name { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; }
+    .tok-row { display: flex; align-items: center; gap: 8px; }
+    .tok-row + .tok-row { margin-top: 8px; }
+    .swatch { flex: none; width: 24px; height: 16px; border: 1px solid var(--sf-border); border-radius: 4px; }
+    .swatch-na { background: var(--sf-bg-subtle); border-style: dashed; }
+    .tok-row code { font-size: 12px; color: var(--sf-text-muted); }
+
+    .tok-meta { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 0 24px 24px; }
+    .tok-meta span { font-size: 12px; color: var(--sf-text-muted); }
+    .tok-meta code { font-size: 12px; }
+
+    /* ── 日志尾部（等宽、行高一致、悬停底色）────────────────────────── */
+    .log-list { margin: 0; padding: 8px 0; list-style: none; }
+    .log-row {
+      display: grid;
+      grid-template-columns: 72px 56px minmax(0, 1fr);
+      align-items: baseline;
+      gap: 12px;
+      padding: 8px 24px;
+      font-size: 12px;
+      line-height: 1.5;
+      transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .log-row:hover { background: var(--sf-bg-subtle); }
+    .log-time { font-family: var(--sf-font-mono); font-variant-numeric: tabular-nums; color: var(--sf-text-faint); }
+    .log-level { font-family: var(--sf-font-mono); font-weight: 600; letter-spacing: 0.02em; }
+    .log-level.lv-info { color: var(--sf-info); }
+    .log-level.lv-warn { color: var(--sf-warn); }
+    .log-level.lv-error { color: var(--sf-danger); }
+    .log-msg { min-width: 0; font-family: var(--sf-font-mono); color: var(--sf-text-muted); }
+
+    /* ── 空状态（未匹配域名 / Rule-Bot）─────────────────────────────── */
+    .empty-state { margin: 0; padding: 20px 24px 24px; max-width: 65ch; font-size: 14px; line-height: 1.6; color: var(--sf-text-muted); }
+
+    .page-foot { margin: 0; padding: 24px 0 8px; text-align: center; font-size: 12px; color: var(--sf-text-faint); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       7. 响应式与动效降级
+       ══════════════════════════════════════════════════════════════════ */
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--sf-border); }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .metrics { grid-template-columns: 1fr; }
+      .topbar { flex-direction: column; align-items: flex-start; gap: 16px; }
+      .token-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13"/><path d="m13 3 4 4-4 4"/><path d="M20 17H7"/><path d="m11 21-4-4 4-4"/></svg>
+        </span>
+        <span class="brand-text">
+          <strong>SubForge</strong>
+          <small>订阅转换与规则工厂</small>
+        </span>
+      </div>
+      <nav class="nav" aria-label="功能导航">
+        <div class="nav-group">
+          <div class="nav-group-label">转换</div>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>概览</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h12"/><path d="m13 3 4 4-4 4"/><path d="M20 17H8"/><path d="m11 21-4-4 4-4"/></svg></span>转换</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>管线</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span>脚本</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">来源</div>
+          <a class="nav-item is-current" href="#" aria-current="page"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></span>机场</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg></span>自建节点</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">规则</div>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg></span>规则</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></span>规则源</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg></span>分组</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">输出</div>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>订阅</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">运维</div>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>任务</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg></span>设置</a>
+          <a class="nav-item" href="#"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>日志</a>
+        </div>
+      </nav>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-head">
+          <h1>机场</h1>
+          <p class="topbar-sub">管理上游订阅地址（机场），供转换与订阅使用。</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" type="button">新增</button>
+          <button class="btn btn-outline" type="button">刷新</button>
+          <button class="btn btn-outline" type="button">刷新全部流量</button>
+          <button class="btn btn-ghost" type="button">测活全部</button>
+          <button class="btn btn-ghost" id="theme-toggle" type="button" aria-pressed="false" title="当前为浅色主题，点击切换为深色">
+            <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+            <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+            <span id="theme-toggle-label">切换为深色</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="metrics" aria-label="关键指标">
+          <div class="metric"><div class="metric-label">最近记录条数</div><div class="metric-value">12</div></div>
+          <div class="metric"><div class="metric-label">缓存命中率</div><div class="metric-value">68.3%</div></div>
+          <div class="metric"><div class="metric-label">来源 URL 总数</div><div class="metric-value">47</div></div>
+          <div class="metric"><div class="metric-label">日志行数</div><div class="metric-value">231</div></div>
+          <div class="metric"><div class="metric-label">节点数</div><div class="metric-value">486</div></div>
+          <div class="metric"><div class="metric-label">原始节点数</div><div class="metric-value">512</div></div>
+          <div class="metric"><div class="metric-label">分组数</div><div class="metric-value">24</div></div>
+          <div class="metric"><div class="metric-label">规则数</div><div class="metric-value">1387</div></div>
+        </section>
+
+        <section class="panel" aria-labelledby="airports-heading">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title" id="airports-heading">机场列表</h2>
+              <p class="panel-note">管理上游订阅地址（机场），供转换与订阅使用。</p>
+            </div>
+            <span class="panel-note-side">3 条记录 · 9 列</span>
+          </div>
+          <div class="table-wrap">
+            <table class="grid grid-airports">
+              <caption class="visually-hidden">机场列表：名称、订阅地址、启用状态、节点数、流量、到期时间、更新时间、状态与操作</caption>
+              <thead>
+                <tr>
+                  <th scope="col" class="c-name">名称</th>
+                  <th scope="col" class="c-url">订阅地址</th>
+                  <th scope="col" class="c-enable">启用</th>
+                  <th scope="col" class="col-num c-nodes">节点数</th>
+                  <th scope="col" class="col-num c-traffic">流量(已用/总量)</th>
+                  <th scope="col" class="c-expiry">到期时间</th>
+                  <th scope="col" class="c-updated">更新时间</th>
+                  <th scope="col" class="c-state">状态</th>
+                  <th scope="col" class="c-ops">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>主机场</td>
+                  <td class="cell-url"><span title="https&#58;//sub.example.com/api/v1/client/subscribe?token=***">https&#58;//sub.example.com/api/v1/client/subscribe?token=***</span></td>
+                  <td class="cell-center"><span class="badge badge-ok">启用</span></td>
+                  <td class="num">186</td>
+                  <td class="num">42.1 GB / 200 GB</td>
+                  <td class="cell-mono">2027-03-14</td>
+                  <td>上次成功：12 分钟前</td>
+                  <td class="cell-status"><span class="status"><span class="dot dot-ok" aria-hidden="true"></span><span class="status-text" title="正常">正常</span></span></td>
+                  <td class="cell-actions">
+                    <button class="row-link" type="button">编辑</button>
+                    <button class="row-link link-danger" type="button">删除</button>
+                    <button class="row-link" type="button">刷新流量</button>
+                    <button class="row-link" type="button">导入规则</button>
+                    <button class="row-link" type="button">测活</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>备用机场</td>
+                  <td class="cell-url"><span title="https&#58;//backup.example.net/link/abcdef">https&#58;//backup.example.net/link/abcdef</span></td>
+                  <td class="cell-center"><span class="badge badge-off">停用</span></td>
+                  <td class="num">92</td>
+                  <td class="num cell-muted">未知</td>
+                  <td class="cell-mono cell-muted">未知</td>
+                  <td class="cell-muted">从未采集</td>
+                  <td class="cell-status"><span class="status"><span class="dot dot-ok" aria-hidden="true"></span><span class="status-text" title="正常">正常</span></span></td>
+                  <td class="cell-actions">
+                    <button class="row-link" type="button">编辑</button>
+                    <button class="row-link link-danger" type="button">删除</button>
+                    <button class="row-link" type="button">刷新流量</button>
+                    <button class="row-link" type="button">导入规则</button>
+                    <button class="row-link" type="button">测活</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>测试机场</td>
+                  <td class="cell-url"><span title="https&#58;//trial.example.org/sub?token=***">https&#58;//trial.example.org/sub?token=***</span></td>
+                  <td class="cell-center"><span class="badge badge-ok">启用</span></td>
+                  <td class="num">208</td>
+                  <td class="num">8.4 GB / 50 GB</td>
+                  <td class="cell-mono">2026-11-02</td>
+                  <td>上次成功：3 小时前</td>
+                  <td class="cell-status"><span class="status status-danger"><span class="dot dot-danger" aria-hidden="true"></span><span class="status-text" title="上游 502，余额仍是上次成功值">上游 502，余额仍是上次成功值</span></span></td>
+                  <td class="cell-actions">
+                    <button class="row-link" type="button">编辑</button>
+                    <button class="row-link link-danger" type="button">删除</button>
+                    <button class="row-link" type="button">刷新流量</button>
+                    <button class="row-link" type="button">导入规则</button>
+                    <button class="row-link" type="button">测活</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ══════════════ 日志尾部 ══════════════ -->
+        <section class="panel" aria-labelledby="logs-heading">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title" id="logs-heading">日志尾部</h2>
+              <p class="panel-note">最近 6 条 · 完整日志见「日志」页签</p>
+            </div>
+            <span class="panel-note-side">231 行</span>
+          </div>
+          <ul class="log-list">
+            <li class="log-row"><span class="log-time">12:31:58</span><span class="log-level lv-info">INFO</span><span class="log-msg">转换完成 target=mihomo nodes=486 elapsed=214ms</span></li>
+            <li class="log-row"><span class="log-time">12:31:44</span><span class="log-level lv-warn">WARN</span><span class="log-msg">备用机场 backup.example.net 返回 502，沿用上次成功数据</span></li>
+            <li class="log-row"><span class="log-time">12:31:04</span><span class="log-level lv-info">INFO</span><span class="log-msg">开始采集 3 个机场的订阅与节点数</span></li>
+            <li class="log-row"><span class="log-time">12:30:02</span><span class="log-level lv-error">ERROR</span><span class="log-msg">测活失败 node=hk-01 connect timeout 3s</span></li>
+            <li class="log-row"><span class="log-time">12:29:31</span><span class="log-level lv-info">INFO</span><span class="log-msg">规则编译 rules=1387 groups=24</span></li>
+            <li class="log-row"><span class="log-time">12:28:55</span><span class="log-level lv-info">INFO</span><span class="log-msg">缓存命中 key=sub:main hits=612 ratio=68.3%</span></li>
+          </ul>
+        </section>
+
+        <!-- ══════════════ 空状态示例（Rule-Bot）══════════════ -->
+        <section class="panel" aria-labelledby="rulebot-heading">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title" id="rulebot-heading">未匹配域名 (Rule-Bot)</h2>
+              <p class="panel-note">最近 24 小时</p>
+            </div>
+            <span class="panel-note-side">0 条</span>
+          </div>
+          <p class="empty-state">最近 24 小时没有未匹配域名；当前 1387 条规则已覆盖全部命中 MATCH 的需求。下一步可到「规则源」页签上看第 8 条来源是否有新域名需要归档。</p>
+        </section>
+
+        <section class="panel" aria-labelledby="tokens-heading">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title" id="tokens-heading">本方案令牌</h2>
+              <p class="panel-note">19 个语义变量 · 浅色 :root / 深色 [data-theme="dark"] · 完整 hex + OKLCH 对照见文件顶部注释</p>
+            </div>
+            <span class="panel-note-side">色块条</span>
+          </div>
+          <p class="token-legend">每格两行：上 = 浅色 :root，下 = 深色 [data-theme="dark"]；非颜色令牌见下方说明。</p>
+          <div class="token-strip">
+            <div class="tok"><code class="tok-name">--sf-bg</code>
+              <div class="tok-row"><span class="swatch" style="background:#f6f7f9"></span><code>#f6f7f9</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#0f0f0f"></span><code>#0f0f0f</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-bg-subtle</code>
+              <div class="tok-row"><span class="swatch" style="background:#eceef2"></span><code>#eceef2</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#141519"></span><code>#141519</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-surface</code>
+              <div class="tok-row"><span class="swatch" style="background:#ffffff"></span><code>#ffffff</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#16171c"></span><code>#16171c</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-surface-raised</code>
+              <div class="tok-row"><span class="swatch" style="background:#f8f9fb"></span><code>#f8f9fb</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#1d1e24"></span><code>#1d1e24</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-border</code>
+              <div class="tok-row"><span class="swatch" style="background:#e1e4ea"></span><code>#e1e4ea</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#24252c"></span><code>#24252c</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-border-strong</code>
+              <div class="tok-row"><span class="swatch" style="background:#c2c7d1"></span><code>#c2c7d1</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#383942"></span><code>#383942</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-text</code>
+              <div class="tok-row"><span class="swatch" style="background:#16181d"></span><code>#16181d</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#e8e9ed"></span><code>#e8e9ed</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-text-muted</code>
+              <div class="tok-row"><span class="swatch" style="background:#555a63"></span><code>#555a63</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#9fa1ab"></span><code>#9fa1ab</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-text-faint</code>
+              <div class="tok-row"><span class="swatch" style="background:#868b95"></span><code>#868b95</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#6c6e78"></span><code>#6c6e78</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-accent</code>
+              <div class="tok-row"><span class="swatch" style="background:#2563eb"></span><code>#2563eb</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#3b82f6"></span><code>#3b82f6</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-accent-hover</code>
+              <div class="tok-row"><span class="swatch" style="background:#1d4ed8"></span><code>#1d4ed8</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#60a5fa"></span><code>#60a5fa</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-accent-fg</code>
+              <div class="tok-row"><span class="swatch" style="background:#ffffff"></span><code>#ffffff</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#0a1120"></span><code>#0a1120</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-ok</code>
+              <div class="tok-row"><span class="swatch" style="background:#15803d"></span><code>#15803d</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#34d399"></span><code>#34d399</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-warn</code>
+              <div class="tok-row"><span class="swatch" style="background:#b45309"></span><code>#b45309</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#fbbf24"></span><code>#fbbf24</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-danger</code>
+              <div class="tok-row"><span class="swatch" style="background:#dc2626"></span><code>#dc2626</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#f87171"></span><code>#f87171</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-info</code>
+              <div class="tok-row"><span class="swatch" style="background:#0369a1"></span><code>#0369a1</code></div>
+              <div class="tok-row"><span class="swatch" style="background:#38bdf8"></span><code>#38bdf8</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-radius</code>
+              <div class="tok-row"><span class="swatch swatch-na" aria-hidden="true"></span><code>12px（浅 / 深一致）</code></div>
+              <div class="tok-row"><code>卡片 / 面板 / 令牌格</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-space</code>
+              <div class="tok-row"><span class="swatch swatch-na" aria-hidden="true"></span><code>8px（浅 / 深一致）</code></div>
+              <div class="tok-row"><code>间距基准，全为 4 / 8 倍数</code></div>
+            </div>
+            <div class="tok"><code class="tok-name">--sf-font-mono</code>
+              <div class="tok-row"><span class="swatch swatch-na" aria-hidden="true"></span><code>等宽字体栈</code></div>
+              <div class="tok-row"><code>'JetBrains Mono', 'IBM Plex Mono', …</code></div>
+            </div>
+          </div>
+          <div class="tok-meta">
+            <span><code>--sf-radius</code> 12px（卡片 / 面板 / 令牌格）· 8px（按钮 / 徽章 / 行内控件）</span>
+            <span><code>--sf-space</code> 8px（基础间距单位；全文件间距均为 4px / 8px 的倍数）</span>
+            <span><code>--sf-font-mono</code> 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace</span>
+          </div>
+        </section>
+
+        <p class="page-foot">静态样板 · 数据为演示占位值 · 与 D1 / D3 共用同一套 19 个语义令牌，便于直接目视对比。</p>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var toggle = document.getElementById('theme-toggle');
+      var label = document.getElementById('theme-toggle-label');
+      var sun = document.getElementById('icon-sun');
+      var moon = document.getElementById('icon-moon');
+
+      function apply(theme) {
+        var dark = theme === 'dark';
+        root.setAttribute('data-theme', theme);
+        label.textContent = dark ? '切换为浅色' : '切换为深色';
+        toggle.setAttribute('aria-pressed', dark ? 'true' : 'false');
+        toggle.setAttribute('title', dark ? '当前为深色主题，点击切换为浅色' : '当前为浅色主题，点击切换为深色');
+        sun.style.display = dark ? 'none' : '';
+        moon.style.display = dark ? '' : 'none';
+      }
+
+      toggle.addEventListener('click', function () {
+        apply(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+      });
+    })();
+  </script>
+</body>
+</html>

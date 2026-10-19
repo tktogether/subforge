@@ -228,13 +228,15 @@ describe('SubscriptionsPage', () => {
   })
 
 
-  it('PageHeader help-panel 含 oneLiner 片段', async () => {
+  it('页面副标题承载 oneLiner；help-panel 入口行=使用说明且详情默认收起', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
     await flushPromises()
     const panel = w.find('[data-testid="help-panel"]')
     expect(panel.exists()).toBe(true)
-    expect(panel.text()).toContain(pageHelp('subscriptions').oneLiner.slice(0, 12))
+    expect(w.find('.page-header__subtitle').text()).toContain(pageHelp('subscriptions').oneLiner)
+    expect(panel.find('[data-testid="help-toggle-label"]').text()).toBe('使用说明')
+    expect(panel.find('[data-testid="help-body"]').exists()).toBe(false)
     w.unmount()
   })
 

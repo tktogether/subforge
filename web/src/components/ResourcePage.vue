@@ -48,6 +48,13 @@ const headers = computed(() => {
   return props.columns.concat([{ key: 'actions', title: '操作' }])
 })
 
+// W6B 表格：给操作列单元格挂类（vuetify-overrides.css 据此做「单行不折 + 紧凑按钮」）。
+// 不能写进 headers 数组——ResourcePage.spec.ts 用 toEqual 断言 actions 表头对象只有 key/title，
+// 所以改走 v-data-table 的表级 cell-props。
+function cellPropsFor(data: { column?: { key?: string | null } }): Record<string, string> {
+  return data.column?.key === 'actions' ? { class: 'sf-table__actions' } : {}
+}
+
 const emptyText = computed(() => props.emptyText ?? '暂无数据')
 
 function fieldHint(field: ResourceField): string {
@@ -144,20 +151,23 @@ reload()
     :empty-text="emptyText"
     @retry="reload"
   >
-    <v-data-table :items="items" :headers="headers" density="comfortable" hover data-testid="table">
+    <v-data-table :items="items" :headers="headers" :cell-props="cellPropsFor" density="comfortable" hover data-testid="table" class="resource-table">
       <template #item.enabled="{ value }">
-        <v-chip :color="value ? 'success' : 'default'" size="small" variant="tonal">
-          {{ value ? '启用' : '停用' }}
-        </v-chip>
+        <span class="sf-status">
+          <span class="sf-status__dot" :class="value ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
+          <v-chip :color="value ? 'success' : 'default'" size="small" variant="tonal">
+            {{ value ? '启用' : '停用' }}
+          </v-chip>
+        </span>
       </template>
       <template #item.subscription_url="{ value }">
-        <span class="d-inline-block text-truncate" style="max-width: 380px">{{ value }}</span>
+        <span class="resource-mono resource-truncate" style="max-width: 380px" :title="value">{{ value }}</span>
       </template>
       <template #item.link="{ value }">
-        <span class="d-inline-block text-truncate" style="max-width: 380px">{{ value }}</span>
+        <span class="resource-mono resource-truncate" style="max-width: 380px" :title="value">{{ value }}</span>
       </template>
       <template #item.token="{ value }">
-        <code>{{ value }}</code>
+        <code class="resource-mono resource-truncate" :title="value">{{ value }}</code>
       </template>
       <template #item.actions="{ item }">
         <v-btn
@@ -239,3 +249,52 @@ reload()
     </v-card>
   </v-dialog>
 </template>
+
+
+<style scoped>
+.resource-table {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+}
+.resource-table :deep(thead th) {
+  background: var(--sf-surface-raised);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.resource-mono {
+  font-family: var(--sf-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.resource-truncate {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sf-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.sf-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.sf-status__dot--ok {
+  background: var(--sf-ok);
+}
+.sf-status__dot--muted {
+  background: var(--sf-text-faint);
+}
+.resource-table :deep(.text-end),
+.resource-table :deep(.text-right) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+</style>

@@ -33,7 +33,11 @@ function retry(): void {
     <div v-if="props.error !== '' && props.hint" data-testid="async-hint" class="text-body-2 text-medium-emphasis mb-4">
       {{ props.hint }}
     </div>
-    <v-skeleton-loader v-else-if="props.loading" type="table" data-testid="async-loading" />
+    <div v-else-if="props.loading" data-testid="async-loading" class="async-skeleton">
+      <div class="async-skeleton__row" />
+      <div class="async-skeleton__row" />
+      <div class="async-skeleton__row" />
+    </div>
     <div v-else-if="isEmptyHelp" data-testid="empty-state">
       <div data-testid="empty-state-title">{{ (props.empty as EmptyStateHelp).title }}</div>
       <div data-testid="empty-state-detail">{{ (props.empty as EmptyStateHelp).detail }}</div>
@@ -58,3 +62,21 @@ function retry(): void {
     <slot v-else />
   </div>
 </template>
+
+<style scoped>
+.async-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.async-skeleton__row {
+  height: 12px;
+  background: var(--sf-bg-subtle);
+  border-radius: var(--sf-radius);
+  animation: async-skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes async-skeleton-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+</style>

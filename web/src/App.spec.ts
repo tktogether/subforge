@@ -8,7 +8,17 @@ import { routes } from './router'
 import App from './App.vue'
 import AppShell from './layout/AppShell.vue'
 
-const vuetify = createVuetify({ components, directives })
+const vuetify = createVuetify({
+  components,
+  directives,
+  theme: {
+    defaultTheme: 'subforgeLight',
+    themes: {
+      subforgeLight: { dark: false, colors: {} },
+      subforgeDark: { dark: true, colors: {} },
+    },
+  },
+})
 
 describe('App', () => {
   it('渲染 AppShell，并包含导航与 SubForge 文本', async () => {

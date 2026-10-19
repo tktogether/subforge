@@ -1,0 +1,92 @@
+/*
+ * SubForge 设计令牌 —— D1 Instrument（冷静 · 精确 · 密度优先）
+ *
+ * 【唯一真值源】本文件是 SubForge 设计令牌的唯一真值源；上层样式（web/src/styles/**、
+ * 组件 <style>、内联样式）只许通过 var(--sf-*) 引用，不得再写字面色值或另立同名变量。
+ *
+ * 【取值出处】逐字取自 docs/design/mockups/d1-instrument.html，不得自行改色：
+ *   浅色（默认）:root  → d1-instrument.html:53-77
+ *   深色覆盖          → d1-instrument.html:79-100
+ *   视觉契约          → docs/design/frontend-visual-upgrade-decision.md:29-36
+ *
+ * 【逐令牌出处】
+ *   19 个必需令牌：--sf-bg :54 / --sf-bg-subtle :55 / --sf-surface :56 /
+ *     --sf-surface-raised :57 / --sf-border :58 / --sf-border-strong :59 /
+ *     --sf-text :60 / --sf-text-muted :61 / --sf-text-faint :62 / --sf-accent :63 /
+ *     --sf-accent-hover :64 / --sf-accent-fg :66 / --sf-ok :67 / --sf-warn :68 /
+ *     --sf-danger :69 / --sf-info :70 / --sf-radius :71 / --sf-space :72 /
+ *     --sf-font-mono :73
+ *   扩展：--sf-accent-strong 浅 :65 深 :91 / --sf-font-sans :75 / --sf-ease :76
+ *   --sf-shell：D1 样板未定义；1280px 取自 docs/design/mockups/d3-console.html:108，
+ *     与决策文档「正文容器 ≤ 1280px」（frontend-visual-upgrade-decision.md:31）一致。
+ *
+ * 【深色命中】应用层 data-theme=dark 标记、Vuetify 深色主题类、以及主题名 subforgeDark
+ * 对应的 html 主题类，三者写在下方同一个选择器组里，共用同一份深色值，不复制三份。
+ *
+ * 【反模式红线】无纯黑色值、无毛玻璃滤镜、无渐变文字、无外部样式导入、无字体下载。
+ */
+
+/* ===== 语义令牌：浅色主题（默认）· d1-instrument.html:53-77 ===== */
+:root {
+  --sf-bg: #f3f5f8;              /* d1-instrument.html:54 */
+  --sf-bg-subtle: #eaedf1;       /* d1-instrument.html:55 */
+  --sf-surface: #fafbfc;         /* d1-instrument.html:56 */
+  --sf-surface-raised: #fdfdfe;  /* d1-instrument.html:57 */
+  --sf-border: #d8dde2;          /* d1-instrument.html:58 */
+  --sf-border-strong: #bbc0c6;   /* d1-instrument.html:59 */
+  --sf-text: #191f26;            /* d1-instrument.html:60 */
+  --sf-text-muted: #4e5359;      /* d1-instrument.html:61 */
+  --sf-text-faint: #5e6267;      /* d1-instrument.html:62 */
+  --sf-accent: #215da5;          /* d1-instrument.html:63 */
+  --sf-accent-hover: #004b97;    /* d1-instrument.html:64 */
+  --sf-accent-strong: #004b97;   /* d1-instrument.html:65 */
+  --sf-accent-fg: #fafcfe;       /* d1-instrument.html:66 */
+  --sf-ok: #007245;              /* d1-instrument.html:67 */
+  --sf-warn: #754c00;            /* d1-instrument.html:68 */
+  --sf-danger: #a72626;          /* d1-instrument.html:69 */
+  --sf-info: #006794;            /* d1-instrument.html:70 */
+  --sf-radius: 6px;              /* d1-instrument.html:71 */
+  --sf-space: 16px;              /* d1-instrument.html:72 */
+  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace; /* d1-instrument.html:73 */
+  --sf-font-sans: 'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif; /* d1-instrument.html:75 */
+  --sf-ease: cubic-bezier(0.16, 1, 0.3, 1); /* d1-instrument.html:76 */
+  --sf-shell: 1280px;            /* d3-console.html:108 */
+}
+
+/* ===== 语义令牌：深色主题 · d1-instrument.html:79-100 =====
+ * 契约要求的前三种命中方式 + 一条实证补强，共用一个选择器组、一份值：
+ *   1) 应用层 data-theme=dark 属性标记（useThemeMode().isDark）
+ *   2) Vuetify 深色主题类 v-theme--dark（仅当主题名恰为 dark 时出现）
+ *   3) 主题名 subforgeDark 对应的 html 主题类
+ *   4) 主题名 subforgeDark 的 Vuetify 主题类（不带 html 限定）
+ * 为什么需要第 4 条：本应用由 <v-app> 承载主题类（web/src/layout/AppShell.vue:20），
+ * Vuetify 把 v-theme--{name} 加在 .v-application 元素上而非 html 上
+ * （web/node_modules/vuetify/lib/composables/theme.js:264 生成类名，
+ *  web/node_modules/vuetify/lib/components/VApp/VApp.js:38 落到 VApp 根元素），
+ * 只写 html.v-theme--subforgeDark 在切换主题后不会命中。
+ */
+[data-theme="dark"],
+.v-theme--dark,
+html.v-theme--subforgeDark,
+.v-theme--subforgeDark {
+  --sf-bg: #0d0f12;              /* d1-instrument.html:80 */
+  --sf-bg-subtle: #16191d;       /* d1-instrument.html:81 */
+  --sf-surface: #1e2124;         /* d1-instrument.html:82 */
+  --sf-surface-raised: #24282b;  /* d1-instrument.html:83 */
+  --sf-border: #2f3235;          /* d1-instrument.html:84 */
+  --sf-border-strong: #3c3f43;   /* d1-instrument.html:85 */
+  --sf-text: #eaedf1;            /* d1-instrument.html:86 */
+  --sf-text-muted: #9a9fa5;      /* d1-instrument.html:87 */
+  --sf-text-faint: #797e83;      /* d1-instrument.html:88 */
+  --sf-accent: #4b78ba;          /* d1-instrument.html:89 */
+  --sf-accent-hover: #3262a9;    /* d1-instrument.html:90 */
+  --sf-accent-strong: #1f4c85;   /* d1-instrument.html:91 */
+  --sf-accent-fg: #fafcfe;       /* d1-instrument.html:92 */
+  --sf-ok: #52a76d;              /* d1-instrument.html:93 */
+  --sf-warn: #ce9a43;            /* d1-instrument.html:94 */
+  --sf-danger: #dc655d;          /* d1-instrument.html:95 */
+  --sf-info: #439ccc;            /* d1-instrument.html:96 */
+  --sf-radius: 6px;              /* d1-instrument.html:97 */
+  --sf-space: 16px;              /* d1-instrument.html:98 */
+  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace; /* d1-instrument.html:99 */
+}

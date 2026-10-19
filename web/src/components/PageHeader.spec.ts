@@ -51,14 +51,16 @@ describe('PageHeader', () => {
     expect(p.classes()).toContain('text-body-2')
   })
 
-  it('helpKey 给了时渲染 help-panel 且含该页 oneLiner', () => {
+  it('helpKey 给了时渲染 help-panel：副标题承载 oneLiner，入口行不重复', () => {
     const w = mount(PageHeader, {
-      props: { title: '机场', subtitle: '管理上游机场', helpKey: 'airports' },
+      props: { title: '机场', subtitle: pageHelp('airports').oneLiner, helpKey: 'airports' },
       global: { plugins: [vuetify] },
     })
     const panel = w.find('[data-testid="help-panel"]')
     expect(panel.exists()).toBe(true)
-    expect(w.find('[data-testid="help-oneliner"]').text()).toContain(pageHelp('airports').oneLiner)
+    expect(w.find('.page-header__subtitle').text()).toContain(pageHelp('airports').oneLiner)
+    expect(w.find('[data-testid="help-toggle-label"]').text()).toBe('使用说明')
+    expect(w.find('[data-testid="help-body"]').exists()).toBe(false)
   })
 
   it('helpKey 没给时不渲染 help-panel', () => {

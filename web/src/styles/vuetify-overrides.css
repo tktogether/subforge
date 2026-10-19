@@ -1,0 +1,127 @@
+/* vuetify-overrides.css — D1 Instrument Vuetify 3.13 覆写（本卡重点） */
+/* 令牌来源：web/src/design/tokens.css（W1）；所有颜色走 var(--sf-*) */
+
+:root {
+  --sf-dur-micro: 150ms;
+  --sf-dur-page: 400ms;
+}
+
+/* ===== 表格密度 ===== */
+/* 基线：Vuetify 默认 row 52px / header 56px（web/node_modules/vuetify/lib/components/VTable/_variables.scss:10,14）； */
+/* VTable.sass:110,113 用 var(--v-table-row-height)/--v-table-header-height */
+.v-table,
+.v-table--density-default,
+.v-table--density-comfortable,
+.v-table--density-compact {
+  --v-table-row-height: 40px;
+  --v-table-header-height: 40px;
+}
+
+.v-table {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+}
+
+/* th/td 的 padding 与表头排版。
+   权重坑：Vuetify 自己的规则是 `.v-table > .v-table__wrapper > table > thead > tr > th`
+   （VTable.css:68-92，权重 0,2,4）。旧写法 `.v-table th`（0,1,1）会被它静默覆盖——
+   W6B 实测：th 实际渲染成 14px / padding 16px / font-weight 500，即「写了但没生效」。
+   所以这里一律复用与 Vuetify 同形的选择器链。 */
+.v-table > .v-table__wrapper > table > thead > tr > th,
+.v-table > .v-table__wrapper > table > tbody > tr > th,
+.v-table > .v-table__wrapper > table > tbody > tr > td {
+  padding: 0 12px;
+}
+
+/* 表头：12px / 600 / 不折行。配合各页的列 minWidth，9 列在 1600px 下全部单行，
+   th 高度回落成 --v-table-header-height（40px ≤ 41px 验收线）。 */
+.v-table > .v-table__wrapper > table > thead > tr > th {
+  background: var(--sf-surface-raised);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+/* 数字列：header 里 align="end" 会让 Vuetify 同时给 th 和 td 加 .text-end，
+   这里补等宽数字（对齐由 Vuetify 的 .text-end 负责）。 */
+.v-table > .v-table__wrapper > table > thead > tr > th.text-end,
+.v-table > .v-table__wrapper > table > tbody > tr > td.text-end,
+.v-table > .v-table__wrapper > table > thead > tr > th.text-right,
+.v-table > .v-table__wrapper > table > tbody > tr > td.text-right {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 操作列：单行不折。Vuetify 的 small 文本按钮默认 min-width:50px / padding:0 12px
+   （VBtn.css:35-40），5 个中文动作在 218px 里必然折成两行并把行高顶到 57px；
+   这里放开 min-width、收窄内边距，按钮间距交给父级 flex 的 8px gap。 */
+.v-table > .v-table__wrapper > table > tbody > tr > td.sf-table__actions {
+  white-space: nowrap;
+}
+
+.sf-table__actions .v-btn:not(.v-btn--icon) {
+  min-width: 0;
+  padding: 0 6px;
+}
+
+/* ===== 卡片 ===== */
+.v-card {
+  box-shadow: none;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+}
+
+/* ===== 按钮 ===== */
+.v-btn {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+  transition-duration: var(--sf-dur-micro);
+}
+
+.v-btn--size-default {
+  --v-btn-height: 34px;
+}
+
+.v-btn--variant-flat {
+  background: var(--sf-accent);
+  color: var(--sf-accent-fg);
+}
+
+.v-btn--variant-flat:hover {
+  background: var(--sf-accent-hover);
+}
+
+/* ===== 输入类 ===== */
+.v-field {
+  border-radius: 6px;
+}
+
+.v-field__outline {
+  color: var(--sf-border-strong);
+}
+
+.v-field--focused .v-field__outline {
+  color: var(--sf-accent);
+}
+
+/* ===== 抽屉 / 导航 ===== */
+.v-navigation-drawer {
+  width: 248px !important;
+}
+
+.v-navigation-drawer .v-list-item,
+.v-list-item--nav {
+  min-height: 34px;
+}
+
+/* ===== 过渡时长统一 ===== */
+.v-table,
+.v-card,
+.v-btn,
+.v-field {
+  transition-duration: var(--sf-dur-micro);
+}

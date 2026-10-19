@@ -1,0 +1,78 @@
+/* base.css — D1 Instrument 全局基础层（排版 / 焦点 / 动效 / 工具类） */
+/* 令牌来源：web/src/design/tokens.css（W1） */
+
+html {
+  scroll-behavior: smooth;
+}
+
+body,
+#app {
+  font-family: var(--sf-font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--sf-bg);
+  color: var(--sf-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--sf-font-mono);
+}
+
+::selection {
+  background: var(--sf-accent);
+  color: var(--sf-accent-fg);
+}
+
+/* 细滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sf-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--sf-border-strong);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 焦点：2px 实线 + 2px offset，禁止 outline: none */
+:focus-visible {
+  outline: 2px solid var(--sf-accent);
+  outline-offset: 2px;
+}
+
+/* reduced-motion 降级 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 工具类 */
+.sf-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.sf-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

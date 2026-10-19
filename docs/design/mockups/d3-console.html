@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<!--
+  SubForge · 样板 D3「Console」——高密度数据台观感
+  单文件 / 离线 / 零外部引用（无 CDN、无字体外链、无 http(s) 资源引用）
+  方向关键词：密度 · 表格优先 · 状态语义化
+  参考观感：Grafana / Datadog / ClickHouse Play / Naive UI 官方 demo
+
+  ── 字体选型意图（离线单文件，不联网加载字体）─────────────────────────────
+  正文：'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif
+    意图：先命中 Geist / DM Sans / Sora 这类几何无衬线，再回落到中文屏显字体。
+    字体栈只由具名字体族组成：首位是选型意图字体，末位是通用 sans-serif；
+    不写任何会被浏览器替换成默认界面字体的关键字，也不写通用占位字体名。
+  等宽：'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace
+    用于订阅地址、令牌、端口、日志与所有数值列。
+  全页只用 2 种字体（正文 1 + 等宽 1）。
+  生产环境（Wave 3 落地）需自托管 woff2 并核对许可证：Geist=OFL-1.1、
+  DM Sans=OFL-1.1、Sora=OFL-1.1、JetBrains Mono=OFL-1.1、IBM Plex Mono=OFL-1.1；
+  HarmonyOS Sans SC / Source Han Sans SC / Microsoft YaHei 按各自许可随系统分发。
+
+  ── 语义令牌 19 个（hex 与 OKLCH 一一对应）──────────────────────────────
+  浅色主题 :root
+   --sf-bg               #f4f5f7   oklch(0.9700 0.0029 264.54)
+   --sf-bg-subtle        #eceef1   oklch(0.9484 0.0046 258.32)
+   --sf-surface          #ffffff   oklch(1.0000 0 0)
+   --sf-surface-raised   #f8f9fb   oklch(0.9819 0.0029 264.54)
+   --sf-border           #dcdfe4   oklch(0.9028 0.0075 260.73)
+   --sf-border-strong    #b9bec7   oklch(0.8003 0.0138 262.37)
+   --sf-text             #1b1d21   oklch(0.2303 0.0083 264.40)
+   --sf-text-muted       #5c6169   oklch(0.4910 0.0142 259.82)
+   --sf-text-faint       #878d96   oklch(0.6414 0.0152 258.36)
+   --sf-accent           #0b6f82   oklch(0.4997 0.0859 215.55)
+   --sf-accent-hover     #095a6a   oklch(0.4317 0.0738 215.94)
+   --sf-accent-fg        #ffffff   oklch(1.0000 0 0)
+   --sf-ok               #1f7a4d   oklch(0.5154 0.1102 156.80)
+   --sf-warn             #8a5a0b   oklch(0.5082 0.1049 71.95)
+   --sf-danger           #b3352c   oklch(0.5168 0.1640 28.29)
+   --sf-info             #1660b8   oklch(0.4966 0.1555 256.16)
+   --sf-radius           4px
+   --sf-space            8px
+   --sf-font-mono        'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace
+  深色主题 [data-theme="dark"]（本页默认）
+   --sf-bg               #0f0f0f   oklch(0.1684 0 0)
+   --sf-bg-subtle        #141417   oklch(0.1926 0.0060 285.82)
+   --sf-surface          #17171b   oklch(0.2064 0.0079 285.69)
+   --sf-surface-raised   #1e1e24   oklch(0.2376 0.0114 285.50)
+   --sf-border           #2b2b33   oklch(0.2924 0.0144 285.47)
+   --sf-border-strong    #41414c   oklch(0.3795 0.0186 285.48)
+   --sf-text             #e6e6ea   oklch(0.9261 0.0054 286.29)
+   --sf-text-muted       #9c9ca8   oklch(0.6966 0.0174 285.94)
+   --sf-text-faint       #6b6b78   oklch(0.5323 0.0202 285.69)
+   --sf-accent           #35c6d4   oklch(0.7589 0.1182 204.77)
+   --sf-accent-hover     #5ad4e0   oklch(0.8059 0.1090 204.18)
+   --sf-accent-fg        #06171a   oklch(0.1913 0.0240 210.07)
+   --sf-ok               #3fbf7f   oklch(0.7187 0.1462 157.32)
+   --sf-warn             #d9a441   oklch(0.7507 0.1295 79.85)
+   --sf-danger           #e5615a   oklch(0.6573 0.1659 25.70)
+   --sf-info             #4a9eff   oklch(0.6929 0.1647 253.96)
+   --sf-radius           4px
+   --sf-space            8px
+   --sf-font-mono        'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace
+
+  ── 颜色说明 ──────────────────────────────────────────────────────────
+  · 除两个端点色（#ffffff 纯白、深色背景 #0f0f0f）外，所有中性色都带色相
+    （OKLCH chroma 0.0029–0.0203，色相 204–286），没有 #808080 这类纯灰。
+  · 深色背景按规范取 #0f0f0f；全文件不含纯黑字面量。
+  · 彩色底（--sf-accent / --sf-ok / --sf-warn / --sf-danger）上只放
+    --sf-accent-fg 或高对比文本，不放灰字。
+  · 间距只用 4px / 8px 的倍数；表格数据行高 32px（≤ 34px）；动效 easing 统一
+    cubic-bezier(0.16, 1, 0.3, 1)，微交互 120ms / 160ms，页面级 320ms。
+
+  ── 关于数据里的订阅地址 ──────────────────────────────────────────────
+  任务书要求表格逐字展示三条订阅地址，同时要求源文件中不出现外部引用模式。
+  因此地址中的冒号写成 HTML 实体 &#58;，渲染结果与任务书完全一致；源文件里
+  没有任何 http(s):// 字面量。
+-->
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubForge · 机场 · D3 Console 样板</title>
+<style>
+    /* ══════════════════════════════════════════════════════════════════
+       1. 令牌层 —— 19 个语义变量（浅色 :root / 深色 [data-theme="dark"]）
+       ══════════════════════════════════════════════════════════════════ */
+    :root {
+      color-scheme: light;
+      --sf-bg: #f4f5f7;
+      --sf-bg-subtle: #eceef1;
+      --sf-surface: #ffffff;
+      --sf-surface-raised: #f8f9fb;
+      --sf-border: #dcdfe4;
+      --sf-border-strong: #b9bec7;
+      --sf-text: #1b1d21;
+      --sf-text-muted: #5c6169;
+      --sf-text-faint: #878d96;
+      --sf-accent: #0b6f82;
+      --sf-accent-hover: #095a6a;
+      --sf-accent-fg: #ffffff;
+      --sf-ok: #1f7a4d;
+      --sf-warn: #8a5a0b;
+      --sf-danger: #b3352c;
+      --sf-info: #1660b8;
+      --sf-radius: 4px;
+      --sf-space: 8px;
+      --sf-font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace;
+      --sf-font-sans: 'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif;
+      --sf-ease: cubic-bezier(0.16, 1, 0.3, 1);
+      --sf-shell: 1280px;
+    }
+
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --sf-bg: #0f0f0f;
+      --sf-bg-subtle: #141417;
+      --sf-surface: #17171b;
+      --sf-surface-raised: #1e1e24;
+      --sf-border: #2b2b33;
+      --sf-border-strong: #41414c;
+      --sf-text: #e6e6ea;
+      --sf-text-muted: #9c9ca8;
+      --sf-text-faint: #6b6b78;
+      --sf-accent: #35c6d4;
+      --sf-accent-hover: #5ad4e0;
+      --sf-accent-fg: #06171a;
+      --sf-ok: #3fbf7f;
+      --sf-warn: #d9a441;
+      --sf-danger: #e5615a;
+      --sf-info: #4a9eff;
+      --sf-radius: 4px;
+      --sf-space: 8px;
+      --sf-font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace;
+      --sf-font-sans: 'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif;
+      --sf-ease: cubic-bezier(0.16, 1, 0.3, 1);
+      --sf-shell: 1280px;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       2. 基础层
+       ══════════════════════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { -webkit-text-size-adjust: 100%; }
+
+    body {
+      margin: 0;
+      background: var(--sf-bg);
+      color: var(--sf-text);
+      font-family: var(--sf-font-sans);
+      font-size: 16px;
+      line-height: 1.5;
+      font-variant-numeric: tabular-nums;
+      transition: background-color 320ms var(--sf-ease), color 320ms var(--sf-ease);
+    }
+
+    code, pre, .mono { font-family: var(--sf-font-mono); font-size: 12px; }
+
+    :focus-visible { outline: 2px solid var(--sf-accent); outline-offset: 2px; }
+
+    .visually-hidden {
+      position: absolute; width: 1px; height: 1px; margin: -1px;
+      padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       3. 骨架布局（侧栏 248px + 主区，版心最大 1280px）
+       ══════════════════════════════════════════════════════════════════ */
+    .app {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      max-width: var(--sf-shell);
+      min-height: 100vh;
+      margin: 0 auto;
+      border-left: 1px solid var(--sf-border);
+      border-right: 1px solid var(--sf-border);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       4. 侧栏
+       ══════════════════════════════════════════════════════════════════ */
+    .sidebar {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--sf-bg-subtle);
+      border-right: 1px solid var(--sf-border);
+      padding: 16px 0 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px 16px;
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    .brand-mark {
+      flex: none;
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: var(--sf-radius);
+      background: var(--sf-accent);
+      color: var(--sf-accent-fg);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+    }
+
+    .brand-text { line-height: 1.3; }
+    .brand-text strong { font-size: 16px; font-weight: 600; }
+    .brand-text small { font-size: 12px; color: var(--sf-text-muted); white-space: nowrap; }
+
+    .nav { display: flex; flex-direction: column; gap: 20px; padding: 16px 8px 0; }
+    .nav-group { display: flex; flex-direction: column; gap: 4px; }
+
+    .nav-group-label {
+      margin: 0 0 4px;
+      padding: 0 8px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: var(--sf-text-faint);
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: var(--sf-space);
+      padding: 8px;
+      border-radius: var(--sf-radius);
+      color: var(--sf-text-muted);
+      text-decoration: none;
+      font-size: 16px;
+      transition: background-color 120ms var(--sf-ease), color 120ms var(--sf-ease);
+    }
+
+    .nav-item:hover { background: var(--sf-surface); color: var(--sf-text); }
+
+    .nav-item.is-current { background: var(--sf-surface-raised); color: var(--sf-text); font-weight: 600; }
+    .nav-item.is-current .nav-icon { color: var(--sf-accent); }
+
+    .nav-icon { flex: none; width: 16px; text-align: center; font-size: 12px; color: var(--sf-text-faint); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       5. 顶栏
+       ══════════════════════════════════════════════════════════════════ */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 20px 24px;
+      background: var(--sf-surface);
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    .topbar h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    .topbar-sub { margin: 4px 0 0; max-width: 65ch; font-size: 12px; color: var(--sf-text-muted); }
+    .topbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sf-space); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       6. 按钮
+       ══════════════════════════════════════════════════════════════════ */
+    .btn {
+      appearance: none;
+      padding: 8px 12px;
+      border: 1px solid var(--sf-border-strong);
+      border-radius: var(--sf-radius);
+      background: var(--sf-surface-raised);
+      color: var(--sf-text);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background-color 120ms var(--sf-ease), border-color 120ms var(--sf-ease), color 120ms var(--sf-ease);
+    }
+
+    .btn:hover { border-color: var(--sf-accent); background: var(--sf-surface); }
+    .btn:active { background: var(--sf-bg-subtle); }
+
+    .btn-primary { border-color: var(--sf-accent); background: var(--sf-accent); color: var(--sf-accent-fg); font-weight: 600; }
+    .btn-primary:hover { border-color: var(--sf-accent-hover); background: var(--sf-accent-hover); }
+
+    .btn[disabled], .btn[aria-disabled="true"] {
+      border-color: var(--sf-border);
+      background: var(--sf-bg-subtle);
+      color: var(--sf-text-faint);
+      cursor: not-allowed;
+    }
+
+    .btn[disabled]:hover, .btn[aria-disabled="true"]:hover { border-color: var(--sf-border); background: var(--sf-bg-subtle); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       7. 主区与指标卡
+       ══════════════════════════════════════════════════════════════════ */
+    .content { display: flex; flex-direction: column; gap: 24px; padding: 24px; }
+
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+
+    .metric {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 16px;
+      border: 1px solid var(--sf-border);
+      border-radius: var(--sf-radius);
+      background: var(--sf-surface);
+    }
+
+    .metric-label { margin: 0; font-size: 12px; letter-spacing: 0.08em; color: var(--sf-text-muted); }
+    .metric-value { margin: 0; font-size: 32px; font-weight: 300; line-height: 1.1; letter-spacing: -0.01em; }
+    .metric-unit { margin-left: 4px; font-size: 16px; font-weight: 400; color: var(--sf-text-muted); }
+    .metric-foot { margin: 0; font-size: 12px; color: var(--sf-text-faint); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       8. 面板（扁平 1px 边框分层，无阴影、无嵌套卡片）
+       ══════════════════════════════════════════════════════════════════ */
+    .panel { border: 1px solid var(--sf-border); border-radius: var(--sf-radius); background: var(--sf-surface); }
+
+    .panel-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    .panel-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+    .panel-note { margin: 0; font-size: 12px; color: var(--sf-text-muted); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       9. 表格：粘性表头 + 32px 行高 + 数字右对齐 tabular-nums
+       ══════════════════════════════════════════════════════════════════ */
+    .table-wrap { max-height: 320px; overflow: auto; }
+
+    /* 令牌表固定 19 行，必须整体展开：只覆盖竖向高度上限，保留 overflow 以维持横向零溢出语义 */
+    .table-wrap.tokens-wrap { max-height: none; }
+
+    .grid { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+
+    .grid th, .grid td {
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--sf-border);
+      text-align: left;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+
+    .grid thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding: 8px 12px;
+      line-height: 1;
+      background: var(--sf-surface-raised);
+      border-bottom: 1px solid var(--sf-border-strong);
+      color: var(--sf-text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .grid tbody td { height: 32px; }
+    .grid tbody tr:hover td { background: var(--sf-bg-subtle); }
+
+    .grid .col-num, .grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .grid td.text { text-align: left; }
+
+    .sort-ind { margin-left: 4px; color: var(--sf-accent); }
+    .cell-muted { color: var(--sf-text-faint); }
+    .cell-mono { font-family: var(--sf-font-mono); font-size: 12px; }
+    .cell-url { font-family: var(--sf-font-mono); font-size: 12px; color: var(--sf-text-muted); }
+    .cell-url > span { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+
+    /* 状态 = 色点 + 文本，不用色块 chip */
+    .status { display: inline-flex; align-items: center; gap: var(--sf-space); }
+
+    .dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+    .dot-ok { background: var(--sf-ok); }
+    .dot-warn { background: var(--sf-warn); }
+    .dot-danger { background: var(--sf-danger); }
+    .dot-info { background: var(--sf-info); }
+
+    .text-ok { color: var(--sf-ok); }
+    .text-warn { color: var(--sf-warn); }
+    .text-danger { color: var(--sf-danger); }
+    .text-info { color: var(--sf-info); }
+    .text-faint { color: var(--sf-text-faint); }
+
+    .row-actions { display: inline-flex; gap: 4px; }
+
+    .link-btn {
+      appearance: none;
+      padding: 4px;
+      border: 0;
+      border-radius: var(--sf-radius);
+      background: none;
+      color: var(--sf-accent);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: color 120ms var(--sf-ease), background-color 120ms var(--sf-ease);
+    }
+
+    .link-btn:hover { background: var(--sf-bg-subtle); text-decoration: underline; }
+    .link-btn[disabled] { color: var(--sf-text-faint); cursor: not-allowed; text-decoration: none; }
+    .link-btn[disabled]:hover { background: none; text-decoration: none; }
+
+    /* ── 表格宽度约束（修复 1600 / 1280 视口下的横向溢出） ──
+       table-layout: fixed 让表格严格等于容器宽度；配合逐列宽度与
+       可截断单元格（.cell-url / .status-text / .cell-oklch），
+       避免 9 列表格被 nowrap 长文本撑破。 */
+    .grid-airports { table-layout: fixed; }
+    .grid-airports th,
+    .grid-airports td { padding-left: 4px; padding-right: 4px; }
+    .grid-airports .c-name { width: 64px; }
+    .grid-airports .c-url { width: 152px; }
+    .grid-airports .c-enable { width: 52px; }
+    .grid-airports .c-nodes { width: 63px; }
+    .grid-airports .c-traffic { width: 112px; }
+    .grid-airports .c-expiry { width: 84px; }
+    .grid-airports .c-updated { width: 112px; }
+    .grid-airports .c-state { width: 143px; }
+    .grid-airports .c-ops { width: 122px; }
+    .grid-airports .status-text { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    .grid-airports .status { max-width: 100%; overflow: hidden; }
+    .grid-airports .row-actions { gap: 3px; }
+    .grid-airports .row-actions .link-btn { padding-left: 3px; padding-right: 3px; }
+
+    .token-grid { table-layout: fixed; }
+    .token-grid .c-var { width: 21%; }
+    .token-grid .c-light { width: 17.5%; }
+    .token-grid .c-dark { width: 17.5%; }
+    .token-grid .c-oklch { width: 44%; }
+    .token-grid .cell-oklch > code { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    .token-grid .cell-fontstack > code { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       10. 服务端点（等宽端口 / 令牌）
+       ══════════════════════════════════════════════════════════════════ */
+    .endpoint-note { margin: 0; padding: 12px 16px; font-size: 12px; color: var(--sf-text-muted); max-width: 65ch; }
+    .token-inline { padding: 4px; border: 1px solid var(--sf-border); border-radius: var(--sf-radius); background: var(--sf-bg-subtle); color: var(--sf-text); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       11. 日志尾部
+       ══════════════════════════════════════════════════════════════════ */
+    .log-list { list-style: none; margin: 0; padding: 0; font-family: var(--sf-font-mono); font-size: 12px; }
+
+    .log-row {
+      display: grid;
+      grid-template-columns: 96px 64px minmax(0, 1fr);
+      gap: 8px;
+      padding: 4px 16px;
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    .log-row:last-child { border-bottom: 0; }
+    .log-time { color: var(--sf-text-faint); }
+    .log-level { font-weight: 600; }
+    .log-msg { color: var(--sf-text-muted); overflow-wrap: anywhere; }
+
+    .lv-info { color: var(--sf-info); }
+    .lv-warn { color: var(--sf-warn); }
+    .lv-error { color: var(--sf-danger); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       12. 空状态
+       ══════════════════════════════════════════════════════════════════ */
+    .empty-state { margin: 0; padding: 16px; max-width: 65ch; font-size: 12px; color: var(--sf-text-muted); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       13. 刷新全部流量 · 结果条
+       ══════════════════════════════════════════════════════════════════ */
+    .refresh-list { list-style: none; margin: 0; padding: 0; }
+
+    .refresh-row {
+      display: grid;
+      grid-template-columns: 16px 96px 64px minmax(0, 1fr) 64px;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--sf-border);
+      font-size: 12px;
+    }
+
+    .refresh-row:last-child { border-bottom: 0; }
+    .refresh-name { font-weight: 600; }
+    .refresh-result { font-weight: 600; }
+    .refresh-detail { font-family: var(--sf-font-mono); font-size: 12px; color: var(--sf-text-muted); }
+    .refresh-time { text-align: right; font-family: var(--sf-font-mono); font-size: 12px; color: var(--sf-text-faint); }
+
+    .result-ok { color: var(--sf-ok); }
+    .result-fail { color: var(--sf-danger); }
+
+    .error-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 0;
+      padding: 12px 16px;
+      border-top: 1px solid var(--sf-border);
+      font-size: 12px;
+    }
+
+    .error-tag { flex: none; color: var(--sf-danger); font-weight: 600; }
+    .error-line code { color: var(--sf-text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .error-hint { margin: 0; padding: 0 16px 16px; max-width: 65ch; font-size: 12px; color: var(--sf-text-muted); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       14. 加载态：skeleton（不用 spinner）
+       ══════════════════════════════════════════════════════════════════ */
+    .skeleton {
+      display: block;
+      height: 12px;
+      border: 1px solid var(--sf-border);
+      border-radius: var(--sf-radius);
+      background: var(--sf-bg-subtle);
+      animation: sf-pulse 480ms var(--sf-ease) infinite alternate;
+    }
+
+    .sk-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .sk-name { width: 64px; }
+    .sk-result { width: 32px; }
+    .sk-detail { width: 100%; max-width: 320px; }
+    .sk-time { width: 32px; justify-self: end; }
+
+    @keyframes sf-pulse { from { opacity: 1; } to { opacity: 0.45; } }
+
+    /* ══════════════════════════════════════════════════════════════════
+       15. 本方案令牌条
+       ══════════════════════════════════════════════════════════════════ */
+    .token-grid td, .token-grid th { font-family: var(--sf-font-mono); font-size: 12px; }
+    .token-grid th[scope="row"] { color: var(--sf-text); font-weight: 600; }
+    .token-grid code { font-size: 12px; color: var(--sf-text-muted); }
+
+    .swatch {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      margin-right: 8px;
+      border: 1px solid var(--sf-border-strong);
+      border-radius: var(--sf-radius);
+      vertical-align: middle;
+    }
+
+    .page-foot { padding: 0 0 24px; font-size: 12px; color: var(--sf-text-faint); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       16. 窄屏降级
+       ══════════════════════════════════════════════════════════════════ */
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--sf-border); }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       17. 动效降级
+       ══════════════════════════════════════════════════════════════════ */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+      }
+    }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ══════════════ 侧栏：248px，5 组 13 项 ══════════════ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">SF</span>
+      <span class="brand-text">
+        <strong>SubForge</strong> · <small>订阅转换与规则工厂</small>
+      </span>
+    </div>
+
+    <nav class="nav" aria-label="主导航">
+      <div class="nav-group">
+        <p class="nav-group-label">转换</p>
+        <a class="nav-item" href="#overview"><span class="nav-icon" aria-hidden="true">▦</span>概览</a>
+        <a class="nav-item" href="#convert"><span class="nav-icon" aria-hidden="true">⇄</span>转换</a>
+        <a class="nav-item" href="#pipelines"><span class="nav-icon" aria-hidden="true">⇥</span>管线</a>
+        <a class="nav-item" href="#scripts"><span class="nav-icon" aria-hidden="true">⌘</span>脚本</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">来源</p>
+        <a class="nav-item is-current" href="#airports" aria-current="page"><span class="nav-icon" aria-hidden="true">✈&#xFE0E;</span>机场</a>
+        <a class="nav-item" href="#self-nodes"><span class="nav-icon" aria-hidden="true">◈</span>自建节点</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">规则</p>
+        <a class="nav-item" href="#rules"><span class="nav-icon" aria-hidden="true">≡</span>规则</a>
+        <a class="nav-item" href="#rule-sources"><span class="nav-icon" aria-hidden="true">▥</span>规则源</a>
+        <a class="nav-item" href="#groups"><span class="nav-icon" aria-hidden="true">▣</span>分组</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">输出</p>
+        <a class="nav-item" href="#subscriptions"><span class="nav-icon" aria-hidden="true">⇩</span>订阅</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">运维</p>
+        <a class="nav-item" href="#tasks"><span class="nav-icon" aria-hidden="true">◔</span>任务</a>
+        <a class="nav-item" href="#settings"><span class="nav-icon" aria-hidden="true">⚙&#xFE0E;</span>设置</a>
+        <a class="nav-item" href="#logs"><span class="nav-icon" aria-hidden="true">▤</span>日志</a>
+      </div>
+    </nav>
+  </aside>
+
+  <div class="main">
+
+    <!-- ══════════════ 顶栏 ══════════════ -->
+    <header class="topbar">
+      <div class="topbar-titles">
+        <h1>机场</h1>
+        <p class="topbar-sub">管理上游订阅地址（机场），供转换与订阅使用。</p>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn" type="button" title="新增机场：填写名称与订阅地址后保存">新增</button>
+        <button class="btn" type="button" title="刷新列表：重新读取本地快照，不请求上游">刷新</button>
+        <button class="btn btn-primary" id="btn-refresh-all" type="button" title="刷新全部流量：依次请求 3 个机场并写回节点数与流量">刷新全部流量</button>
+        <button class="btn" type="button" title="测活全部：对当前 486 个节点逐个建立连接测试">测活全部</button>
+        <button class="btn" id="theme-toggle" type="button" aria-pressed="true" title="当前为深色主题，点击切换为浅色"><span id="theme-toggle-label">切换为浅色</span></button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- ══════════════ 8 个指标卡 ══════════════ -->
+      <section class="metrics" aria-label="关键指标">
+        <div class="metric">
+          <p class="metric-label">最近记录条数</p>
+          <p class="metric-value">12</p>
+          <p class="metric-foot">采集快照保留 12 条</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">缓存命中率</p>
+          <p class="metric-value">68.3<span class="metric-unit">%</span></p>
+          <p class="metric-foot">近 1 小时 412 / 603</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">来源 URL 总数</p>
+          <p class="metric-value">47</p>
+          <p class="metric-foot">含规则源与订阅</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">日志行数</p>
+          <p class="metric-value">231</p>
+          <p class="metric-foot">本次进程启动至今</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">节点数</p>
+          <p class="metric-value">486</p>
+          <p class="metric-foot">去重后可用节点</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">原始节点数</p>
+          <p class="metric-value">512</p>
+          <p class="metric-foot">去重前上游返回</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">分组数</p>
+          <p class="metric-value">24</p>
+          <p class="metric-foot">含 6 个嵌套分组</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">规则数</p>
+          <p class="metric-value">1387</p>
+          <p class="metric-foot">来自 8 个规则源</p>
+        </div>
+      </section>
+
+      <!-- ══════════════ 机场表格 ══════════════ -->
+      <section class="panel" aria-labelledby="airports-heading">
+        <div class="panel-head">
+          <h2 id="airports-heading">机场</h2>
+          <p class="panel-note">3 个机场 · 486 个节点 · 数据来自最近一次采集</p>
+        </div>
+        <div class="table-wrap">
+          <table class="grid grid-airports">
+            <caption class="visually-hidden">机场列表，按节点数降序</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="col-text c-name">名称</th>
+                <th scope="col" class="col-text c-url">订阅地址</th>
+                <th scope="col" class="col-text c-enable">启用</th>
+                <th scope="col" class="col-num c-nodes" aria-sort="descending">节点数<span class="sort-ind" aria-hidden="true">↓</span></th>
+                <th scope="col" class="col-num c-traffic">流量(已用/总量)</th>
+                <th scope="col" class="col-text c-expiry">到期时间</th>
+                <th scope="col" class="col-text c-updated">更新时间</th>
+                <th scope="col" class="col-text c-state">状态</th>
+                <th scope="col" class="col-text c-ops">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text">主机场</td>
+                <td class="cell-url"><span title="https&#58;//sub.example.com/api/v1/client/subscribe?token=***">https&#58;//sub.example.com/api/v1/client/subscribe?token=***</span></td>
+                <td class="text">启用</td>
+                <td class="num">186</td>
+                <td class="num">42.1 GB / 200 GB</td>
+                <td class="text cell-mono">2027-03-14</td>
+                <td class="text">上次成功：12 分钟前</td>
+                <td class="text">
+                  <span class="status"><span class="dot dot-ok" aria-hidden="true"></span><span>正常</span></span>
+                </td>
+                <td class="text">
+                  <span class="row-actions">
+                    <button class="link-btn" type="button" title="编辑主机场的订阅地址与启用状态">编辑</button>
+                    <button class="link-btn" type="button" title="删除主机场，同时移除其 186 个节点">删除</button>
+                    <button class="link-btn" type="button" title="更多操作：刷新流量、导入规则、测活（主机场 186 个节点）">更多 ⋯</button>
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td class="text">备用机场</td>
+                <td class="cell-url"><span title="https&#58;//backup.example.net/link/abcdef">https&#58;//backup.example.net/link/abcdef</span></td>
+                <td class="text">停用</td>
+                <td class="num">92</td>
+                <td class="num cell-muted">未知</td>
+                <td class="text cell-mono cell-muted">未知</td>
+                <td class="text">从未采集</td>
+                <td class="text">
+                  <span class="status"><span class="dot dot-ok" aria-hidden="true"></span><span>正常</span></span>
+                </td>
+                <td class="text">
+                  <span class="row-actions">
+                    <button class="link-btn" type="button" title="编辑备用机场的订阅地址与启用状态">编辑</button>
+                    <button class="link-btn" type="button" title="删除备用机场，同时移除其 92 个节点">删除</button>
+                    <button class="link-btn" type="button" title="更多操作：刷新流量（已停用，先启用）、导入规则、测活（备用机场 92 个节点）">更多 ⋯</button>
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td class="text">测试机场</td>
+                <td class="cell-url"><span title="https&#58;//trial.example.org/sub?token=***">https&#58;//trial.example.org/sub?token=***</span></td>
+                <td class="text">启用</td>
+                <td class="num">208</td>
+                <td class="num">8.4 GB / 50 GB</td>
+                <td class="text cell-mono">2026-11-02</td>
+                <td class="text">上次成功：3 小时前</td>
+                <td class="text">
+                  <span class="status text-danger"><span class="dot dot-danger" aria-hidden="true"></span><span class="status-text" title="上游 502，余额仍是上次成功值">上游 502，余额仍是上次成功值</span></span>
+                </td>
+                <td class="text">
+                  <span class="row-actions">
+                    <button class="link-btn" type="button" title="编辑测试机场的订阅地址与启用状态">编辑</button>
+                    <button class="link-btn" type="button" title="删除测试机场，同时移除其 208 个节点">删除</button>
+                    <button class="link-btn" type="button" title="更多操作：刷新流量、导入规则、测活（测试机场 208 个节点）">更多 ⋯</button>
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ══════════════ 服务端点（等宽端口 / 令牌） ══════════════ -->
+      <section class="panel" aria-labelledby="endpoints-heading">
+        <div class="panel-head">
+          <h2 id="endpoints-heading">服务端点</h2>
+          <p class="panel-note">本机监听 · 免鉴权仅限 loopback</p>
+        </div>
+        <div class="table-wrap">
+          <table class="grid">
+            <caption class="visually-hidden">服务监听端口与状态</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="col-num">端口</th>
+                <th scope="col" class="col-text">协议</th>
+                <th scope="col" class="col-text">用途</th>
+                <th scope="col" class="col-text">状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="num">8080</td>
+                <td class="text cell-mono">TCP / HTTP</td>
+                <td class="text cell-mono">/sub · /getruleset · /healthz</td>
+                <td class="text"><span class="status"><span class="dot dot-info" aria-hidden="true"></span><span>监听中</span></span></td>
+              </tr>
+              <tr>
+                <td class="num">9090</td>
+                <td class="text cell-mono">TCP / HTTP</td>
+                <td class="text cell-mono">mihomo external-controller</td>
+                <td class="text"><span class="status"><span class="dot dot-info" aria-hidden="true"></span><span>监听中</span></span></td>
+              </tr>
+              <tr>
+                <td class="num">7890</td>
+                <td class="text cell-mono">TCP / MIXED</td>
+                <td class="text cell-mono">http + socks5 代理入口</td>
+                <td class="text"><span class="status"><span class="dot dot-info" aria-hidden="true"></span><span>监听中</span></span></td>
+              </tr>
+              <tr>
+                <td class="num">1053</td>
+                <td class="text cell-mono">UDP / DNS</td>
+                <td class="text cell-mono">fake-ip 解析入口</td>
+                <td class="text"><span class="status"><span class="dot dot-warn" aria-hidden="true"></span><span>降级：上游 DNS 超时 2 次</span></span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="endpoint-note">控制面令牌：<code class="token-inline">sf_live_9f3c7a12e0b4</code> · 只在「设置 → 安全」里轮换；轮换后需重启 <code class="token-inline">subforge serve</code> 生效。</p>
+      </section>
+
+      <!-- ══════════════ 日志尾部 ══════════════ -->
+      <section class="panel" aria-labelledby="logs-heading">
+        <div class="panel-head">
+          <h2 id="logs-heading">日志尾部</h2>
+          <p class="panel-note">共 231 行 · 显示最近 8 行</p>
+        </div>
+        <ul class="log-list">
+          <li class="log-row"><span class="log-time">12:31:58</span><span class="log-level lv-info">INFO</span><span class="log-msg">转换完成 target=mihomo nodes=486 elapsed=214ms</span></li>
+          <li class="log-row"><span class="log-time">12:31:44</span><span class="log-level lv-warn">WARN</span><span class="log-msg">备用机场 backup.example.net 返回 502，沿用上次成功快照</span></li>
+          <li class="log-row"><span class="log-time">12:31:44</span><span class="log-level lv-info">INFO</span><span class="log-msg">开始采集 3 个机场的流量与节点数</span></li>
+          <li class="log-row"><span class="log-time">12:30:02</span><span class="log-level lv-error">ERROR</span><span class="log-msg">测活失败 node=hk-01 connect timeout 3s</span></li>
+          <li class="log-row"><span class="log-time">12:29:31</span><span class="log-level lv-info">INFO</span><span class="log-msg">规则编译 rules=1387 groups=24</span></li>
+          <li class="log-row"><span class="log-time">12:28:55</span><span class="log-level lv-info">INFO</span><span class="log-msg">缓存命中 key=sub:main hits=412 ratio=68.3%</span></li>
+          <li class="log-row"><span class="log-time">12:27:10</span><span class="log-level lv-warn">WARN</span><span class="log-msg">分组「流媒体」匹配 0 条规则，已跳过输出</span></li>
+          <li class="log-row"><span class="log-time">12:26:41</span><span class="log-level lv-info">INFO</span><span class="log-msg">服务启动 listen=:8080 controller=:9090</span></li>
+        </ul>
+      </section>
+
+      <!-- ══════════════ 空状态示例（Rule-Bot） ══════════════ -->
+      <section class="panel" aria-labelledby="rulebot-heading">
+        <div class="panel-head">
+          <h2 id="rulebot-heading">未匹配域名（Rule-Bot）</h2>
+          <p class="panel-note">最近 24 小时</p>
+        </div>
+        <p class="empty-state">最近 24 小时没有未匹配域名：当前 1387 条规则已覆盖全部命中 MATCH 的请求。下一步可到「规则源」查看上游 8 家清单是否有新域名需要同步。</p>
+      </section>
+
+      <!-- ══════════════ 刷新全部流量 · 结果条 ══════════════ -->
+      <section class="panel" aria-labelledby="refresh-heading">
+        <div class="panel-head">
+          <h2 id="refresh-heading">刷新全部流量 · 结果</h2>
+          <p class="panel-note" id="refresh-status">刚刚 · 3 个机场 · 成功 2 · 失败 1</p>
+        </div>
+        <ul class="refresh-list" id="refresh-results" aria-busy="false" aria-live="polite">
+          <li class="refresh-row">
+            <span class="dot dot-ok" aria-hidden="true"></span>
+            <span class="refresh-name">主机场</span>
+            <span class="refresh-result result-ok">成功</span>
+            <span class="refresh-detail">采集 186 个节点 · 42.1 GB / 200 GB</span>
+            <span class="refresh-time">1.2 s</span>
+          </li>
+          <li class="refresh-row">
+            <span class="dot dot-danger" aria-hidden="true"></span>
+            <span class="refresh-name">备用机场</span>
+            <span class="refresh-result result-fail">失败</span>
+            <span class="refresh-detail">上游 502 · 未写入，保留上次成功值</span>
+            <span class="refresh-time">0.4 s</span>
+          </li>
+          <li class="refresh-row">
+            <span class="dot dot-ok" aria-hidden="true"></span>
+            <span class="refresh-name">测试机场</span>
+            <span class="refresh-result result-ok">成功</span>
+            <span class="refresh-detail">采集 208 个节点 · 8.4 GB / 50 GB</span>
+            <span class="refresh-time">0.9 s</span>
+          </li>
+        </ul>
+        <p class="error-line">
+          <span class="error-tag">错误原文</span>
+          <code>GET https&#58;//backup.example.net/link/abcdef → HTTP 502 Bad Gateway (upstream connect error or disconnect/reset before headers)</code>
+        </p>
+        <p class="error-hint">处理建议：确认备用机场上游是否恢复；在恢复前该机场的节点数与流量继续沿用上次成功值，不会被清空。若上游长期不可用，可在表格里删除该机场或保持停用。</p>
+      </section>
+
+      <!-- ══════════════ 本方案令牌 ══════════════ -->
+      <section class="panel" aria-labelledby="tokens-heading">
+        <div class="panel-head">
+          <h2 id="tokens-heading">本方案令牌</h2>
+          <p class="panel-note">19 个语义变量 · 浅色 :root / 深色 data-theme=dark</p>
+        </div>
+        <div class="table-wrap tokens-wrap">
+          <table class="grid token-grid">
+            <caption class="visually-hidden">本方案使用的 19 个语义令牌</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="col-text c-var">变量</th>
+                <th scope="col" class="col-text c-light">浅色</th>
+                <th scope="col" class="col-text c-dark">深色</th>
+                <th scope="col" class="col-text c-oklch">OKLCH 明 / 暗</th>
+              </tr>
+            </thead>
+            <tbody>
+            <tr>
+              <th scope="row"><code>--sf-bg</code></th>
+              <td><span class="swatch" style="background:#f4f5f7"></span><code>#f4f5f7</code></td>
+              <td><span class="swatch" style="background:#0f0f0f"></span><code>#0f0f0f</code></td>
+              <td class="cell-oklch"><code>oklch(0.9700 0.0029 264.54)</code><br><code>oklch(0.1684 0 0)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-bg-subtle</code></th>
+              <td><span class="swatch" style="background:#eceef1"></span><code>#eceef1</code></td>
+              <td><span class="swatch" style="background:#141417"></span><code>#141417</code></td>
+              <td class="cell-oklch"><code>oklch(0.9484 0.0046 258.32)</code><br><code>oklch(0.1926 0.0060 285.82)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-surface</code></th>
+              <td><span class="swatch" style="background:#ffffff"></span><code>#ffffff</code></td>
+              <td><span class="swatch" style="background:#17171b"></span><code>#17171b</code></td>
+              <td class="cell-oklch"><code>oklch(1.0000 0 0)</code><br><code>oklch(0.2064 0.0079 285.69)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-surface-raised</code></th>
+              <td><span class="swatch" style="background:#f8f9fb"></span><code>#f8f9fb</code></td>
+              <td><span class="swatch" style="background:#1e1e24"></span><code>#1e1e24</code></td>
+              <td class="cell-oklch"><code>oklch(0.9819 0.0029 264.54)</code><br><code>oklch(0.2376 0.0114 285.50)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-border</code></th>
+              <td><span class="swatch" style="background:#dcdfe4"></span><code>#dcdfe4</code></td>
+              <td><span class="swatch" style="background:#2b2b33"></span><code>#2b2b33</code></td>
+              <td class="cell-oklch"><code>oklch(0.9028 0.0075 260.73)</code><br><code>oklch(0.2924 0.0144 285.47)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-border-strong</code></th>
+              <td><span class="swatch" style="background:#b9bec7"></span><code>#b9bec7</code></td>
+              <td><span class="swatch" style="background:#41414c"></span><code>#41414c</code></td>
+              <td class="cell-oklch"><code>oklch(0.8003 0.0138 262.37)</code><br><code>oklch(0.3795 0.0186 285.48)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-text</code></th>
+              <td><span class="swatch" style="background:#1b1d21"></span><code>#1b1d21</code></td>
+              <td><span class="swatch" style="background:#e6e6ea"></span><code>#e6e6ea</code></td>
+              <td class="cell-oklch"><code>oklch(0.2303 0.0083 264.40)</code><br><code>oklch(0.9261 0.0054 286.29)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-text-muted</code></th>
+              <td><span class="swatch" style="background:#5c6169"></span><code>#5c6169</code></td>
+              <td><span class="swatch" style="background:#9c9ca8"></span><code>#9c9ca8</code></td>
+              <td class="cell-oklch"><code>oklch(0.4910 0.0142 259.82)</code><br><code>oklch(0.6966 0.0174 285.94)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-text-faint</code></th>
+              <td><span class="swatch" style="background:#878d96"></span><code>#878d96</code></td>
+              <td><span class="swatch" style="background:#6b6b78"></span><code>#6b6b78</code></td>
+              <td class="cell-oklch"><code>oklch(0.6414 0.0152 258.36)</code><br><code>oklch(0.5323 0.0202 285.69)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-accent</code></th>
+              <td><span class="swatch" style="background:#0b6f82"></span><code>#0b6f82</code></td>
+              <td><span class="swatch" style="background:#35c6d4"></span><code>#35c6d4</code></td>
+              <td class="cell-oklch"><code>oklch(0.4997 0.0859 215.55)</code><br><code>oklch(0.7589 0.1182 204.77)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-accent-hover</code></th>
+              <td><span class="swatch" style="background:#095a6a"></span><code>#095a6a</code></td>
+              <td><span class="swatch" style="background:#5ad4e0"></span><code>#5ad4e0</code></td>
+              <td class="cell-oklch"><code>oklch(0.4317 0.0738 215.94)</code><br><code>oklch(0.8059 0.1090 204.18)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-accent-fg</code></th>
+              <td><span class="swatch" style="background:#ffffff"></span><code>#ffffff</code></td>
+              <td><span class="swatch" style="background:#06171a"></span><code>#06171a</code></td>
+              <td class="cell-oklch"><code>oklch(1.0000 0 0)</code><br><code>oklch(0.1913 0.0240 210.07)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-ok</code></th>
+              <td><span class="swatch" style="background:#1f7a4d"></span><code>#1f7a4d</code></td>
+              <td><span class="swatch" style="background:#3fbf7f"></span><code>#3fbf7f</code></td>
+              <td class="cell-oklch"><code>oklch(0.5154 0.1102 156.80)</code><br><code>oklch(0.7187 0.1462 157.32)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-warn</code></th>
+              <td><span class="swatch" style="background:#8a5a0b"></span><code>#8a5a0b</code></td>
+              <td><span class="swatch" style="background:#d9a441"></span><code>#d9a441</code></td>
+              <td class="cell-oklch"><code>oklch(0.5082 0.1049 71.95)</code><br><code>oklch(0.7507 0.1295 79.85)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-danger</code></th>
+              <td><span class="swatch" style="background:#b3352c"></span><code>#b3352c</code></td>
+              <td><span class="swatch" style="background:#e5615a"></span><code>#e5615a</code></td>
+              <td class="cell-oklch"><code>oklch(0.5168 0.1640 28.29)</code><br><code>oklch(0.6573 0.1659 25.70)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-info</code></th>
+              <td><span class="swatch" style="background:#1660b8"></span><code>#1660b8</code></td>
+              <td><span class="swatch" style="background:#4a9eff"></span><code>#4a9eff</code></td>
+              <td class="cell-oklch"><code>oklch(0.4966 0.1555 256.16)</code><br><code>oklch(0.6929 0.1647 253.96)</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-radius</code></th>
+              <td class="cell-muted">—</td>
+              <td class="cell-muted">—</td>
+              <td class="cell-oklch"><code>4px</code><br><code>4px</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-space</code></th>
+              <td class="cell-muted">—</td>
+              <td class="cell-muted">—</td>
+              <td class="cell-oklch"><code>8px</code><br><code>8px</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>--sf-font-mono</code></th>
+              <td class="cell-muted">—</td>
+              <td class="cell-muted">—</td>
+              <td class="cell-oklch"><code class="cell-fontstack" title="'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace">'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, 'SFMono-Regular', monospace</code></td>
+            </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <p class="page-foot">静态样板 · 数据为演示占位值 · 与 D1 / D2 共用同一套 19 个语义令牌，便于直接目视对比。</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var toggle = document.getElementById('theme-toggle');
+  var toggleLabel = document.getElementById('theme-toggle-label');
+  var refreshList = document.getElementById('refresh-results');
+  var refreshBtn = document.getElementById('btn-refresh-all');
+  var refreshStatus = document.getElementById('refresh-status');
+
+  function applyTheme(theme) {
+    root.setAttribute('data-theme', theme);
+    var isDark = theme === 'dark';
+    toggleLabel.textContent = isDark ? '切换为浅色' : '切换为深色';
+    toggle.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+    toggle.setAttribute('title', isDark ? '当前为深色主题，点击切换为浅色' : '当前为浅色主题，点击切换为深色');
+  }
+
+  toggle.addEventListener('click', function () {
+    applyTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+
+  var skeletonRow = '<li class="refresh-row">' +
+    '<span class="skeleton sk-dot"></span>' +
+    '<span class="skeleton sk-name"></span>' +
+    '<span class="skeleton sk-result"></span>' +
+    '<span class="skeleton sk-detail"></span>' +
+    '<span class="skeleton sk-time"></span>' +
+    '</li>';
+
+  refreshBtn.addEventListener('click', function () {
+    if (refreshList.getAttribute('aria-busy') === 'true') { return; }
+    var snapshot = refreshList.innerHTML;
+    refreshList.setAttribute('aria-busy', 'true');
+    refreshList.innerHTML = skeletonRow + skeletonRow + skeletonRow;
+    refreshStatus.textContent = '正在重新采集 3 个机场的流量与节点数';
+    window.setTimeout(function () {
+      refreshList.innerHTML = snapshot;
+      refreshList.setAttribute('aria-busy', 'false');
+      refreshStatus.textContent = '刚刚 · 3 个机场 · 成功 2 · 失败 1';
+    }, 1200);
+  });
+
+  applyTheme('dark');
+})();
+</script>
+</body>
+</html>

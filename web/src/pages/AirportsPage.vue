@@ -34,16 +34,26 @@ const error = ref('')
 const rows = ref<AirportRow[]>([])
 const emptyState = computed(() => help.emptyState)
 
+// W6B 表格：minWidth 给每列下界（Vuetify 会把 minWidth 写成 th 的内联 min-width），
+// 表头的 white-space:nowrap 由 vuetify-overrides.css 统一提供 → 1600px 下 9 列表头全部单行。
+// align:'end' 让数字列（节点数 / 流量 / 到期时间 / 操作）右对齐，并吃到 tabular-nums。
+// 操作列额外挂 sf-table__actions，供覆写层做「单行不折 + 紧凑按钮」。
 const headers = [
-  { key: 'name', title: '名称' },
+  { key: 'name', title: '名称', minWidth: 88 },
   { key: 'subscription_url', title: '订阅地址' },
-  { key: 'enabled', title: '启用' },
-  { key: 'node_count', title: '节点数' },
-  { key: 'traffic', title: '流量(已用/总量)' },
-  { key: 'expire', title: '到期时间' },
-  { key: 'updated', title: '更新时间' },
-  { key: 'status', title: '状态' },
-  { key: 'actions', title: '操作' },
+  { key: 'enabled', title: '启用', minWidth: 64 },
+  { key: 'node_count', title: '节点数', align: 'end' as const, minWidth: 72 },
+  { key: 'traffic', title: '流量(已用/总量)', align: 'end' as const, minWidth: 128 },
+  { key: 'expire', title: '到期时间', align: 'end' as const, minWidth: 96 },
+  { key: 'updated', title: '更新时间', minWidth: 152 },
+  { key: 'status', title: '状态', minWidth: 72 },
+  {
+    key: 'actions',
+    title: '操作',
+    align: 'end' as const,
+    minWidth: 288,
+    cellProps: { class: 'sf-table__actions' },
+  },
 ]
 
 const dialog = ref(false)
@@ -239,8 +249,14 @@ async function restoreLastCheck(): Promise<void> {
     </PageHeader>
 
     <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
-      <template #default>
-        <v-data-table :headers="headers" :items="rows" data-testid="table">
+      <template v-slot:default>
+        <v-data-table :headers="headers" :items="rows" data-testid="table" class="airports-table">
+          <template #item.subscription_url="{ value }">
+            <span class="airport-mono airport-truncate" :title="value">{{ value }}</span>
+          </template>
+          <template #item.node_count="{ value }">
+            <span class="airport-num">{{ value }}</span>
+          </template>
           <template #item.enabled="{ item }">
             <v-chip size="small" :color="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</v-chip>
           </template>
@@ -265,11 +281,13 @@ async function restoreLastCheck(): Promise<void> {
             <span v-else data-testid="traffic-status-ok">正常</span>
           </template>
           <template #item.actions="{ item }">
-            <v-btn size="small" variant="text" data-testid="edit" @click="openEdit(item)">编辑</v-btn>
-            <v-btn size="small" variant="text" color="error" data-testid="delete" @click="askDelete(item)">删除</v-btn>
-            <v-btn size="small" variant="text" data-testid="refresh-traffic" @click="refreshOne(item)">刷新流量</v-btn>
-            <v-btn size="small" variant="text" data-testid="import-rules" @click="importRules(item)">导入规则</v-btn>
-            <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">测活</v-btn>
+            <div class="airport-actions">
+              <v-btn size="small" variant="text" data-testid="edit" @click="openEdit(item)">编辑</v-btn>
+              <v-btn size="small" variant="text" color="error" data-testid="delete" @click="askDelete(item)">删除</v-btn>
+              <v-btn size="small" variant="text" data-testid="refresh-traffic" @click="refreshOne(item)">刷新流量</v-btn>
+              <v-btn size="small" variant="text" data-testid="import-rules" @click="importRules(item)">导入规则</v-btn>
+              <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">测活</v-btn>
+            </div>
           </template>
         </v-data-table>
       </template>
@@ -347,3 +365,53 @@ async function restoreLastCheck(): Promise<void> {
     </v-dialog>
   </div>
 </template>
+
+
+<style scoped>
+.airports-table {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+}
+.airports-table :deep(thead th) {
+  background: var(--sf-surface-raised);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.airport-mono {
+  font-family: var(--sf-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.airport-truncate {
+  display: inline-block;
+  /* W6B：380px 的内联块会把整列下界顶到 404px，9 列在 1600px 下放不下；
+     收到 200px 后 URL 列 ≈224px，truncate + title 行为不变。 */
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.airport-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  display: block;
+}
+/* W6B：操作列单行——flex 一行 + 8px 间距，靠右（表头 align='end'） */
+.airport-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.airports-table :deep(.text-end),
+.airports-table :deep(.text-right) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* 流量列右对齐后异常文案会跟着右对齐、很难读，单独拉回左对齐 */
+.airports-table :deep(td.text-end) .text-error {
+  text-align: left;
+}
+</style>

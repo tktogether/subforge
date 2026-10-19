@@ -105,12 +105,14 @@ describe('TasksPage', () => {
     w.unmount()
   })
 
-  it('help-panel 含 oneLiner 片段', async () => {
+  it('help-panel 入口行=使用说明且详情默认收起；oneLiner 只出现在副标题', async () => {
     listTasksMock.mockResolvedValue([])
     const w = mount(TasksPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect(w.find('[data-testid="help-panel"]').exists()).toBe(true)
-    expect(w.find('[data-testid="help-oneliner"]').text()).toContain(pageHelp('tasks').oneLiner)
+    expect(w.find('.page-header__subtitle').text()).toContain(pageHelp('tasks').oneLiner)
+    expect(w.find('[data-testid="help-toggle-label"]').text()).toBe('使用说明')
+    expect(w.find('[data-testid="help-body"]').exists()).toBe(false)
     w.unmount()
   })
 

@@ -53,7 +53,6 @@ onMounted(() => {
   <AsyncSection :loading="loading" :error="error" :empty="empty()" empty-text="暂无转换记录" @retry="load">
     <!-- Block 1: what this page does -->
     <v-card class="mb-4 pa-4" data-testid="block-intro">
-      <div class="text-body-1 mb-2">{{ help.oneLiner }}</div>
       <div class="text-subtitle-2 mb-1">首次使用路径</div>
       <ol class="pl-4 mb-2">
         <li><router-link to="/airports">机场</router-link> —— 添加上游订阅地址（这是所有节点的来源）</li>
@@ -65,48 +64,48 @@ onMounted(() => {
     </v-card>
 
     <!-- Block 2: metrics with captions -->
-    <div class="d-flex ga-4 mb-4 flex-wrap" data-testid="block-metrics">
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+    <div class="metrics-grid mb-4" data-testid="block-metrics">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">最近记录条数</div>
         <div class="text-h5" data-testid="metric-history-total">{{ stats?.history.total ?? 0 }}</div>
         <div class="text-caption">服务进程内存里保留的最近转换记录条数（上限 20，重启清零），不是历史累计。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">缓存命中率</div>
         <div class="text-h5" data-testid="metric-cache-hit-rate">{{ ((stats?.history.cacheHitRate ?? 0) * 100).toFixed(1) }}%</div>
         <div class="text-caption">命中磁盘缓存的来源 URL 数 ÷ 总来源 URL 数。缓存命中意味着没有真的去上游拉取。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">来源 URL 总数</div>
         <div class="text-h5" data-testid="metric-url-total">{{ stats?.history.urlTotal ?? 0 }}</div>
         <div class="text-caption">这些转换请求里一共出现过多少个来源 URL（含重复）。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">日志行数</div>
         <div class="text-h5" data-testid="metric-logs">{{ stats?.logs ?? 0 }}</div>
         <div class="text-caption">日志缓冲区里的行数（有上限，超出后最早的会被丢弃）。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">节点数</div>
         <div class="text-h5" data-testid="metric-nodes">{{ lastOrDash(stats?.last?.nodes) }}</div>
         <div class="text-caption">最近一次转换输出的节点数。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">原始节点数</div>
         <div class="text-h5" data-testid="metric-raw-nodes">{{ lastOrDash(stats?.last?.rawNodes) }}</div>
         <div class="text-caption">去重/过滤之前解析到的节点数；两者差得越多，说明去重或管线过滤越有效。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">分组数</div>
         <div class="text-h5" data-testid="metric-groups">{{ lastOrDash(stats?.last?.groups) }}</div>
         <div class="text-caption">最近一次转换实际生效的分组数（模板与请求取并集后的结果）。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">规则数</div>
         <div class="text-h5" data-testid="metric-rules">{{ lastOrDash(stats?.last?.rules) }}</div>
         <div class="text-caption">最近一次转换实际生效的规则行数。</div>
       </v-card>
-      <v-card variant="tonal" class="pa-4 flex-grow-1" min-width="160">
+      <v-card variant="tonal" class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">最近一次缓存命中</div>
         <div class="text-h5" data-testid="metric-last-cached">{{ stats?.last == null ? '—' : (stats.last.cached + '/' + stats.last.urlCount) }}</div>
         <div class="text-caption">最近一次转换里，命中缓存的来源数 ÷ 来源总数。</div>
@@ -123,7 +122,7 @@ onMounted(() => {
           <div class="text-caption text-medium-emphasis">转换页点一次「转换」，或让客户端请求一次订阅地址，这里就会出现记录。</div>
           <router-link to="/convert" data-testid="history-empty-action">转换</router-link>
         </div>
-        <v-data-table v-else :items="history" density="comfortable" hover show-expand :expanded="expanded" @update:expanded="(v: readonly string[]) => (expanded = [...v])" data-testid="history-table">
+        <v-data-table v-else :items="history" density="comfortable" hover show-expand :expanded="expanded" @update:expanded="(v: readonly string[]) => (expanded = [...v])" data-testid="history-table" class="history-table">
           <template #item.at="{ value }">{{ fmtTime(String(value)) }}</template>
           <template #expanded-row="{ columns, item }">
             <tr>
@@ -157,3 +156,49 @@ onMounted(() => {
     </v-card>
   </AsyncSection>
 </template>
+
+<style scoped>
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+@media (min-width: 960px) {
+  .metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.metric-card {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  box-shadow: none;
+  min-height: 126px;
+}
+.metric-card .text-h5 {
+  font-variant-numeric: tabular-nums;
+}
+.metric-card .metric-value {
+  font-size: 21px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--sf-text);
+}
+.metric-card .metric-label {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+.history-table {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+}
+.history-table :deep(thead th) {
+  background: var(--sf-surface-raised);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+</style>

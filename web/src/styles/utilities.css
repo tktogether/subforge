@@ -1,0 +1,12 @@
+/* utilities.css — D1 Instrument 工具类（少量、真实会用到的） */
+/* 令牌来源：web/src/design/tokens.css（W1） */
+
+.sf-container {
+  max-width: 1280px;
+  margin-inline: auto;
+  padding-inline: var(--sf-space);
+}
+
+.sf-prose {
+  max-width: 65ch;
+}
