@@ -260,4 +260,38 @@ describe('LogsPage', () => {
     expect(t).toContain('纯前端关键字高亮')
     w.unmount()
   })
+
+  it('关键字过滤：输入 error 后只剩匹配行', async () => {
+    logsMock.mockResolvedValue({ logs: [
+      { id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'GET /api/convert ok' },
+      { id: 2, ts: '2026-10-19T04:00:01+08:00', line: 'refresh airport done' },
+      { id: 3, ts: '2026-10-19T04:00:02+08:00', line: 'error boom' },
+    ] })
+    const w = mount(LogsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.findAll('[data-testid="log-row"]').length).toBe(3)
+    await w.find('[data-testid="log-filter"] input').setValue('error')
+    await flushPromises()
+    expect(w.findAll('[data-testid="log-row"]').length).toBe(1)
+    const t = w.text()
+    expect(t).toContain('error boom')
+    expect(t).not.toContain('GET /api/convert ok')
+    expect(t).not.toContain('refresh airport done')
+    w.unmount()
+  })
+
+  it('关键字过滤：无匹配时显示 log-filter-empty', async () => {
+    logsMock.mockResolvedValue({ logs: [
+      { id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'GET /api/convert ok' },
+      { id: 2, ts: '2026-10-19T04:00:01+08:00', line: 'refresh airport done' },
+    ] })
+    const w = mount(LogsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="log-filter-empty"]').exists()).toBe(false)
+    await w.find('[data-testid="log-filter"] input').setValue('nothing-matches')
+    await flushPromises()
+    expect(w.find('[data-testid="log-filter-empty"]').exists()).toBe(true)
+    expect(w.text()).toContain('没有匹配「nothing-matches」的日志')
+    w.unmount()
+  })
 })

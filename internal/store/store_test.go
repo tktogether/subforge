@@ -1356,3 +1356,30 @@ func TestEmptyOriginKeyCoexist(t *testing.T) {
 		t.Fatalf("应有 3 行，实际 %d", n)
 	}
 }
+
+// TestSetRuleProviderEnabled 覆盖启用切换与不存在 id 的 (false, nil) 语义。
+func TestSetRuleProviderEnabled(t *testing.T) {
+	d, ctx := newTestDB(t)
+	if err := d.UpsertRuleProvider(ctx, RuleProvider{Name: "rp1", RawJSON: "{}", Source: "airport:HK", Enabled: true, SortOrder: 1}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	list, err := d.ListRuleProviders(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("seed list: %v len=%d", err, len(list))
+	}
+	id := list[0].ID
+
+	found, err := d.SetRuleProviderEnabled(ctx, id, false)
+	if err != nil || !found {
+		t.Fatalf("SetRuleProviderEnabled(existing) = (%v, %v)，应为 (true, nil)", found, err)
+	}
+	list, _ = d.ListRuleProviders(ctx)
+	if list[0].Enabled {
+		t.Error("禁用后 Enabled 应为 false")
+	}
+
+	found, err = d.SetRuleProviderEnabled(ctx, 9999, true)
+	if err != nil || found {
+		t.Fatalf("SetRuleProviderEnabled(missing) = (%v, %v)，应为 (false, nil)", found, err)
+	}
+}

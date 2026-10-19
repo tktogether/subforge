@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -38,4 +39,38 @@ func (s *Server) handleAPIRuleProviders(w http.ResponseWriter, r *http.Request) 
 		out = append(out, p)
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"rule_providers": out})
+}
+
+// handleAPIRuleProviderSetEnabled 处理 PUT /api/rule-providers/{id}/enabled，body {"enabled": true|false}。
+// 路径参数复用 s.pathID（subscription.go:50-58，非法 id 写 400）；目标行不存在写 404。
+func (s *Server) handleAPIRuleProviderSetEnabled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 PUT"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	id, ok := s.pathID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Enabled == nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("body 必须是 {\"enabled\": true|false}"))
+		return
+	}
+	found, err := m.DB().SetRuleProviderEnabled(r.Context(), id, *body.Enabled)
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	if !found {
+		s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("规则集 %d 不存在", id))
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

@@ -654,4 +654,25 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
+  it('with-rules 开关有 hint 文案', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="with-rules"]').exists()).toBe(true)
+    // '全部刷新' 只出现在 airport.with_rules 的 hint 文案里（按钮是「刷新全部流量」），命中即证明 hint 渲染
+    expect(w.text()).toContain('全部刷新')
+    w.unmount()
+  })
+
+  it('行内开关调 updateAirport', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const target = w.findAllComponents({ name: 'VSwitch' })
+      .find(s => s.attributes('data-testid') === 'airport-enabled')
+    expect(target).toBeTruthy()
+    await target!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(1, expect.objectContaining({ enabled: false }))
+    w.unmount()
+  })
+
 })

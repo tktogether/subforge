@@ -702,4 +702,35 @@ describe('ResourcePage', () => {
     expect(vm4.rankOf({ grade: 'a' })).toBe(1)
     expect(vm4.rankOf({ grade: null })).toBe(2)
   })
+
+  it('T10: type==="select" 字段渲染成 v-select，options 透传为 items，setValue 写入 draft', async () => {
+    const localFields = [
+      { key: 'name', label: '名称', type: 'text' },
+      { key: 'group', label: '分组', type: 'select', options: [
+        { title: '无分组（DIRECT）', value: 0 },
+        { title: '#3 HK', value: 3 },
+      ] },
+    ]
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
+      global: { plugins: [vuetify], stubs: { VDialog: { name: 'VDialog', props: ['modelValue'], template: '<div class="dlg" v-if="modelValue"><slot /></div>' } } },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    await flushPromises()
+    expect(w.find('[data-testid="field-select"]').exists()).toBe(true)
+    expect(w.find('[data-testid="field-number"]').exists()).toBe(false)
+    // 注意：v-data-table 的默认 footer 也带一个 VSelect（每页条数），所以按 testid 定位字段下拉本身
+    const select = w.findAllComponents({ name: 'VSelect' }).find((c) => c.attributes('data-testid') === 'field-select')
+    expect(select).toBeDefined()
+    const items = ((select?.props('items') as { title: string; value: number }[]) ?? [])
+    expect(items.map((i) => i.title)).toEqual(['无分组（DIRECT）', '#3 HK'])
+    expect(items.map((i) => i.value)).toEqual([0, 3])
+    await select!.setValue(3)
+    expect(vm.draft.group).toBe(3)
+  })
 })

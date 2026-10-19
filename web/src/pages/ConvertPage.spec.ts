@@ -12,6 +12,7 @@ vi.mock('../api/endpoints', () => ({
   endpoints: {
     targets: vi.fn(),
     pipelines: vi.fn(),
+    configs: vi.fn(),
     convert: vi.fn(),
     diff: vi.fn(),
   },
@@ -30,6 +31,7 @@ interface ConvertPageVm {
   include: string
   exclude: string
   pipeline: string
+  configValue: string
   sort: string
   list: boolean
   loading: boolean
@@ -57,6 +59,7 @@ describe('ConvertPage', () => {
     vi.clearAllMocks()
     vi.mocked(endpoints.targets).mockResolvedValue([])
     vi.mocked(endpoints.pipelines).mockResolvedValue([])
+    vi.mocked(endpoints.configs).mockResolvedValue({ configs: [], default: '' })
     vi.mocked(endpoints.diff).mockResolvedValue({ lines: [] })
     vi.mocked(endpoints.convert).mockResolvedValue({
       body: 'OUT', format: '',
@@ -134,6 +137,21 @@ describe('ConvertPage', () => {
       override: '',
     })
     expect(vm.result).toEqual(resp)
+  })
+
+  it('config 下拉：loadMeta 拉取 configs，v-select 渲染候选，submit 透传 configValue', async () => {
+    vi.mocked(endpoints.configs).mockResolvedValue({ configs: ['http://x/a.ini', 'http://y/b.ini'], default: 'http://x/a.ini' })
+    const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
+    const vm = w.vm as unknown as ConvertPageVm
+    await flushPromises()
+    expect(endpoints.configs).toHaveBeenCalledTimes(1)
+    const sel = w.find('[data-testid="config"]')
+    expect(sel.exists()).toBe(true)
+    vm.configValue = 'http://y/b.ini'
+    vm.urls = 'http://a.com'
+    vi.mocked(endpoints.convert).mockResolvedValue({ body: 'OUT', format: '', warnings: null, failures: null, nodes: 0, rawNodes: 0, cached: 0 })
+    await vm.submit()
+    expect(endpoints.convert).toHaveBeenCalledWith(expect.objectContaining({ config: 'http://y/b.ini' }))
   })
 
   it('submit 失败：convert reject → error 显示错误文案，loading 归位 false', async () => {

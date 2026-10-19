@@ -234,6 +234,7 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/test", s.handleAPIAlertChannelTest)
 	})
 	r.Get("/api/rule-providers", s.handleAPIRuleProviders)
+	r.Put("/api/rule-providers/{id}/enabled", s.handleAPIRuleProviderSetEnabled)
 	r.Get("/api/suggestions", s.handleAPISuggestions)
 	r.Post("/api/suggestions/apply", s.handleAPIApplySuggestions)
 	r.Post("/api/suggestions/{index}/confirm", s.handleAPIConfirmSuggestion)

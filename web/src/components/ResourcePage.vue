@@ -19,6 +19,9 @@ export interface ResourceField {
   type: string
   hint?: string
   example?: string
+  // T10: select 字段的下拉选项（title 显示、value 承载，值类型 number/string）。
+  // 不传 options 的字段行为与改动前完全一致。
+  options?: { title: string; value: number | string }[]
 }
 
 const props = defineProps<{
@@ -112,7 +115,12 @@ function fieldExample(field: ResourceField): string {
 function blank(): Row {
   const row: Row = {}
   for (const field of props.fields) {
-    row[field.key] = field.type === 'switch' ? true : field.type === 'number' ? 0 : ''
+    // T10: select 默认取第一个选项的 value（无 options 时退回 ''）。
+    // 不兜这一层时 select 会落成 ''，而 rule_config 在后端是 int64（internal/store/store.go:190、
+    // internal/api/subscription.go:275-281），新增表单不改下拉就会提交 "" → 400。
+    row[field.key] = field.type === 'switch' ? true : field.type === 'number' ? 0
+      : field.type === 'select' ? (field.options && field.options.length > 0 ? field.options[0].value : '')
+      : ''
   }
   return row
 }
@@ -246,6 +254,19 @@ reload()
             density="comfortable"
             class="mb-2"
             data-testid="field-number"
+          />
+          <v-select
+            v-else-if="field.type === 'select'"
+            v-model="draft[field.key]"
+            :items="field.options ?? []"
+            item-title="title"
+            item-value="value"
+            :label="field.label"
+            variant="outlined"
+            density="comfortable"
+            class="mb-2"
+            hide-details
+            data-testid="field-select"
           />
           <v-text-field
             v-else

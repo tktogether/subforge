@@ -64,6 +64,27 @@ const confirmOpen = ref(false)
 const pendingDelete = ref<AirportRow | null>(null)
 
 const withRules = ref(false)
+
+const toggling = ref<number | null>(null)
+
+async function toggleEnabled(row: AirportRow, value: boolean): Promise<void> {
+  toggling.value = row.id
+  try {
+    await endpoints.updateAirport(row.id, {
+      name: row.name,
+      subscription_url: row.subscription_url,
+      remarks: row.remarks,
+      enabled: value,
+    })
+    row.enabled = value
+    notify(value ? '已启用 ' + row.name : '已停用 ' + row.name)
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    toggling.value = null
+  }
+}
+
 const refreshing = ref(false)
 const refreshSummary = ref<{ ok: number; fail: number } | null>(null)
 const imports = ref<ImportRulesOutcome[]>([])
@@ -249,7 +270,8 @@ async function restoreLastCheck(): Promise<void> {
     </PageHeader>
 
     <div class="airports-page__toolbar">
-      <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact" :hide-details="true"></v-switch>
+        <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact"
+          :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="mb-2"></v-switch>
     </div>
 
     <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
@@ -262,10 +284,9 @@ async function restoreLastCheck(): Promise<void> {
             <span class="airport-num">{{ value }}</span>
           </template>
           <template #item.enabled="{ item }">
-            <span class="sf-status">
-              <span class="sf-status__dot" :class="item.enabled ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
-              <span>{{ item.enabled ? '启用' : '停用' }}</span>
-            </span>
+            <v-switch :model-value="item.enabled" density="compact" :hide-details="true"
+              data-testid="airport-enabled" :loading="toggling === item.id"
+              @update:model-value="toggleEnabled(item, $event as boolean)"></v-switch>
           </template>
           <template #item.traffic="{ item }">
             <div class="airport-traffic">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { endpoints, type LogEntry } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { pageHelp } from '../content/help'
@@ -9,6 +9,12 @@ import AsyncSection from '../components/AsyncSection.vue'
 const help = pageHelp('logs')
 
 const logs = ref<LogEntry[]>([])
+const keyword = ref('')
+const filteredLogs = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (kw === '') return logs.value
+  return logs.value.filter((l) => l.line.toLowerCase().includes(kw))
+})
 const autoRefresh = ref(false)
 const error = ref('')
 const loading = ref(false)
@@ -108,6 +114,15 @@ onUnmounted(() => {
     <v-btn variant="tonal" data-testid="scroll-bottom" @click="scrollToBottom">滚动到底部</v-btn>
   </div>
 
+  <v-text-field
+    v-model="keyword"
+    label="按关键字过滤（大小写不敏感）"
+    clearable
+    density="compact"
+    data-testid="log-filter"
+    class="mb-2"
+  ></v-text-field>
+
   <div v-if="error !== ''" class="text-error mb-2" data-testid="log-error">{{ error }}</div>
 
   <AsyncSection
@@ -117,7 +132,8 @@ onUnmounted(() => {
     empty-text="暂无日志"
   >
     <v-card ref="container" class="pa-2" data-testid="log-container" style="max-height: 480px; overflow: auto;">
-      <div v-for="entry in logs" :key="entry.id" data-testid="log-row" class="d-flex ga-2 mb-1">
+      <div v-if="filteredLogs.length === 0 && logs.length > 0" class="text-caption" data-testid="log-filter-empty">没有匹配「{{ keyword }}」的日志</div>
+      <div v-for="entry in filteredLogs" :key="entry.id" data-testid="log-row" class="d-flex ga-2 mb-1">
         <span class="text-caption" style="font-family: monospace; white-space: nowrap;">{{ formatTs(entry.ts) }}</span>
         <pre :class="isHighlight(entry.line) ? 'text-error' : ''" style="font-family: monospace; white-space: pre; margin: 0; overflow-x: auto; flex: 1;">{{ entry.line }}</pre>
       </div>

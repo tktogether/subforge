@@ -28,6 +28,8 @@ const types = ref('')
 const include = ref('')
 const exclude = ref('')
 const pipeline = ref('')
+const configs = ref<string[]>([])
+const configValue = ref('')
 const sort = ref('false')
 const list = ref(false)
 const loading = ref(false)
@@ -89,9 +91,10 @@ const targetMeanings = computed(() => {
 
 async function loadMeta(): Promise<void> {
   try {
-    const [t, p] = await Promise.all([endpoints.targets(), endpoints.pipelines('')])
+    const [t, p, c] = await Promise.all([endpoints.targets(), endpoints.pipelines(''), endpoints.configs()])
     targets.value = t
     pipelines.value = p
+    configs.value = c.configs
   } catch (err) {
     error.value = errorMessage(err)
   }
@@ -114,7 +117,7 @@ async function submit(): Promise<void> {
       include: include.value.split(',').map((s) => s.trim()).filter((s) => s !== ''),
       exclude: exclude.value.split(',').map((s) => s.trim()).filter((s) => s !== ''),
       pipeline: pipeline.value,
-      config: '',
+      config: configValue.value,
       sort: sort.value,
       list: list.value,
       override: '',
@@ -232,6 +235,7 @@ onUnmounted(() => {
           <v-text-field v-model="include" label="包含正则 include" data-testid="include" hint="按节点名匹配，逗号分隔；include 命中才留" persistent-hint />
           <v-text-field v-model="exclude" label="排除正则 exclude" data-testid="exclude" hint="按节点名匹配，逗号分隔；exclude 命中就丢；两个都填时先 include 再 exclude" persistent-hint />
           <v-select v-model="pipeline" :items="pipelineItems" label="管线" data-testid="pipeline" hint="管线是节点进来之后、渲染之前的一串处理步骤，详见「管线」页" persistent-hint />
+          <v-select v-model="configValue" :items="configs" label="配置 config" data-testid="config" hint="渲染配置模板；留空用默认" persistent-hint />
           <div class="d-flex align-center">
             <router-link to="/pipelines" class="text-caption" data-testid="pipeline-link">打开管线页</router-link>
           </div>

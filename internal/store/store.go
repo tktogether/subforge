@@ -985,3 +985,19 @@ func (d *DB) UpsertRuleProvider(ctx context.Context, p RuleProvider) error {
 		p.RawJSON, enabled, p.SortOrder, now, id)
 	return err
 }
+
+// SetRuleProviderEnabled 按 id 更新规则集启用状态；行不存在返回 (false, nil)。
+func (d *DB) SetRuleProviderEnabled(ctx context.Context, id int64, enabled bool) (bool, error) {
+	now := time.Now().UTC()
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE rule_providers SET enabled = ?, updated_at = ? WHERE id = ?",
+		enabled, now, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}

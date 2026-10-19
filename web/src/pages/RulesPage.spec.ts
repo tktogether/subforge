@@ -5,11 +5,13 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import RulesPage from './RulesPage.vue'
 import { endpoints } from '../api/endpoints'
+import { VSwitch } from 'vuetify/components'
 
 vi.mock('../api/endpoints', () => ({
   endpoints: {
     listRules: vi.fn(),
     createRule: vi.fn(),
+    listGroups: vi.fn(),
     updateRule: vi.fn(),
     deleteRule: vi.fn(),
     listRuleProviders: vi.fn(),
@@ -18,30 +20,35 @@ vi.mock('../api/endpoints', () => ({
     confirmSuggestion: vi.fn(),
     rejectSuggestion: vi.fn(),
     applySuggestions: vi.fn(),
+    updateRuleProvider: vi.fn(),
   },
 }))
 
 const vuetify = createVuetify({ components, directives })
 
 const listRulesMock = endpoints.listRules as unknown as ReturnType<typeof vi.fn>
+const listGroupsMock = endpoints.listGroups as unknown as ReturnType<typeof vi.fn>
 const listRuleProvidersMock = endpoints.listRuleProviders as unknown as ReturnType<typeof vi.fn>
 const bulkRulesMock = endpoints.bulkRules as unknown as ReturnType<typeof vi.fn>
 const listSuggestionsMock = endpoints.listSuggestions as unknown as ReturnType<typeof vi.fn>
 const confirmSuggestionMock = endpoints.confirmSuggestion as unknown as ReturnType<typeof vi.fn>
 const rejectSuggestionMock = endpoints.rejectSuggestion as unknown as ReturnType<typeof vi.fn>
 const applySuggestionsMock = endpoints.applySuggestions as unknown as ReturnType<typeof vi.fn>
+const updateRuleProviderMock = endpoints.updateRuleProvider as unknown as ReturnType<typeof vi.fn>
 
 describe('RulesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     Object.defineProperty(window, 'visualViewport', { value: { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() }, writable: true, configurable: true })
     listRulesMock.mockResolvedValue([])
+    listGroupsMock.mockResolvedValue([])
     listRuleProvidersMock.mockResolvedValue([{ id: 1, name: 'rp', raw_json: '{}', source: 'local', enabled: true, sort_order: 1, created_at: '', updated_at: '' }])
     listSuggestionsMock.mockResolvedValue([])
     bulkRulesMock.mockResolvedValue({ updated: 0 })
     confirmSuggestionMock.mockResolvedValue({ ok: true })
     rejectSuggestionMock.mockResolvedValue({ ok: true })
     applySuggestionsMock.mockResolvedValue({ applied: 0 })
+    updateRuleProviderMock.mockResolvedValue({ ok: true })
   })
 
   it('onMounted 加载三块数据', async () => {
@@ -216,6 +223,40 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
+  it('provider-switch 切换调 API', async () => {
+    listRuleProvidersMock.mockResolvedValue([{ id: 1, name: 'rp', raw_json: '{}', source: 'local', enabled: true, sort_order: 1, created_at: '', updated_at: '' }])
+    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 2) await tabs[1].trigger('click')
+    await flushPromises()
+    const switches = w.findAllComponents(VSwitch)
+    const providerSwitch = switches.find((s) => s.attributes('data-testid') === 'provider-switch')
+    expect(providerSwitch).toBeTruthy()
+    await providerSwitch!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(updateRuleProviderMock).toHaveBeenCalledWith(1, false)
+    w.unmount()
+  })
+
+  it('provider-switch 失败回滚', async () => {
+    listRuleProvidersMock.mockResolvedValue([{ id: 1, name: 'rp', raw_json: '{}', source: 'local', enabled: true, sort_order: 1, created_at: '', updated_at: '' }])
+    updateRuleProviderMock.mockRejectedValueOnce(new Error('toggle fail'))
+    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 2) await tabs[1].trigger('click')
+    await flushPromises()
+    const switches = w.findAllComponents(VSwitch)
+    const providerSwitch = switches.find((s) => s.attributes('data-testid') === 'provider-switch')
+    expect(providerSwitch).toBeTruthy()
+    await providerSwitch!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(updateRuleProviderMock).toHaveBeenCalledWith(1, false)
+    expect(providerSwitch!.props('modelValue')).toBe(true)
+    w.unmount()
+  })
+
   it('空态：providers/candidates/suggestions 为空', async () => {
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
@@ -370,4 +411,40 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
+  // T10: rule_config 从手填数字改成代理分组下拉
+  it('T10: rule_config 用分组下拉（含 #3 HK），新建默认 0 且 payload 写入所选分组', async () => {
+    listGroupsMock.mockResolvedValue([
+      { id: 3, name: 'HK', type: 'select', regex: '.*', url: 'https://g.example', interval: 300, sort_order: 1 },
+      { id: 7, name: 'JP', type: 'select', regex: '.*', url: 'https://g2.example', interval: 300, sort_order: 2 },
+    ])
+    const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
+    createMock.mockResolvedValue({ id: 1, rule_type: 'DOMAIN', rule_param: 'example.com', rule_config: 3, resolve_dns: true, enabled: true, sort_order: 1 })
+    const w = mount(RulesPage, {
+      global: {
+        plugins: [vuetify],
+        stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } },
+      },
+    })
+    await flushPromises()
+    expect(listGroupsMock).toHaveBeenCalled()
+
+    const selects = w.findAllComponents({ name: 'VSelect' })
+    expect(selects.length).toBe(1)
+    const items = (selects[0].props('items') as { title: string; value: number }[]) ?? []
+    expect(items.map((i) => i.title)).toEqual(['无分组（DIRECT）', '#3 HK', '#7 JP'])
+    expect(items.map((i) => i.value)).toEqual([0, 3, 7])
+
+    await w.find('[data-testid="add"]').trigger('click')
+    await flushPromises()
+    // blank() 对 select 取第一个 option → 新建默认 0（无分组/DIRECT），不会退化成 ''
+    expect(selects[0].props('modelValue')).toBe(0)
+
+    await selects[0].setValue(3)
+    await flushPromises()
+    await w.find('[data-testid="dialog-submit"]').trigger('click')
+    await flushPromises()
+    expect(createMock).toHaveBeenCalledTimes(1)
+    expect(createMock.mock.calls[0][0].rule_config).toBe(3)
+    w.unmount()
+  })
 })

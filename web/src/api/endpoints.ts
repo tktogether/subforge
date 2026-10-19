@@ -405,6 +405,8 @@ export const endpoints = {
 
   listRuleProviders: (source?: string, enabled?: boolean): Promise<RuleProvider[]> =>
     api.get<{ rule_providers: RuleProvider[] }>('/api/rule-providers', { query: { source, enabled } }).then((r) => r.rule_providers),
+  updateRuleProvider: (id: number, enabled: boolean): Promise<OkResponse> =>
+    api.put<OkResponse>('/api/rule-providers/' + id + '/enabled', { enabled }),
   bulkRules: (body: { ids?: number[]; source?: string; enabled: boolean }): Promise<{ updated: number }> =>
     api.post<{ updated: number }>('/api/rules/bulk', body),
   listSuggestions: (): Promise<Suggestion[]> => api.get<{ suggestions: Suggestion[] }>('/api/suggestions').then((r) => r.suggestions),

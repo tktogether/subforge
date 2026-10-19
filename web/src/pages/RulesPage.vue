@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { endpoints, type Rule, type RuleProvider, type Suggestion } from '../api/endpoints'
+import { computed, onMounted, ref } from 'vue'
+import { endpoints, type ProxyGroup, type Rule, type RuleProvider, type Suggestion } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import PageHeader from '../components/PageHeader.vue'
@@ -29,6 +29,36 @@ async function loadProviders(): Promise<void> {
     providersError.value = errorMessage(err)
   } finally {
     providersLoading.value = false
+  }
+}
+
+const togglingProvider = ref<number | null>(null)
+
+async function toggleProvider(p: RuleProvider, value: boolean): Promise<void> {
+  togglingProvider.value = p.id
+  try {
+    await endpoints.updateRuleProvider(p.id, value)
+    p.enabled = value
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    togglingProvider.value = null
+  }
+}
+
+// T10: rule_config 分组下拉数据。拉失败只留「无分组（DIRECT）」，
+// 不能把规则页主功能（列表/新增/编辑）拖死。
+const groups = ref<ProxyGroup[]>([])
+const groupOptions = computed(() => [
+  { title: '无分组（DIRECT）', value: 0 },
+  ...groups.value.map((g) => ({ title: `#${g.id} ${g.name}`, value: g.id })),
+])
+
+async function loadGroups(): Promise<void> {
+  try {
+    groups.value = await endpoints.listGroups()
+  } catch {
+    groups.value = []
   }
 }
 
@@ -130,6 +160,15 @@ async function applySuggestions(): Promise<void> {
   }
 }
 
+// T10: 原来是模板里的内联字面量；rule_config 改 select，options 来自 groupOptions（下拉随分组数据刷新）。
+const ruleFields = computed(() => [
+  { key: 'rule_type', label: '类型', type: 'text' },
+  { key: 'rule_param', label: '参数', type: 'text' },
+  { key: 'rule_config', label: '配置', type: 'select', options: groupOptions.value },
+  { key: 'resolve_dns', label: '解析DNS', type: 'switch' },
+  { key: 'enabled', label: '启用', type: 'switch' },
+])
+
 const resource: any = {
   list: endpoints.listRules,
   create: endpoints.createRule,
@@ -139,6 +178,7 @@ const resource: any = {
 
 onMounted(() => {
   void loadProviders()
+  void loadGroups()
   void loadCandidates()
   void loadSuggestions()
 })
@@ -157,7 +197,7 @@ onMounted(() => {
   <div v-if="tab === 0">
     <v-alert type="info" variant="tonal" density="comfortable" class="mb-4">
       <div>一行规则最终长这样：rule_type,rule_param,目标分组；勾了「解析DNS」会在末尾追加 no-resolve。</div>
-      <div>rule_config 填的是「目标代理分组的 id」（去「分组」页看 id），不是 JSON/YAML。留 0 或填一个不存在的 id → 该行目标变成 DIRECT（直连）。</div>
+      <div>rule_config 选目标代理分组；选「无分组（DIRECT）」表示该行直连。选不到对应分组（分组 id 已不存在）时同样退化为 DIRECT。</div>
       <div>禁用（enabled=false）的规则完全不参与输出。</div>
     </v-alert>
     <ResourcePage
@@ -165,7 +205,7 @@ onMounted(() => {
       subtitle="每行 = 输出的一条规则"
       help-key="rules"
       :columns="[{ key: 'rule_type', title: '类型' }, { key: 'rule_param', title: '参数' }, { key: 'group_name', title: '目标分组' }, { key: 'resolve_dns', title: '解析DNS' }, { key: 'enabled', title: '启用' }, { key: 'source', title: '来源' }]"
-      :fields="[{ key: 'rule_type', label: '类型', type: 'text' }, { key: 'rule_param', label: '参数', type: 'text' }, { key: 'rule_config', label: '配置', type: 'number' }, { key: 'resolve_dns', label: '解析DNS', type: 'switch' }, { key: 'enabled', label: '启用', type: 'switch' }]"
+      :fields="ruleFields"
       :resource="resource"
       :empty="pageHelp('rules').emptyState"
     />
@@ -182,10 +222,9 @@ onMounted(() => {
       <v-list>
         <v-list-item v-for="p in providers" :key="p.id" :title="p.name" :subtitle="p.source + (p.enabled ? ' · 启用' : ' · 禁用')">
           <template #append>
-            <span class="sf-status">
-              <span class="sf-status__dot" :class="p.enabled ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
-              <span>{{ p.enabled ? '启用' : '禁用' }}</span>
-            </span>
+            <v-switch :model-value="p.enabled" density="compact" :hide-details="true"
+              data-testid="provider-switch" :loading="togglingProvider === p.id"
+              @update:model-value="toggleProvider(p, $event as boolean)"></v-switch>
           </template>
         </v-list-item>
       </v-list>
