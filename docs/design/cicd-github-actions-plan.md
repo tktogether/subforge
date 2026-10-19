@@ -12,7 +12,7 @@
 | bench | web 之后 | `-bench=. -benchmem` 结果存 artifact |
 | docker-build | web 之后 | scratch + alpine 双镜像构建 + 容器内 `version` 冒烟 |
 | coverage | web 之后 | coveragegate -min 80 -min-func 100 + condgate -min 80 |
-| condition-nightly | 仅 schedule/手动 | gobco 条件覆盖 ≥80% |
+| condition-audit (manual) | 仅 workflow_dispatch | gobco 条件覆盖 ≥80%（纯手动审计，无定时） |
 
 ## 2. 打包流水线（.github/workflows/release.yml，本次新增）
 

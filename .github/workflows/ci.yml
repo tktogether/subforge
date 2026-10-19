@@ -47,7 +47,6 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     needs: web
-    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -77,7 +76,6 @@ jobs:
   cross:
     name: cross-build
     needs: web
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +94,6 @@ jobs:
   bench:
     name: benchmark
     needs: web
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,7 +117,6 @@ jobs:
   docker:
     name: docker-build
     needs: web
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,7 +135,6 @@ jobs:
   coverage:
     name: coverage
     needs: web
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +162,7 @@ jobs:
   condition-nightly:
     name: condition-audit (manual)
     needs: web
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
