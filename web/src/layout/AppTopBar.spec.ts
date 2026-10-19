@@ -16,7 +16,7 @@ function mountTopBar(props: { title: string }) {
 }
 
 describe('AppTopBar', () => {
-  it('渲染 title 与 SubForge chip', () => {
+  it('渲染 title 与 SubForge wordmark', () => {
     const w = mountTopBar({ title: '机场' })
     const topbar = w.find('[data-testid="topbar"]')
     expect(topbar.exists()).toBe(true)

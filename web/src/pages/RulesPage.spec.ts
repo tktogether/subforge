@@ -351,7 +351,7 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  it('coverage: AutoApply chip / disabled provider / null source', async () => {
+  it('coverage: AutoApply status dot / disabled provider / null source', async () => {
     listRulesMock.mockResolvedValue([
       { id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: null },
     ])

@@ -175,22 +175,27 @@ export const PAGE_HELP: Record<string, PageHelp> = {
   'rule-sources': {
     page: 'rule-sources',
     title: '规则源',
-    oneLiner: '管理规则源清单与版本，支持生成模板与回滚。',
-    whenToUse: '需要从外部 URL 导入规则集或管理历史版本时。',
+    oneLiner: '把社区维护的分流规则集拉到本地、定时更新、可回滚；先「生成默认清单」再「全部更新」即可用。',
+    whenToUse: '想用 ACL4SSR、blackmatrix7 等社区规则文件、不想手写规则时；规则源只认规则文件，不含 INI 模板。',
     steps: [
-      { title: '查看清单', detail: '页面显示清单路径与来源列表。' },
-      { title: '生成默认清单', detail: '未配置时点击「生成默认清单」创建模板文件。' },
+      { title: '生成默认清单', detail: '首次使用点「生成默认清单」，会创建包含推荐规则源的清单文件。' },
+      { title: '全部更新', detail: '把每个规则源的最新版本拉到本地，每个源保留最近 5 个版本，可随时回滚。' },
+      { title: '去规则页引用', detail: '规则集落盘后，在「规则」页把它们挂进分组；「生成 MRS」按钮可为 mihomo 产出二进制规则集。' },
     ],
     faq: [
       { q: '上游挂了规则集会变空吗？', a: '不会。单个规则源更新失败时该源保留上一版本，产物不受影响；每个源保留最近 5 个版本，失败原因会逐行显示。' },
+      { q: '规则源里为什么没有 INI 模板？', a: '规则源只负责拉取规则文件，不做 INI 解析；落盘扩展名由清单里的 output.format 决定：clash-meta → .yaml，clash-json / sing-box → .json，mrs → .mrs，text → .txt。INI 是转换配置模板，在「设置」页管理。' },
     ],
     concepts: [
-      { term: '规则源', explain: '外部规则文件的来源地址，SubForge 定期拉取并落盘。' },
+      { term: '规则源', explain: '外部规则文件的 URL（如 ACL4SSR、blackmatrix7），SubForge 定期拉取并按清单里的 output.format 落盘。' },
+      { term: '落盘格式', explain: '规则源文件按清单 output.format 落盘：clash-meta → .yaml，clash-json / sing-box → .json，mrs → .mrs，text → .txt；SubForge 不解析 INI 模板。' },
+      { term: '规则源与规则的关系', explain: '规则源页只负责「下载与版本管理」；真正决定流量走向的是「规则」页里引用这些文件的那几行。' },
       { term: 'MRS', explain: 'Meta Rule Set，mihomo（Clash.Meta）的二进制规则集格式，体积小、加载快；sing-box 用的是另一种 .srs 格式。' },
     ],
     emptyState: { title: '还没有规则源清单', detail: '点击「生成默认清单」在本机创建模板，或在设置页修改路径。', action: { label: '生成默认清单', to: '/rule-sources' } },
     links: [
       { label: '设置', to: '/settings', note: '修改清单路径' },
+      { label: '规则', to: '/rules', note: '把规则集挂进分流' },
     ],
   },
   groups: {
@@ -225,8 +230,11 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       { title: '复制 URL', detail: '复制生成的订阅地址给客户端使用。' },
     ],
     concepts: [
-      { term: '令牌', explain: '订阅访问凭证，每个令牌对应一个独立的订阅 URL。' },
+      { term: '令牌', explain: '订阅访问凭证，每个令牌对应一个独立的订阅 URL；同一地址可长期重复使用，只有删除令牌才会失效。' },
       { term: 'subscription-userinfo', explain: '聚合后的流量/到期信息，写入响应头供客户端显示。' },
+    ],
+    faq: [
+      { q: '生成那么多令牌有什么用？', a: '令牌是订阅地址里的访问凭据：客户端拿这个 URL 拉取你的转换结果，一个令牌对应一个独立地址，用来区分不同设备或用途。同一地址可长期重复使用，不必每次使用都新建令牌；只有泄露或要撤销访问时，才删除并重建。' },
     ],
     emptyState: { title: '还没有订阅', detail: '点击「新增」生成第一条订阅令牌。', action: { label: '新增订阅', to: '/subscriptions' } },
     links: [
@@ -323,7 +331,7 @@ export const GLOSSARY: HelpConcept[] = [
   { term: '机场', explain: '提供订阅地址的上游服务商。' },
   { term: '规则', explain: '单条分流条件，匹配后把节点归入指定分组。' },
   { term: '规则集', explain: '一组规则的集合，可批量启用/停用。' },
-  { term: '规则源', explain: '外部规则文件的来源地址，SubForge 定期拉取并落盘。' },
+  { term: '规则源', explain: '外部规则文件的 URL（如 ACL4SSR、blackmatrix7），SubForge 定期拉取并按清单里的 output.format 落盘。' },
   { term: '管线', explain: '有序的转换步骤链（filter → operate），可复用。' },
   { term: '转换', explain: '把上游订阅按规则处理成客户端配置的过程。' },
   { term: '令牌', explain: '订阅访问凭证，每个令牌对应一个独立订阅 URL。' },

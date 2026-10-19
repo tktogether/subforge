@@ -184,6 +184,15 @@ describe('SubscriptionsPage', () => {
     w.unmount()
   })
 
+  it('文案：订阅地址说明令牌可长期复用，不必每次新建', async () => {
+    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 't1', name: 'n1' }])
+    const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
+    await flushPromises()
+    expect(w.find('[data-testid="block-url"]').text()).toContain('长期重复使用')
+    expect(w.find('[data-testid="block-url"]').text()).toContain('不必每次使用都新建令牌')
+    w.unmount()
+  })
+
   it('模板：选中令牌后渲染 <code> 订阅 URL，按钮文案为「复制」', async () => {
     const origin = window.location.origin
     vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 't1', name: 'n1' }])

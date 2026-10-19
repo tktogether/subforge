@@ -122,14 +122,15 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('traffic-error 显示错误原文 + 余额未清零说明', async () => {
+  it('traffic-error 短文案 + title 悬浮完整原因', async () => {
     listMock.mockResolvedValue([makeAirport({ traffic_err: '拉取失败：connection refused' })])
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     const el = w.find('[data-testid="traffic-error"]')
     expect(el.exists()).toBe(true)
-    expect(el.text()).toContain('拉取失败：connection refused')
-    expect(el.text()).toContain('余额仍是上次成功值，没有被清零')
+    expect(el.text()).toContain('余额未更新')
+    expect(el.attributes('title')).toContain('拉取失败：connection refused')
+    expect(el.attributes('title')).toContain('余额仍是上次成功值，没有被清零')
     w.unmount()
   })
 
@@ -156,12 +157,12 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('traffic-err 红色渲染', async () => {
+  it('traffic-err 色点+采集失败，title 悬浮原文', async () => {
     listMock.mockResolvedValue([makeAirport({ traffic_err: 'net down' })])
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.find('[data-testid="traffic-err"]').exists()).toBe(true)
-    expect(w.find('[data-testid="traffic-err"]').text()).toContain('net down')
+    expect(w.find('[data-testid="traffic-err"]').text()).toContain('采集失败')
+    expect(w.find('[data-testid="traffic-err"]').attributes('title')).toContain('net down')
     w.unmount()
   })
 

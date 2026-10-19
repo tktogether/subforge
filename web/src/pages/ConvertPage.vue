@@ -34,6 +34,7 @@ const loading = ref(false)
 const error = ref('')
 const result = ref<ConvertResponse | null>(null)
 const copied = ref(false)
+const meaningsOpen = ref(false)
 
 const objectUrl = ref<string | null>(null)
 
@@ -196,26 +197,32 @@ onUnmounted(() => {
 
     <v-row>
       <v-col cols="12" md="6">
-        <v-card variant="tonal" class="pa-4" data-testid="convert-input-card">
-          <div class="text-subtitle-1 mb-2">目标格式取值含义</div>
-          <v-table density="compact" data-testid="target-meanings">
-            <thead>
-              <tr>
-                <th>target</th>
-                <th>产物形态</th>
-                <th>用在哪</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in targetMeanings" :key="m.target">
-                <td><code>{{ m.target }}</code></td>
-                <td>{{ m.form }}</td>
-                <td>{{ m.where }}</td>
-              </tr>
-            </tbody>
-          </v-table>
-          <div class="text-caption text-medium-emphasis mt-2">
-            服务端也会按客户端 UA 自动推断 target（/sub 走的就是这条路）；网页转换页里显式选了就用选的。
+        <v-card class="pa-4" data-testid="convert-input-card">
+          <div class="d-flex align-center target-meanings-toggle" data-testid="target-meanings-toggle" @click="meaningsOpen = !meaningsOpen">
+            <v-icon size="small" class="mr-1">{{ meaningsOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+            <span class="text-subtitle-1">目标格式取值含义</span>
+            <span class="text-caption text-medium-emphasis ml-2">默认收起，点击展开</span>
+          </div>
+          <div v-show="meaningsOpen" class="mt-2">
+            <v-table density="compact" data-testid="target-meanings">
+              <thead>
+                <tr>
+                  <th>target</th>
+                  <th>产物形态</th>
+                  <th>用在哪</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in targetMeanings" :key="m.target">
+                  <td><code>{{ m.target }}</code></td>
+                  <td>{{ m.form }}</td>
+                  <td>{{ m.where }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+            <div class="text-caption text-medium-emphasis mt-2">
+              服务端也会按客户端 UA 自动推断 target（/sub 走的就是这条路）；网页转换页里显式选了就用选的。
+            </div>
           </div>
 
           <v-select v-model="selectedTarget" :items="targets" label="目标格式" data-testid="target-select" class="mt-4" />
@@ -264,7 +271,7 @@ onUnmounted(() => {
       </v-col>
     </v-row>
 
-    <v-card variant="tonal" class="pa-4 mt-4" data-testid="diff-card">
+    <v-card class="pa-4 mt-4" data-testid="diff-card">
       <div class="text-subtitle-1 mb-2">与上一次产物对比（diff）</div>
       <v-row>
         <v-col cols="12" md="6">
@@ -292,6 +299,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.target-meanings-toggle { cursor: pointer; user-select: none; }
 .diff-line { font-family: monospace; white-space: pre; }
 .diff-type { display: inline-block; width: 1.2em; }
 .line-same { color: grey; }

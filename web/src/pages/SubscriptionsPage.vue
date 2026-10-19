@@ -227,10 +227,10 @@ onMounted(() => {
   <PageHeader title="订阅" :subtitle="help.oneLiner" help-key="subscriptions" />
 
   <!-- Block 1: subscription URL -->
-  <v-card variant="tonal" class="pa-4 mb-4" data-testid="block-url">
+  <v-card class="pa-4 mb-4" data-testid="block-url">
     <v-card-title>订阅地址</v-card-title>
     <v-card-text>
-      <p class="text-body-2 mb-2">订阅地址就是客户端要填的 URL；令牌是它的凭据，换令牌等于换地址。</p>
+      <p class="text-body-2 mb-2">订阅地址就是客户端要填的 URL；令牌是它的凭据，换令牌等于换地址。同一个地址可以长期重复使用，不必每次使用都新建令牌。</p>
       <v-select
         v-model="selectedToken"
         :items="tokens.map((t) => ({ title: t.name || t.token, value: t.token }))"
@@ -261,7 +261,7 @@ onMounted(() => {
   </v-card>
 
   <!-- Block 2: tokens -->
-  <v-card variant="tonal" class="pa-4 mb-4" data-testid="block-tokens">
+  <v-card class="pa-4 mb-4" data-testid="block-tokens">
     <v-card-title>令牌</v-card-title>
     <v-card-text>
       <v-btn data-testid="create-token-btn" variant="tonal" class="mb-3" @click="openCreateToken">新建令牌</v-btn>
@@ -298,7 +298,7 @@ onMounted(() => {
   </v-dialog>
 
   <!-- Block 3: traffic strategy -->
-  <v-card variant="tonal" class="pa-4 mb-4" data-testid="block-strategy">
+  <v-card class="pa-4 mb-4" data-testid="block-strategy">
     <v-card-title>流量余额聚合策略</v-card-title>
     <v-card-text>
       <v-select
@@ -342,7 +342,7 @@ onMounted(() => {
   </v-card>
 
   <!-- Block 4: refresh -->
-  <v-card variant="tonal" class="pa-4 mb-4" data-testid="block-refresh">
+  <v-card class="pa-4 mb-4" data-testid="block-refresh">
     <v-card-title>余额刷新</v-card-title>
     <v-card-text>
       <p class="text-body-2 mb-2">刷新会逐个机场拉取上游订阅头，慢是正常的；失败不影响已有余额。</p>

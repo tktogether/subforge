@@ -116,7 +116,7 @@ onUnmounted(() => {
     :empty="logs.length === 0 ? { title: '暂无日志', detail: '服务刚启动时日志缓冲区可能是空的；做一次转换或让客户端请求一次订阅地址，这里就会出现内容。' } : false"
     empty-text="暂无日志"
   >
-    <v-card ref="container" variant="tonal" class="pa-2" data-testid="log-container" style="max-height: 480px; overflow: auto;">
+    <v-card ref="container" class="pa-2" data-testid="log-container" style="max-height: 480px; overflow: auto;">
       <div v-for="entry in logs" :key="entry.id" data-testid="log-row" class="d-flex ga-2 mb-1">
         <span class="text-caption" style="font-family: monospace; white-space: nowrap;">{{ formatTs(entry.ts) }}</span>
         <pre :class="isHighlight(entry.line) ? 'text-error' : ''" style="font-family: monospace; white-space: pre; margin: 0; overflow-x: auto; flex: 1;">{{ entry.line }}</pre>

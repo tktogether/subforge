@@ -258,15 +258,15 @@ async function restoreLastCheck(): Promise<void> {
             <span class="airport-num">{{ value }}</span>
           </template>
           <template #item.enabled="{ item }">
-            <v-chip size="small" :color="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</v-chip>
+            <span class="sf-status">
+              <span class="sf-status__dot" :class="item.enabled ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
+              <span>{{ item.enabled ? '启用' : '停用' }}</span>
+            </span>
           </template>
           <template #item.traffic="{ item }">
-            <div>
+            <div class="airport-traffic">
               <span :data-testid="item.total <= 0 ? 'traffic-unknown' : 'traffic-value'">{{ trafficText(item) }}</span>
-              <div v-if="item.traffic_err !== ''" data-testid="traffic-error" class="text-error">
-                <div>{{ item.traffic_err }}</div>
-                <div>余额仍是上次成功值，没有被清零</div>
-              </div>
+              <span v-if="item.traffic_err !== ''" data-testid="traffic-error" class="airport-traffic-err" :title="item.traffic_err + ' · 余额仍是上次成功值，没有被清零'">余额未更新</span>
             </div>
           </template>
           <template #item.expire="{ item }">
@@ -277,8 +277,14 @@ async function restoreLastCheck(): Promise<void> {
             <span v-else data-testid="traffic-stale">上次成功：{{ formatExpire(item.traffic_at) }}（{{ relativeTime(item.traffic_at) }}前）</span>
           </template>
           <template #item.status="{ item }">
-            <span v-if="item.traffic_err !== ''" data-testid="traffic-err" class="text-error">{{ item.traffic_err }}</span>
-            <span v-else data-testid="traffic-status-ok">正常</span>
+            <span v-if="item.traffic_err !== ''" data-testid="traffic-err" class="sf-status airport-status-err" :title="item.traffic_err">
+              <span class="sf-status__dot sf-status__dot--danger"></span>
+              <span>采集失败</span>
+            </span>
+            <span v-else data-testid="traffic-status-ok" class="sf-status">
+              <span class="sf-status__dot sf-status__dot--ok"></span>
+              <span>正常</span>
+            </span>
           </template>
           <template #item.actions="{ item }">
             <div class="airport-actions">
@@ -295,7 +301,7 @@ async function restoreLastCheck(): Promise<void> {
 
     <div class="airports-page__extras">
       <div class="airports-page__section">
-        <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则"></v-switch>
+        <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact" :hide-details="true"></v-switch>
       </div>
 
       <div v-if="refreshSummary !== null" data-testid="refresh-summary" class="airports-page__summary">
@@ -410,8 +416,36 @@ async function restoreLastCheck(): Promise<void> {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-/* 流量列右对齐后异常文案会跟着右对齐、很难读，单独拉回左对齐 */
-.airports-table :deep(td.text-end) .text-error {
-  text-align: left;
+/* W7A：流量列 8px 圆点 + 文字——替代 tonal chip，用户点名「启用配色完全不可见」 */
+.airport-traffic {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.airport-traffic-err {
+  color: var(--sf-danger);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+/* W7A：状态列异常文案用 --sf-danger，色点走全局 .sf-status__dot--danger */
+.airport-status-err {
+  color: var(--sf-danger);
+}
+/* W7G：裸开关容器化——有意的工具行容器（1px 边框 + 6px 圆角 + surface 底），与页面白卡语言一致 */
+.airports-page__section {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  padding: 4px 12px 4px 4px;
+  background: var(--sf-surface);
+}
+.airports-page__section :deep(.v-label) {
+  font-size: 13px;
+  color: var(--sf-text-muted);
 }
 </style>

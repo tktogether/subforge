@@ -182,7 +182,10 @@ onMounted(() => {
       <v-list>
         <v-list-item v-for="p in providers" :key="p.id" :title="p.name" :subtitle="p.source + (p.enabled ? ' · 启用' : ' · 禁用')">
           <template #append>
-            <v-chip size="small" :color="p.enabled ? 'success' : 'default'">{{ p.enabled ? '启用' : '禁用' }}</v-chip>
+            <span class="sf-status">
+              <span class="sf-status__dot" :class="p.enabled ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
+              <span>{{ p.enabled ? '启用' : '禁用' }}</span>
+            </span>
           </template>
         </v-list-item>
       </v-list>
@@ -222,7 +225,7 @@ onMounted(() => {
 
   <!-- Block 4: Rule-Bot 建议 -->
   <div v-if="tab === 3">
-    <v-card v-if="suggestionsUnsupported" data-testid="suggestions-unsupported" variant="tonal" class="pa-4">
+    <v-card v-if="suggestionsUnsupported" data-testid="suggestions-unsupported" class="pa-4">
       <div class="text-h6">Rule-Bot 建议队列未启用</div>
       <div class="mt-2">建议来自定时任务失败检测；服务启动时会自动启用。如果你看到这条，说明当前进程没有装配调度器。</div>
       <v-btn size="small" color="primary" class="mt-2" @click="loadSuggestions">重试</v-btn>
@@ -231,13 +234,16 @@ onMounted(() => {
       <div class="mb-2">
         <v-btn size="small" color="primary" @click="applySuggestions">应用已确认建议</v-btn>
       </div>
-      <v-card v-for="(s, i) in suggestions" :key="i" data-testid="suggestion-card" variant="tonal" class="pa-4 mb-2">
+      <v-card v-for="(s, i) in suggestions" :key="i" data-testid="suggestion-card" class="pa-4 mb-2">
         <div class="text-subtitle-1">{{ s.Anomaly.Type }}</div>
         <div class="text-medium-emphasis">{{ s.Anomaly.Message }}</div>
         <pre class="text-caption mt-2">{{ s.Rule }}</pre>
         <div class="mt-2">{{ s.Reason }}</div>
         <div class="text-caption text-medium-emphasis mt-2">{{ s.Anomaly.Source }} · {{ s.Anomaly.Timestamp }}</div>
-        <v-chip v-if="s.AutoApply === true" size="small" color="info" class="mt-2">自动应用</v-chip>
+        <span v-if="s.AutoApply === true" class="sf-status mt-2">
+          <span class="sf-status__dot sf-status__dot--muted"></span>
+          <span>自动应用</span>
+        </span>
         <div class="text-caption mt-2">确认只是标记；要让规则真正生效还要点顶部「应用已确认建议」。</div>
         <div class="mt-2">
           <v-btn size="small" color="success" class="mr-2" data-testid="suggestion-confirm" @click="confirmSuggestion(i)">确认</v-btn>

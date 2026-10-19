@@ -18,6 +18,9 @@ const scriptsIndex = computed(() => {
   return m
 })
 
+// W7D：ref 参数的下拉数据源（可选已有脚本，也允许手输尚未创建的脚本名）。
+const scriptNames = computed(() => scripts.value.map((s) => s.name))
+
 const dialog = ref(false)
 const editing = ref<Pipeline | null>(null)
 const formName = ref('')
@@ -77,6 +80,21 @@ function scriptRefStatus(step: { op: string; args: Record<string, string> }): 'o
   const enabled = scriptsIndex.value.get(refName)
   if (enabled === undefined) return 'missing'
   return enabled ? 'ok' : 'disabled'
+}
+
+// W7D 改动 3：脚本 kind 只有 filter / operate 两种取值
+// （internal/api/scripts_test_api.go:59 `if kind != "filter" && kind != "operate"`；
+//  web/src/content/help.ts:367、web/src/pages/ScriptsPage.vue:107）。
+// filter.script 需要 filter 脚本，op.script 需要 operate 脚本；引用未找到或 kind 未知时不给提示。
+function scriptRefKindMismatch(step: { op: string; args: Record<string, string> }): string {
+  if (step.op !== 'filter.script' && step.op !== 'op.script') return ''
+  const refName = stepScriptRef(step)
+  if (refName === '') return ''
+  const found = scripts.value.find((s) => s.name === refName)
+  if (found === undefined) return ''
+  const want = step.op === 'filter.script' ? 'filter' : 'operate'
+  if (found.kind === want) return ''
+  return `类型可能不匹配：脚本 kind=${found.kind}，该步骤需要 ${want}`
 }
 
 async function load(): Promise<void> {
@@ -251,6 +269,17 @@ onMounted(() => {
                 class="mb-2"
                 data-testid="step-arg-by"
               />
+              <v-combobox
+                v-else-if="f === 'ref'"
+                :model-value="step.args.ref ?? ''"
+                :items="scriptNames"
+                :label="f + '（选择已有脚本，也可手输）'"
+                :hint="paramHint(step.op, f)"
+                persistent-hint
+                class="mb-2"
+                data-testid="step-arg-ref"
+                @update:model-value="(v: unknown) => { step.args.ref = typeof v === 'string' ? v : String((v as { value?: unknown }).value ?? '') }"
+              />
               <v-text-field
                 v-else
                 v-model="step.args[f]"
@@ -277,6 +306,7 @@ onMounted(() => {
               <div v-if="scriptRefStatus(step) === 'ok'" data-testid="script-ref-ok" class="text-success text-body-2">脚本已启用</div>
               <div v-if="scriptRefStatus(step) === 'disabled'" data-testid="script-ref-disabled" class="text-warning text-body-2">脚本已存在但未启用</div>
               <div v-if="scriptRefStatus(step) === 'missing'" data-testid="script-ref-missing" class="text-error text-body-2">未找到该脚本</div>
+              <div v-if="scriptRefKindMismatch(step) !== ''" data-testid="script-ref-kind-mismatch" class="text-warning text-body-2">{{ scriptRefKindMismatch(step) }}</div>
             </div>
             <div class="d-flex ga-2">
               <v-btn size="small" variant="text" data-testid="step-up" @click="moveStep(i, -1)">上移</v-btn>

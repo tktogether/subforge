@@ -163,7 +163,10 @@ onMounted(() => {
         <div v-if="defaultManifestPath !== ''" data-testid="manifest-default-path">默认路径：{{ defaultManifestPath }}</div>
         <div v-if="outputDir !== ''" data-testid="manifest-output-dir">输出目录：{{ outputDir }}</div>
         <div v-if="!exists" data-testid="manifest-hint" class="text-warning mt-2">{{ hint }}</div>
-        <v-chip v-if="exists" data-testid="manifest-exists" color="success" size="small" class="mt-2">已就绪</v-chip>
+        <span v-if="exists" data-testid="manifest-exists" class="sf-status mt-2">
+          <span class="sf-status__dot sf-status__dot--ok"></span>
+          <span>已就绪</span>
+        </span>
       </v-card-text>
     </v-card>
 
@@ -212,7 +215,7 @@ onMounted(() => {
     </v-expansion-panels>
 
     <!-- MRS format + retention explanation -->
-    <v-card class="mt-4" variant="tonal">
+    <v-card class="mt-4">
       <v-card-title>MRS 格式说明</v-card-title>
       <v-card-text>{{ glossaryFor('MRS') }}</v-card-text>
       <v-card-text class="text-caption text-medium-emphasis">版本保留策略：每个源保留最近 5 个版本，可回滚；更新失败不会删掉旧版本。</v-card-text>

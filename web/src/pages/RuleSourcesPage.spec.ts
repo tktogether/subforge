@@ -5,6 +5,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import RuleSourcesPage from './RuleSourcesPage.vue'
 import { endpoints } from '../api/endpoints'
+import { PAGE_HELP } from '../content/help'
 
 vi.mock('../api/endpoints', () => ({
   endpoints: {
@@ -315,7 +316,7 @@ describe('RuleSourcesPage', () => {
   it('pageHelp oneLiner 渲染在 PageHeader subtitle', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('管理规则源清单与版本')
+    expect(w.text()).toContain(PAGE_HELP['rule-sources'].oneLiner)
     w.unmount()
   })
 

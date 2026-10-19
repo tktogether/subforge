@@ -225,6 +225,20 @@ describe('ConvertPage', () => {
     w.unmount()
   })
 
+  it('目标格式取值含义默认收起，点击开关展开', async () => {
+    const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const toggle = w.find('[data-testid="target-meanings-toggle"]')
+    expect(toggle.exists()).toBe(true)
+    // v-show 只写内联 display；jsdom 的 getComputedStyle 对该内联值有缓存，故直接断言内联样式
+    const body = w.find('[data-testid="target-meanings"]').element.parentElement as HTMLElement
+    expect(body.style.display).toBe('none')
+    await toggle.trigger('click')
+    await (w.vm as any).$nextTick()
+    expect(body.style.display).not.toBe('none')
+    w.unmount()
+  })
+
   it('副标题承载 oneLiner；help-panel 入口行=使用说明且详情默认收起', async () => {
     const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
     await flushPromises()

@@ -529,3 +529,22 @@ Lead 亲自逐条复跑，**全部命中**：
 - **未改的遗留观感问题**：真实机场仅 1 条时，`traffic_err` 原文在「流量」与「状态」两列重复出现、各撑 3–5 行（行高约 130px）。限行会削弱 §6.2「错误原文完整呈现」的验收点，故保留并交用户拍板。
 - 工具链教训：`tools/rsh210.py run` 打印含非 GBK 字符的远端日志会抛 `UnicodeEncodeError`（加 `tr -cd '\11\12\15\40-\176'` 过滤）；`setsid nohup … &` 会让 SSH 通道挂着直到 paramiko 超时——**部署其实已成功，必须用独立只读脚本复核**。
 
+### D.9 W7 修复波（用户 7 点反馈，2026-10-19 晚，全部 llmio/free · high subagent 交付）
+
+- **触发**：用户 7 点反馈（m01794）：①整体配色丑 ②启用 chip 不可见 ③目标格式含义太长 ③b INI 规则源缺失 ④长文案应悬浮 ⑤订阅 per-token 质疑 ⑥规则源看不懂 ⑦管线不能选已有脚本。
+- **W7A**（57a7d4ae）：AirportsPage 启用/状态列 v-chip→.sf-status 色点+文字，traffic 列「余额未更新」短文案 + title 原文；utilities.css 增 .sf-status 5 类。
+- **W7B**（bdd0adc7）：ResourcePage / RuleSourcesPage 去 chip；**W7F**（f2750023）：Rules/Tasks/AppTopBar 清零 chip + 品牌药丸→wordmark。全仓 v-chip=0。
+- **W7C**（e4fcdd10）：ConvertPage 目标格式含义默认折叠（v-show + target-meanings-toggle）。
+- **W7D**（54ab79f9）：PipelinesPage ref 参数 v-text-field→v-combobox（scriptNames + kind 不匹配提示）。
+- **W7E**（4a478f08）：help.ts 'rule-sources' 文案重写；Lead 翻转 RuleSourcesPage.spec:319 + GLOSSARY 对齐。
+- **W7G**（905ed649）：OverviewPage 9 处 tonal→白卡描边；AirportsPage 裸开关容器化。**W7H**（244fafba）：9 文件 v-card tonal 清扫（15 处），v-alert/v-btn tonal 保留——全仓 v-card tonal=0（Lead grep 复核）。
+- **W7I**（a094d762）**假绿打回**：自报完成但插槽未转发+排名 Map 空占位，功能不生效；**W7I-bis**（287f07af）返工：ResourcePage 新增通用 rankKey（动态插槽+computed 排名），GroupsPage 传 rank-key="sort_order"。真机验证顺序列显示 1/2/3（原 19 位时间戳）。
+- **配色**：3 套样板（palette-p1-paper/p2-slate/p3-forest.html，docs/design/mockups/）→ 用户拍板 **P3 森林柔和（Everforest 系）** → **W7J**（19374a1d）落地：tokens.css 浅深两组 + vuetify.ts 两主题全换 P3（accent #4F6E35/#A5C08B），几何不动；vuetify.spec 颜色断言逐键翻转。
+- **覆盖率门禁修复**：W7K（c7c5cf06）补 ResourcePage rank 守卫分支（:56/:66/:79）；W7L（813f90b0）补 PipelinesPage combobox 分支（:69/:90/:131-132/:219/:281，纯追加 168 行 spec）。PipelinesPage:219 `?? false` 死分支裁定：接受 99.17% branch 不修。
+- **终版门禁（Lead 亲跑）**：typecheck exit 0；coverage exit 0（**35 files / 628 tests**，All files 100/97.97/100/100）；build exit 0（index-C69113kr.js 648.85 kB / gzip 206.94）。
+- **终版截图**：docs/design/screenshots/w7-p3-{overview,airports,settings,groups,rules}-{light,dark}.png 7 张（P3 配色真机，groups 图可见顺序列 1/2/3）。
+- 用例数轨迹：594（基线）→ 601（W3/W4）→ 618（W6）→ 621（W7A-F）→ 622（W7I-bis）→ 624（W7K）→ 628（W7L）→ **631**（W7M）。
+- **W7M 文案卡**（094ea706，用户裁定 ③b/⑤ 走文案路线不实现功能）：调查确认 INI 只是「转换配置模板」（internal/template/ini.go:1、internal/config/override.go:79-86），与规则源无关；规则源落盘格式由清单 output.format 决定（internal/manifest/manifest.go:112-122、internal/subforge/rulesources.go:32-43）。help.ts:179/187/190-191/329 文案与实现对齐（「不含 INI 模板」+ output.format→扩展名映射）；令牌可长期复用写进 help.ts:233/236-238 与 SubscriptionsPage.vue:233（依据 internal/api/subscription.go:515-528 无过期逻辑）。help.spec.ts:142-161 与 SubscriptionsPage.spec.ts:187-194 新增钉住断言。终版门禁：typecheck 0 / **631 tests** coverage 0（All files 100/97.97/100/100）/ build 0（index-kFHihQ-D.js 648.85 kB）。
+- **遗留待用户拍板**：③b INI 规则源补实现方案、⑤订阅 per-token 定制化方案；机场页「刷新时同时导入规则」开关容器位置偏表格下方（样式已容器化，摆位未动）。
+
+

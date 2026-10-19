@@ -138,3 +138,24 @@ describe('FAILURE_HELP / ON_ERROR_HELP', () => {
     expect(PAGE_HELP.tasks.faq?.some((f) => f.q.includes('重试'))).toBe(true)
   })
 })
+
+describe('文案与现实行为一致（W7M）', () => {
+  it('规则源不承诺 INI 模板，并说明落盘扩展名由清单 output.format 决定', () => {
+    const h = PAGE_HELP['rule-sources']
+    const text = [
+      h.oneLiner,
+      h.whenToUse,
+      ...(h.steps ?? []).map((s) => s.title + s.detail),
+      ...(h.faq ?? []).map((f) => f.q + f.a),
+      ...(h.concepts ?? []).map((c) => c.term + c.explain),
+    ].join('\n')
+    expect(text).toContain('output.format')
+    expect(text).toContain('不含 INI 模板')
+    expect(text).not.toContain('支持 INI')
+  })
+  it('订阅页 faq 讲清令牌用途与可复用性', () => {
+    const faq = PAGE_HELP.subscriptions.faq ?? []
+    expect(faq.some((f) => f.q.includes('令牌'))).toBe(true)
+    expect(faq.some((f) => f.a.includes('长期重复使用'))).toBe(true)
+  })
+})

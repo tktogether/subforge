@@ -74,7 +74,7 @@ onMounted(() => {
   </v-alert>
 
   <div v-if="unavailable" data-testid="scheduler-unavailable" class="mb-4">
-    <v-card variant="tonal" class="pa-4">
+    <v-card class="pa-4">
       <v-card-title>调度器未启用</v-card-title>
       <v-card-text>当前进程没有装配调度器，定时任务不会执行。通常是启动时没带数据目录。</v-card-text>
       <v-card-actions>
@@ -104,7 +104,10 @@ onMounted(() => {
         <tr v-for="(t, i) in tasks" :key="i" data-testid="task-row">
           <td>{{ jobNameCn(t.JobName) }}</td>
           <td>
-            <v-chip :color="t.Success ? 'success' : 'error'" size="small">{{ t.Success ? '成功' : '失败' }}</v-chip>
+            <span class="sf-status">
+              <span class="sf-status__dot" :class="t.Success ? 'sf-status__dot--ok' : 'sf-status__dot--danger'"></span>
+              <span>{{ t.Success ? '成功' : '失败' }}</span>
+            </span>
           </td>
           <td>{{ formatStartedAt(t.StartedAt) }}</td>
           <td>{{ formatTaskDuration(t.Duration) }}</td>

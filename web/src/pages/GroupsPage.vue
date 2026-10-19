@@ -50,6 +50,7 @@ const resource: any = {
       :fields="groupFields"
       :resource="resource"
       :empty="help.emptyState"
+      rank-key="sort_order"
     />
 
     <v-expansion-panels class="mt-4" data-testid="group-recipes">

@@ -65,47 +65,47 @@ onMounted(() => {
 
     <!-- Block 2: metrics with captions -->
     <div class="metrics-grid mb-4" data-testid="block-metrics">
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">最近记录条数</div>
         <div class="text-h5" data-testid="metric-history-total">{{ stats?.history.total ?? 0 }}</div>
         <div class="text-caption">服务进程内存里保留的最近转换记录条数（上限 20，重启清零），不是历史累计。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">缓存命中率</div>
         <div class="text-h5" data-testid="metric-cache-hit-rate">{{ ((stats?.history.cacheHitRate ?? 0) * 100).toFixed(1) }}%</div>
         <div class="text-caption">命中磁盘缓存的来源 URL 数 ÷ 总来源 URL 数。缓存命中意味着没有真的去上游拉取。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">来源 URL 总数</div>
         <div class="text-h5" data-testid="metric-url-total">{{ stats?.history.urlTotal ?? 0 }}</div>
         <div class="text-caption">这些转换请求里一共出现过多少个来源 URL（含重复）。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">日志行数</div>
         <div class="text-h5" data-testid="metric-logs">{{ stats?.logs ?? 0 }}</div>
         <div class="text-caption">日志缓冲区里的行数（有上限，超出后最早的会被丢弃）。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">节点数</div>
         <div class="text-h5" data-testid="metric-nodes">{{ lastOrDash(stats?.last?.nodes) }}</div>
         <div class="text-caption">最近一次转换输出的节点数。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">原始节点数</div>
         <div class="text-h5" data-testid="metric-raw-nodes">{{ lastOrDash(stats?.last?.rawNodes) }}</div>
         <div class="text-caption">去重/过滤之前解析到的节点数；两者差得越多，说明去重或管线过滤越有效。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">分组数</div>
         <div class="text-h5" data-testid="metric-groups">{{ lastOrDash(stats?.last?.groups) }}</div>
         <div class="text-caption">最近一次转换实际生效的分组数（模板与请求取并集后的结果）。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">规则数</div>
         <div class="text-h5" data-testid="metric-rules">{{ lastOrDash(stats?.last?.rules) }}</div>
         <div class="text-caption">最近一次转换实际生效的规则行数。</div>
       </v-card>
-      <v-card variant="tonal" class="metric-card pa-4">
+      <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">最近一次缓存命中</div>
         <div class="text-h5" data-testid="metric-last-cached">{{ stats?.last == null ? '—' : (stats.last.cached + '/' + stats.last.urlCount) }}</div>
         <div class="text-caption">最近一次转换里，命中缓存的来源数 ÷ 来源总数。</div>

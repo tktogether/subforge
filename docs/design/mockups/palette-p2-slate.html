@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════╗
+  ║  SubForge 配色样板 P2「石板靛蓝」 · 单文件 · 离线 · 浅/深双主题      ║
+  ╚══════════════════════════════════════════════════════════════════════╝
+  设计意图：参考 Linear / Vercel / GitHub 的现代 SaaS 专业感：冷灰蓝中性色带微弱蓝相，靛蓝主按钮，1px 边框清晰分层、无阴影。浅色状态色跟随 GitHub light，深色直接采用 GitHub dark 状态色，最终按对比度做了最小幅度明度校正。
+  参考系：GitHub Primer light/dark 状态色 + Linear / Vercel 中性层
+  ════════════════════════════════════════════════════════════════════════
+  设计令牌 · 浅色主题（hex + OKLCH）
+    --sf-bg              #F5F7FA     oklch(97.5% 0.005 258)   页面主底色
+    --sf-bg-subtle       #EAEFF5     oklch(95.0% 0.010 253)   侧栏 / 表头次级底
+    --sf-surface         #FBFCFE     oklch(99.1% 0.003 265)   卡片 · 表格面板底
+    --sf-surface-raised  #FDFDFF     oklch(99.5% 0.003 286)   行悬停 · 更高一层
+    --sf-border          #DFE4EB     oklch(91.7% 0.011 257)   常规 1px 分隔线
+    --sf-border-strong   #B5BFCB     oklch(80.1% 0.020 253)   表头底线 · 强调边框
+    --sf-text            #1B2331     oklch(25.5% 0.029 261)   正文与标题
+    --sf-text-muted      #4E5A6C     oklch(46.4% 0.033 258)   次要说明文字
+    --sf-text-faint      #808b9c     oklch(63.4% 0.029 259)   时间戳 · 弱提示
+    --sf-accent          #4B54D6     oklch(51.7% 0.196 274)   主按钮 · 链接 · 高亮项
+    --sf-accent-hover    #3B43B9     oklch(45.3% 0.183 274)   主按钮悬停底
+    --sf-accent-fg       #FFFFFF     oklch(100.0% 0.000 90)   accent 底上的文字
+    --sf-ok              #1A7F37     oklch(52.4% 0.140 148)   成功状态（圆点+文字）
+    --sf-warn            #976500     oklch(54.6% 0.115 75)   警告状态（圆点+文字）
+    --sf-danger          #CF222E     oklch(55.2% 0.205 25)   失败状态（圆点+文字）
+    --sf-info            #0969DA     oklch(54.0% 0.191 257)   中性提示状态（圆点+文字）
+    --sf-radius          8px         圆角基准（按钮 6px / 卡片 8px）
+    --sf-space           8px         间距基数 8px（4/8 倍数系统）
+    --sf-font-mono       （系统等宽栈，见 CSS）   数字 · URL · 数据等宽字体
+  ════════════════════════════════════════════════════════════════════════
+  设计令牌 · 深色主题（hex + OKLCH）
+    --sf-bg              #0F1319     oklch(18.5% 0.014 258)   页面主底色
+    --sf-bg-subtle       #141922     oklch(21.3% 0.019 262)   侧栏 / 表头次级底
+    --sf-surface         #1A202A     oklch(24.2% 0.021 261)   卡片 · 表格面板底
+    --sf-surface-raised  #202836     oklch(27.6% 0.028 261)   行悬停 · 更高一层
+    --sf-border          #2B3340     oklch(31.9% 0.026 260)   常规 1px 分隔线
+    --sf-border-strong   #414C5D     oklch(41.4% 0.032 259)   表头底线 · 强调边框
+    --sf-text            #E4E9F1     oklch(93.3% 0.012 260)   正文与标题
+    --sf-text-muted      #A6B0C0     oklch(75.4% 0.026 260)   次要说明文字
+    --sf-text-faint      #6F7D92     oklch(58.6% 0.036 258)   时间戳 · 弱提示
+    --sf-accent          #7681F5     oklch(65.0% 0.171 276)   主按钮 · 链接 · 高亮项
+    --sf-accent-hover    #8B92FA     oklch(70.0% 0.151 279)   主按钮悬停底
+    --sf-accent-fg       #0E1220     oklch(18.6% 0.029 271)   accent 底上的文字
+    --sf-ok              #3FB950     oklch(69.5% 0.181 146)   成功状态（圆点+文字）
+    --sf-warn            #D29922     oklch(72.0% 0.140 80)   警告状态（圆点+文字）
+    --sf-danger          #F85149     oklch(66.5% 0.205 27)   失败状态（圆点+文字）
+    --sf-info            #58A6FF     oklch(71.5% 0.152 253)   中性提示状态（圆点+文字）
+    --sf-radius          8px         圆角基准（按钮 6px / 卡片 8px）
+    --sf-space           8px         间距基数 8px（4/8 倍数系统）
+    --sf-font-mono       （系统等宽栈，见 CSS）   数字 · URL · 数据等宽字体
+  ════════════════════════════════════════════════════════════════════════
+  WCAG 2.1 对比度实测 · 浅色主题（≥4.5:1 为 AA 正文达标；由脚本按 sRGB 相对亮度法算出）
+    正文 / 卡片                   #1B2331 / #FBFCFE             →   15.37:1   AA 通过
+    正文 / 页面底                  #1B2331 / #F5F7FA             →   14.70:1   AA 通过
+    次要说明 / 卡片                 #4E5A6C / #FBFCFE             →   6.81:1   AA 通过
+    弱提示 / 卡片                  #808b9c / #FBFCFE             →   3.36:1   辅助级（≥3）通过   （辅助级，≥3 即可）
+    accent 链接 / 卡片            #4B54D6 / #FBFCFE             →   5.78:1   AA 通过
+    accent 按钮文字               #FFFFFF / #4B54D6             →   5.94:1   AA 通过
+    accent 按钮文字（悬停）           #FFFFFF / #3B43B9             →   7.81:1   AA 通过
+    ok 状态文字 / 卡片              #1A7F37 / #FBFCFE             →   4.95:1   AA 通过
+    warn 状态文字 / 卡片            #976500 / #FBFCFE             →   4.90:1   AA 通过
+    danger 状态文字 / 卡片          #CF222E / #FBFCFE             →   5.22:1   AA 通过
+    info 状态文字 / 卡片            #0969DA / #FBFCFE             →   5.06:1   AA 通过
+  ════════════════════════════════════════════════════════════════════════
+  WCAG 2.1 对比度实测 · 深色主题（≥4.5:1 为 AA 正文达标）
+    正文 / 卡片                   #E4E9F1 / #1A202A             →   13.42:1   AA 通过
+    正文 / 页面底                  #E4E9F1 / #0F1319             →   15.28:1   AA 通过
+    次要说明 / 卡片                 #A6B0C0 / #1A202A             →   7.47:1   AA 通过
+    弱提示 / 卡片                  #6F7D92 / #1A202A             →   3.91:1   辅助级（≥3）通过   （辅助级，≥3 即可）
+    accent 链接 / 卡片            #7681F5 / #1A202A             →   4.85:1   AA 通过
+    accent 按钮文字               #0E1220 / #7681F5             →   5.53:1   AA 通过
+    accent 按钮文字（悬停）           #0E1220 / #8B92FA             →   6.74:1   AA 通过
+    ok 状态文字 / 卡片              #3FB950 / #1A202A             →   6.44:1   AA 通过
+    warn 状态文字 / 卡片            #D29922 / #1A202A             →   6.48:1   AA 通过
+    danger 状态文字 / 卡片          #F85149 / #1A202A             →   4.88:1   AA 通过
+    info 状态文字 / 卡片            #58A6FF / #1A202A             →   6.47:1   AA 通过
+  ════════════════════════════════════════════════════════════════════════
+  使用与生成说明
+    · 主题切换：右上角固定按钮切换 &lt;html data-theme="light|dark"&gt;；全部组件共用同一套
+      --sf-* 变量，浅/深两主题无需重写任何组件样式即可切换验证。
+    · OKLCH 数值按 sRGB → OKLab → OKLCH 换算（感知均匀），便于在 CSS 内以 oklch() 表达同色。
+    · 不达标色曾按「保留色相与彩度、只调明度」的方式校正至 AA（正文/状态 ≥4.5，弱提示 ≥3）。
+    · 状态语义：ok / warn / danger / info 一律以「8px 实心圆点 + 同色文字」出现，禁止淡底淡字色片。
+    · 间距取样（--sf-space = 8px 基数）：4 / 8 / 12 / 16 / 20 / 24 / 32 / 48 px，均为 4px 倍数；
+      圆角取样：--sf-radius = 8px（卡片/面板），按钮与行项用 calc(var(--sf-radius) - 2px) = 6px。
+    · 层级策略：全程无投影，仅用 1px 边框 + 底色三级（bg → subtle → surface → raised）分层。
+    · 本文件为目视拍板样板，与生产代码无关，禁止直接拷贝上线。
+-->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubForge 配色样板 P2「石板靛蓝」· 订阅转换与规则工厂 · 浅/深</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   SubForge 配色样板 P2「石板靛蓝」 · 内联样式表
+   变量契约：19 个 --sf-* 令牌 × 浅/深两套 · 无外部资源 · 无投影
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ─ 1 · 设计令牌 · 浅色 ─────────────────────────────────────────
+   pages 自下而上：bg（纸面）→ bg-subtle（侧栏/表头）→ surface（卡片）
+   → surface-raised（悬停抬升）；同级之间一律以 1px 边框分层。 */
+:root, [data-theme="light"] {
+  --sf-bg: #F5F7FA;                               /* 页面主底色 */
+  --sf-bg-subtle: #EAEFF5;                               /* 侧栏 / 表头次级底 */
+  --sf-surface: #FBFCFE;                               /* 卡片 · 表格面板底 */
+  --sf-surface-raised: #FDFDFF;                               /* 行悬停 · 更高一层 */
+  --sf-border: #DFE4EB;                               /* 常规 1px 分隔线 */
+  --sf-border-strong: #B5BFCB;                               /* 表头底线 · 强调边框 */
+  --sf-text: #1B2331;                               /* 正文与标题 */
+  --sf-text-muted: #4E5A6C;                               /* 次要说明文字 */
+  --sf-text-faint: #808b9c;                               /* 时间戳 · 弱提示 */
+  --sf-accent: #4B54D6;                               /* 主按钮 · 链接 · 高亮项 */
+  --sf-accent-hover: #3B43B9;                               /* 主按钮悬停底 */
+  --sf-accent-fg: #FFFFFF;                               /* accent 底上的文字 */
+  --sf-ok: #1A7F37;                               /* 成功状态（圆点+文字） */
+  --sf-warn: #976500;                               /* 警告状态（圆点+文字） */
+  --sf-danger: #CF222E;                               /* 失败状态（圆点+文字） */
+  --sf-info: #0969DA;                               /* 中性提示状态（圆点+文字） */
+  --sf-radius: 8px;                                   /* 圆角基准（按钮 6px / 卡片 8px） */
+  --sf-space: 8px;                                   /* 间距基数 8px（4/8 倍数系统） */
+  --sf-font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Consolas, "JetBrains Mono", "Courier New", monospace; /* 等宽字体栈 */
+}
+/* ─ 2 · 设计令牌 · 深色 ─────────────────────────────────────────
+   深色整套同构反向：底最深，卡面抬一级；正文取近白、弱提示压暗。 */
+[data-theme="dark"] {
+  --sf-bg: #0F1319;                               /* 页面主底色 */
+  --sf-bg-subtle: #141922;                               /* 侧栏 / 表头次级底 */
+  --sf-surface: #1A202A;                               /* 卡片 · 表格面板底 */
+  --sf-surface-raised: #202836;                               /* 行悬停 · 更高一层 */
+  --sf-border: #2B3340;                               /* 常规 1px 分隔线 */
+  --sf-border-strong: #414C5D;                               /* 表头底线 · 强调边框 */
+  --sf-text: #E4E9F1;                               /* 正文与标题 */
+  --sf-text-muted: #A6B0C0;                               /* 次要说明文字 */
+  --sf-text-faint: #6F7D92;                               /* 时间戳 · 弱提示 */
+  --sf-accent: #7681F5;                               /* 主按钮 · 链接 · 高亮项 */
+  --sf-accent-hover: #8B92FA;                               /* 主按钮悬停底 */
+  --sf-accent-fg: #0E1220;                               /* accent 底上的文字 */
+  --sf-ok: #3FB950;                               /* 成功状态（圆点+文字） */
+  --sf-warn: #D29922;                               /* 警告状态（圆点+文字） */
+  --sf-danger: #F85149;                               /* 失败状态（圆点+文字） */
+  --sf-info: #58A6FF;                               /* 中性提示状态（圆点+文字） */
+  --sf-radius: 8px;                                   /* 圆角基准（按钮 6px / 卡片 8px） */
+  --sf-space: 8px;                                   /* 间距基数 8px（4/8 倍数系统） */
+  --sf-font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Consolas, "JetBrains Mono", "Courier New", monospace; /* 等宽字体栈 */
+}
+
+/* ─ 3 · 基础 ────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; }
+body {
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+  background: var(--sf-bg);
+  color: var(--sf-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  font-size: 14px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection { background: var(--sf-accent); color: var(--sf-accent-fg); }
+a { color: var(--sf-accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--sf-accent); outline-offset: 2px; }
+.mono { font-family: var(--sf-font-mono); font-variant-numeric: tabular-nums; }
+* { scrollbar-width: thin; scrollbar-color: var(--sf-border-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--sf-border-strong); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ─ 4 · 顶栏 ────────────────────────────────────────────────── */
+.top {
+  height: 48px; flex: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 16px;
+  background: var(--sf-bg);
+  border-bottom: 1px solid var(--sf-border);
+}
+.top-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--sf-accent); flex: none; }
+.top-title { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
+
+/* 右上角固定主题切换钮（vanilla JS 一行，见文件尾） */
+.theme-toggle {
+  position: fixed; top: 8px; right: 8px; z-index: 40;
+  height: 28px; padding: 0 12px;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: calc(var(--sf-radius) - 2px);
+  background: var(--sf-surface-raised);
+  color: var(--sf-text-muted);
+  font-family: inherit; font-size: 12px; font-weight: 600; line-height: 1;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--sf-text); border-color: var(--sf-accent); }
+
+/* ─ 5 · 骨架 ────────────────────────────────────────────────── */
+.shell { flex: 1 1 auto; display: flex; min-height: 0; }
+.side {
+  flex: 0 0 216px; width: 216px;
+  background: var(--sf-bg-subtle);
+  border-right: 1px solid var(--sf-border);
+  padding: 16px 0 24px;
+}
+.main {
+  flex: 1 1 auto; min-width: 0;
+  padding: 24px 32px 32px;
+  display: flex; flex-direction: column; gap: 24px;
+  max-width: 1280px;
+}
+
+/* ─ 6 · 侧栏导航 · 5 组 13 项 ───────────────────────────────── */
+.side-nav { display: flex; flex-direction: column; gap: 20px; }
+.nav-group { display: flex; flex-direction: column; }
+.nav-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--sf-text-faint);
+  padding: 0 16px 4px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 8px; padding: 4px 12px;
+  border-radius: calc(var(--sf-radius) - 2px);
+  color: var(--sf-text-muted);
+  font-size: 13px; font-weight: 500;
+  text-decoration: none;
+  transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1), color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav-item:hover { background: var(--sf-surface-raised); color: var(--sf-text); text-decoration: none; }
+.nav-item.is-active {
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-border);
+  color: var(--sf-accent); font-weight: 600;
+}
+.nav-ico { width: 16px; text-align: center; flex: none; font-weight: 400; opacity: 0.9; }
+
+/* ─ 7 · 页头 · 4 按钮 ───────────────────────────────────────── */
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.page-title { font-size: 20px; font-weight: 700; line-height: 1.3; letter-spacing: -0.01em; }
+.page-desc { margin-top: 4px; font-size: 13px; color: var(--sf-text-muted); }
+.actions { display: flex; gap: 8px; flex: none; flex-wrap: wrap; }
+.btn {
+  height: 32px; padding: 0 16px;
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--sf-border);
+  border-radius: calc(var(--sf-radius) - 2px);
+  background: var(--sf-surface);
+  color: var(--sf-text);
+  font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1;
+  cursor: pointer; text-decoration: none;
+  transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1), border-color 120ms cubic-bezier(0.16, 1, 0.3, 1), color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn:hover { background: var(--sf-surface-raised); border-color: var(--sf-border-strong); text-decoration: none; }
+.btn:active { transform: translateY(1px); }
+.btn-ico { font-size: 14px; line-height: 1; }
+.btn-primary { background: var(--sf-accent); border-color: var(--sf-accent); color: var(--sf-accent-fg); }
+.btn-primary:hover { background: var(--sf-accent-hover); border-color: var(--sf-accent-hover); color: var(--sf-accent-fg); }
+
+/* ─ 8 · 指标卡 × 8 ───────────────────────────────────────────── */
+.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.metric {
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.metric:hover { border-color: var(--sf-border-strong); }
+.metric-label { font-size: 12px; font-weight: 500; color: var(--sf-text-muted); }
+.metric-value {
+  font-family: var(--sf-font-mono); font-variant-numeric: tabular-nums;
+  font-size: 22px; font-weight: 600; line-height: 1.2; letter-spacing: -0.01em;
+}
+
+/* ─ 9 · 数据表 · 9 列 × 3 行 ────────────────────────────────── */
+.panel { background: var(--sf-surface); border: 1px solid var(--sf-border); border-radius: var(--sf-radius); overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th {
+  font-size: 12px; font-weight: 600; text-align: left; white-space: nowrap;
+  color: var(--sf-text-muted);
+  background: var(--sf-bg-subtle);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--sf-border-strong);
+}
+.tbl th:first-child, .tbl td:first-child { padding-left: 16px; }
+.tbl th.num { text-align: right; }
+.tbl td { height: 40px; padding: 0 12px; border-bottom: 1px solid var(--sf-border); font-size: 13px; vertical-align: middle; white-space: nowrap; }
+.tbl tbody tr:last-child td { border-bottom: none; }
+.tbl tbody tr { transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1); }
+.tbl tbody tr:hover td { background: var(--sf-surface-raised); }
+.td-num { text-align: right; font-family: var(--sf-font-mono); font-variant-numeric: tabular-nums; font-size: 12px; }
+.td-name { font-weight: 600; }
+.td-dim { color: var(--sf-text-muted); font-size: 12px; }
+.url {
+  display: inline-block; max-width: 248px; overflow: hidden; text-overflow: ellipsis;
+  vertical-align: middle;
+  font-family: var(--sf-font-mono); font-size: 12px;
+  color: var(--sf-text-muted);
+}
+.ops a + a { margin-left: 8px; }
+.op-del { color: var(--sf-danger); }
+.op-del:hover { color: var(--sf-danger); }
+
+/* ─ 10 · 状态 = 8px 圆点 + 文字（禁用淡底淡字色片） ─────────── */
+.st { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; line-height: 1.4; }
+.st i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.st-ok     { color: var(--sf-ok); }
+.st-warn   { color: var(--sf-warn); }
+.st-bad    { color: var(--sf-danger); }
+.st-info   { color: var(--sf-info); }
+.st-dim    { color: var(--sf-text-muted); }
+.st-dim i  { background: var(--sf-border-strong); }
+
+/* ─ 11 · 章节公共 ───────────────────────────────────────────── */
+.section-title {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  padding-bottom: 4px; border-bottom: 1px solid var(--sf-border);
+  margin-bottom: 8px;
+}
+.section-desc { font-size: 12px; color: var(--sf-text-faint); margin-bottom: 8px; }
+
+/* ─ 12 · WCAG 实测表 ────────────────────────────────────────── */
+.wcx { width: 100%; border-collapse: collapse; font-size: 12px; }
+.wcx th { text-align: left; padding: 4px 8px; color: var(--sf-text-muted); font-weight: 600; border-bottom: 1px solid var(--sf-border-strong); white-space: nowrap; }
+.wcx td { padding: 4px 8px; border-bottom: 1px solid var(--sf-border); white-space: nowrap; vertical-align: top; }
+.wcx .mono { font-size: 11px; }
+.wcx-pass { color: var(--sf-ok); font-weight: 600; }
+.wcx-note { color: var(--sf-text-faint); }
+
+/* ─ 13 · 本方案令牌 · 色块条 ────────────────────────────────── */
+.token-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 8px; }
+.token {
+  display: flex; align-items: flex-start; gap: 8px;
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-border);
+  border-radius: calc(var(--sf-radius) - 2px);
+  padding: 8px 12px;
+}
+.chip {
+  width: 20px; height: 20px; flex: none;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.02em;
+  font-family: var(--sf-font-mono);
+}
+.tk-info { min-width: 0; }
+.tk-name { font-family: var(--sf-font-mono); font-size: 11px; font-weight: 600; color: var(--sf-text); }
+.tk-hex  { font-family: var(--sf-font-mono); font-size: 10px; color: var(--sf-text-muted); margin-top: 2px; }
+.tk-use  { font-size: 11px; color: var(--sf-text-faint); margin-top: 2px; }
+.meta-2 {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  color: var(--sf-text-faint); font-size: 12px;
+  border-top: 1px solid var(--sf-border); padding-top: 8px;
+}
+
+/* ─ 14 · 动效克制 · 无投影 · 可访问性 · 响应式 · 打印 ──────── */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+@media (max-width: 1080px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 880px) {
+  .page-head { flex-direction: column; }
+  .side { flex: 0 0 180px; width: 180px; }
+  .metrics { grid-template-columns: 1fr; }
+  .main { padding: 16px; }
+}
+@media print {
+  .side, .theme-toggle, .actions { display: none; }
+  .main { max-width: none; padding: 0; }
+}
+</style>
+<body>
+
+<button id="themeBtn" class="theme-toggle" type="button">深色</button>
+
+<header class="top">
+  <span class="top-mark" aria-hidden="true"></span>
+  <span class="top-title">SubForge · 订阅转换与规则工厂</span>
+</header>
+
+<div class="shell">
+  <aside class="side">
+
+<nav class="side-nav" aria-label="主导航">
+    <div class="nav-group">
+      <div class="nav-label">转换</div>
+      <a class="nav-item" href="#"><span class="nav-ico">◐</span>概览</a>
+      <a class="nav-item" href="#"><span class="nav-ico">⇄</span>转换</a>
+      <a class="nav-item" href="#"><span class="nav-ico">▤</span>管线</a>
+      <a class="nav-item" href="#"><span class="nav-ico">{}</span>脚本</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">来源</div>
+      <a class="nav-item is-active" href="#" aria-current="page"><span class="nav-ico">☁</span>机场</a>
+      <a class="nav-item" href="#"><span class="nav-ico">⌂</span>自建节点</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">规则</div>
+      <a class="nav-item" href="#"><span class="nav-ico">⊞</span>规则</a>
+      <a class="nav-item" href="#"><span class="nav-ico">⇣</span>规则源</a>
+      <a class="nav-item" href="#"><span class="nav-ico">⧉</span>分组</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">输出</div>
+      <a class="nav-item" href="#"><span class="nav-ico">⇥</span>订阅</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">运维</div>
+      <a class="nav-item" href="#"><span class="nav-ico">✓</span>任务</a>
+      <a class="nav-item" href="#"><span class="nav-ico">⚙</span>设置</a>
+      <a class="nav-item" href="#"><span class="nav-ico">☰</span>日志</a>
+    </div>
+  </nav>
+  </aside>
+
+  <main class="main">
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">机场</h1>
+        <p class="page-desc">管理上游订阅地址（机场），供转换与订阅使用。</p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" type="button"><span class="btn-ico">＋</span>新增</button>
+        <button class="btn" type="button"><span class="btn-ico">⟳</span>刷新</button>
+        <button class="btn" type="button">刷新全部流量</button>
+        <button class="btn" type="button">测活全部</button>
+      </div>
+    </header>
+
+    <section class="metrics" aria-label="指标">
+    <div class="metric"><span class="metric-label">最近记录条数</span><span class="metric-value">12</span></div>
+    <div class="metric"><span class="metric-label">缓存命中率</span><span class="metric-value">68.3%</span></div>
+    <div class="metric"><span class="metric-label">来源 URL 总数</span><span class="metric-value">47</span></div>
+    <div class="metric"><span class="metric-label">日志行数</span><span class="metric-value">231</span></div>
+    <div class="metric"><span class="metric-label">节点数</span><span class="metric-value">486</span></div>
+    <div class="metric"><span class="metric-label">原始节点数</span><span class="metric-value">512</span></div>
+    <div class="metric"><span class="metric-label">分组数</span><span class="metric-value">24</span></div>
+    <div class="metric"><span class="metric-label">规则数</span><span class="metric-value">1387</span></div>
+    </section>
+
+  <section class="panel">
+    <table class="tbl">
+      <colgroup><col style="width:110px"><col><col style="width:76px"><col style="width:72px"><col style="width:150px"><col style="width:104px"><col style="width:150px"><col style="width:96px"><col style="width:96px"></colgroup>
+      <thead>
+        <tr><th>名称</th><th>订阅地址</th><th>启用</th><th class="num">节点数</th><th class="num">流量(已用/总量)</th><th class="num">到期时间</th><th>更新时间</th><th>状态</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+    <tr>
+      <td class="td-name">主机场</td>
+      <td><span class="url" title="https://sub.example.com/api/v1/client/subscribe?token=***">https://sub.example.com/api/v1/client/subscribe?token=***</span></td>
+      <td><span class="st st-ok"><i></i>启用</span></td>
+      <td class="td-num">186</td>
+      <td class="td-num">42.1 GB / 200 GB</td>
+      <td class="td-num">2027-03-14</td>
+      <td class="td-dim">上次成功：12 分钟前</td>
+      <td><span class="st st-ok"><i></i>正常</span></td>
+      <td class="ops"><a href="#">编辑</a><a class="op-del" href="#">删除</a></td>
+    </tr>
+    <tr>
+      <td class="td-name">备用机场</td>
+      <td><span class="url" title="https://backup.example.net/link/abcdef">https://backup.example.net/link/abcdef</span></td>
+      <td><span class="st st-dim"><i></i>停用</span></td>
+      <td class="td-num">92</td>
+      <td class="td-num">未知</td>
+      <td class="td-num">未知</td>
+      <td class="td-dim">从未采集</td>
+      <td><span class="st st-ok"><i></i>正常</span></td>
+      <td class="ops"><a href="#">编辑</a><a class="op-del" href="#">删除</a></td>
+    </tr>
+    <tr>
+      <td class="td-name">测试机场</td>
+      <td><span class="url" title="https://trial.example.org/sub?token=***">https://trial.example.org/sub?token=***</span></td>
+      <td><span class="st st-ok"><i></i>启用</span></td>
+      <td class="td-num">208</td>
+      <td class="td-num">8.4 GB / 50 GB</td>
+      <td class="td-num">2026-11-02</td>
+      <td class="td-dim">上次成功：3 小时前</td>
+      <td><span class="st st-bad" title="上游 502，余额仍是上次成功值"><i></i>采集失败</span></td>
+      <td class="ops"><a href="#">编辑</a><a class="op-del" href="#">删除</a></td>
+    </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2 class="section-title">WCAG 对比度 · 本样板实测</h2>
+    <p class="section-desc">同一组变量在浅/深两套令牌下的实测值（sRGB 相对亮度法，WCAG 2.1）；正文与状态文字全部 ≥4.5:1，弱提示为辅助级按 ≥3:1 校验。</p>
+    <div class="panel">
+      <table class="wcx">
+        <thead><tr><th>组合</th><th>浅色 前景/背景</th><th>浅色 比率</th><th>深色 前景/背景</th><th>深色 比率</th><th>判定</th><th>备注</th></tr></thead>
+        <tbody>
+        <tr><td>正文 / 卡片</td><td class="mono">#1B2331 / #FBFCFE</td><td class="mono">15.37:1</td><td class="mono">#E4E9F1 / #1A202A</td><td class="mono">13.42:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>正文 / 页面底</td><td class="mono">#1B2331 / #F5F7FA</td><td class="mono">14.70:1</td><td class="mono">#E4E9F1 / #0F1319</td><td class="mono">15.28:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>次要说明 / 卡片</td><td class="mono">#4E5A6C / #FBFCFE</td><td class="mono">6.81:1</td><td class="mono">#A6B0C0 / #1A202A</td><td class="mono">7.47:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>弱提示 / 卡片</td><td class="mono">#808b9c / #FBFCFE</td><td class="mono">3.36:1</td><td class="mono">#6F7D92 / #1A202A</td><td class="mono">3.91:1</td><td><span class="wcx-pass">辅助 ✓</span> / <span class="wcx-pass">辅助 ✓</span></td><td class="wcx-note">辅助级，≥3 即可</td></tr>
+        <tr><td>accent 链接 / 卡片</td><td class="mono">#4B54D6 / #FBFCFE</td><td class="mono">5.78:1</td><td class="mono">#7681F5 / #1A202A</td><td class="mono">4.85:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>accent 按钮文字</td><td class="mono">#FFFFFF / #4B54D6</td><td class="mono">5.94:1</td><td class="mono">#0E1220 / #7681F5</td><td class="mono">5.53:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>accent 按钮文字（悬停）</td><td class="mono">#FFFFFF / #3B43B9</td><td class="mono">7.81:1</td><td class="mono">#0E1220 / #8B92FA</td><td class="mono">6.74:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>ok 状态文字 / 卡片</td><td class="mono">#1A7F37 / #FBFCFE</td><td class="mono">4.95:1</td><td class="mono">#3FB950 / #1A202A</td><td class="mono">6.44:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>warn 状态文字 / 卡片</td><td class="mono">#976500 / #FBFCFE</td><td class="mono">4.90:1</td><td class="mono">#D29922 / #1A202A</td><td class="mono">6.48:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>danger 状态文字 / 卡片</td><td class="mono">#CF222E / #FBFCFE</td><td class="mono">5.22:1</td><td class="mono">#F85149 / #1A202A</td><td class="mono">4.88:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        <tr><td>info 状态文字 / 卡片</td><td class="mono">#0969DA / #FBFCFE</td><td class="mono">5.06:1</td><td class="mono">#58A6FF / #1A202A</td><td class="mono">6.47:1</td><td><span class="wcx-pass">AA ✓</span> / <span class="wcx-pass">AA ✓</span></td><td class="wcx-note"></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">本方案令牌</h2>
+    <p class="section-desc">色块随右上角主题切换实时显示当前主题取值；文字列出浅/深两题的 hex 备查。</p>
+    <div class="token-grid">
+      <div class="token"><span class="chip" style="background:var(--sf-bg)"></span><span class="tk-info"><span class="tk-name">--sf-bg</span><span class="tk-hex" style="display:block">#F5F7FA · 深 #0F1319</span><span class="tk-use" style="display:block">页面主底色</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-bg-subtle)"></span><span class="tk-info"><span class="tk-name">--sf-bg-subtle</span><span class="tk-hex" style="display:block">#EAEFF5 · 深 #141922</span><span class="tk-use" style="display:block">侧栏 / 表头次级底</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-surface)"></span><span class="tk-info"><span class="tk-name">--sf-surface</span><span class="tk-hex" style="display:block">#FBFCFE · 深 #1A202A</span><span class="tk-use" style="display:block">卡片 · 表格面板底</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-surface-raised)"></span><span class="tk-info"><span class="tk-name">--sf-surface-raised</span><span class="tk-hex" style="display:block">#FDFDFF · 深 #202836</span><span class="tk-use" style="display:block">行悬停 · 更高一层</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-border)"></span><span class="tk-info"><span class="tk-name">--sf-border</span><span class="tk-hex" style="display:block">#DFE4EB · 深 #2B3340</span><span class="tk-use" style="display:block">常规 1px 分隔线</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-border-strong)"></span><span class="tk-info"><span class="tk-name">--sf-border-strong</span><span class="tk-hex" style="display:block">#B5BFCB · 深 #414C5D</span><span class="tk-use" style="display:block">表头底线 · 强调边框</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-text)"></span><span class="tk-info"><span class="tk-name">--sf-text</span><span class="tk-hex" style="display:block">#1B2331 · 深 #E4E9F1</span><span class="tk-use" style="display:block">正文与标题</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-text-muted)"></span><span class="tk-info"><span class="tk-name">--sf-text-muted</span><span class="tk-hex" style="display:block">#4E5A6C · 深 #A6B0C0</span><span class="tk-use" style="display:block">次要说明文字</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-text-faint)"></span><span class="tk-info"><span class="tk-name">--sf-text-faint</span><span class="tk-hex" style="display:block">#808b9c · 深 #6F7D92</span><span class="tk-use" style="display:block">时间戳 · 弱提示</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-accent)"></span><span class="tk-info"><span class="tk-name">--sf-accent</span><span class="tk-hex" style="display:block">#4B54D6 · 深 #7681F5</span><span class="tk-use" style="display:block">主按钮 · 链接 · 高亮项</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-accent-hover)"></span><span class="tk-info"><span class="tk-name">--sf-accent-hover</span><span class="tk-hex" style="display:block">#3B43B9 · 深 #8B92FA</span><span class="tk-use" style="display:block">主按钮悬停底</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-accent-fg)"></span><span class="tk-info"><span class="tk-name">--sf-accent-fg</span><span class="tk-hex" style="display:block">#FFFFFF · 深 #0E1220</span><span class="tk-use" style="display:block">accent 底上的文字</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-ok)"></span><span class="tk-info"><span class="tk-name">--sf-ok</span><span class="tk-hex" style="display:block">#1A7F37 · 深 #3FB950</span><span class="tk-use" style="display:block">成功状态（圆点+文字）</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-warn)"></span><span class="tk-info"><span class="tk-name">--sf-warn</span><span class="tk-hex" style="display:block">#976500 · 深 #D29922</span><span class="tk-use" style="display:block">警告状态（圆点+文字）</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-danger)"></span><span class="tk-info"><span class="tk-name">--sf-danger</span><span class="tk-hex" style="display:block">#CF222E · 深 #F85149</span><span class="tk-use" style="display:block">失败状态（圆点+文字）</span></span></div>
+      <div class="token"><span class="chip" style="background:var(--sf-info)"></span><span class="tk-info"><span class="tk-name">--sf-info</span><span class="tk-hex" style="display:block">#0969DA · 深 #58A6FF</span><span class="tk-use" style="display:block">中性提示状态（圆点+文字）</span></span></div>
+      <div class="token"><span class="chip" style="border-radius:var(--sf-radius)"></span><span class="tk-info"><span class="tk-name">--sf-radius</span><span class="tk-hex" style="display:block">8px · 按钮 6px</span><span class="tk-use" style="display:block">圆角基准（按钮 6px / 卡片 8px）</span></span></div>
+      <div class="token"><span class="chip" style="flex-direction:column;gap:2px"><i style="width:6px;height:3px;background:currentColor"></i><i style="width:6px;height:4px;background:currentColor"></i></span><span class="tk-info"><span class="tk-name">--sf-space</span><span class="tk-hex" style="display:block">8px · 4/8 倍数</span><span class="tk-use" style="display:block">间距基数 8px（4/8 倍数系统）</span></span></div>
+      <div class="token"><span class="chip">01</span><span class="tk-info"><span class="tk-name">--sf-font-mono</span><span class="tk-hex" style="display:block">ui-monospace 系统栈</span><span class="tk-use" style="display:block">数字 · URL · 数据等宽字体</span></span></div>
+    </div>
+  </section>
+
+    <p class="meta-2">
+      <span>默认浅色 · 右上角按钮切换深色（内联 CSS 变量全量生效）</span>
+      <span class="mono">SubForge 配色样板 P2 · 离线单文件 · 仅供目视拍板</span>
+    </p>
+  </main>
+</div>
+
+<script>document.getElementById('themeBtn').onclick=function(){var t=document.documentElement.dataset;t.theme=(t.theme==='dark')?'light':'dark';this.textContent=(t.theme==='dark')?'浅色':'深色'};</script>
+</body>
+</html>

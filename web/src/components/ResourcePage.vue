@@ -31,6 +31,7 @@ const props = defineProps<{
   emptyText?: string
   empty?: EmptyStateHelp
   helpKey?: string
+  rankKey?: string
 }>()
 
 const { items, error, loading, load, save, destroy } = useCrud<Row>(props.resource)
@@ -47,6 +48,39 @@ const headers = computed(() => {
   }
   return props.columns.concat([{ key: 'actions', title: '操作' }])
 })
+
+// 排名：按 rankKey 升序稳定排序，值 -> 1-based 序号；值取不到时兜底显示原值。
+const rankMap = computed(() => {
+  const map = new Map<unknown, number>()
+  if (!props.rankKey) {
+    return map
+  }
+  const key = props.rankKey
+  const sorted = [...items.value].sort((a, b) => {
+    const av = (a as Row)[key]
+    const bv = (b as Row)[key]
+    if (av === bv) return 0
+    if (av === undefined || av === null) return 1
+    if (bv === undefined || bv === null) return -1
+    if (typeof av === 'number' && typeof bv === 'number') return av - bv
+    return String(av).localeCompare(String(bv))
+  })
+  sorted.forEach((row, index) => {
+    const value = (row as Row)[key]
+    if (!map.has(value)) {
+      map.set(value, index + 1)
+    }
+  })
+  return map
+})
+
+function rankOf(item: Row): unknown {
+  if (!props.rankKey) {
+    return (item as Row)[props.rankKey as string]
+  }
+  const value = item[props.rankKey]
+  return rankMap.value.get(value) ?? value
+}
 
 // W6B 表格：给操作列单元格挂类（vuetify-overrides.css 据此做「单行不折 + 紧凑按钮」）。
 // 不能写进 headers 数组——ResourcePage.spec.ts 用 toEqual 断言 actions 表头对象只有 key/title，
@@ -155,9 +189,7 @@ reload()
       <template #item.enabled="{ value }">
         <span class="sf-status">
           <span class="sf-status__dot" :class="value ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
-          <v-chip :color="value ? 'success' : 'default'" size="small" variant="tonal">
-            {{ value ? '启用' : '停用' }}
-          </v-chip>
+          <span>{{ value ? '启用' : '停用' }}</span>
         </span>
       </template>
       <template #item.subscription_url="{ value }">
@@ -168,6 +200,9 @@ reload()
       </template>
       <template #item.token="{ value }">
         <code class="resource-mono resource-truncate" :title="value">{{ value }}</code>
+      </template>
+      <template v-if="rankKey" #[`item.${rankKey}`]="{ item }">
+        {{ rankOf(item) }}
       </template>
       <template #item.actions="{ item }">
         <v-btn
@@ -274,23 +309,6 @@ reload()
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.sf-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.sf-status__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-.sf-status__dot--ok {
-  background: var(--sf-ok);
-}
-.sf-status__dot--muted {
-  background: var(--sf-text-faint);
 }
 .resource-table :deep(.text-end),
 .resource-table :deep(.text-right) {

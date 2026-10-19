@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 const props = defineProps<{ title: string; group?: string }>()
 const emit = defineEmits<{ 'toggle-drawer': [] }>()
 
@@ -25,7 +25,7 @@ function toggle(): void {
       </template>
     </v-app-bar-title>
     <v-spacer />
-    <v-chip size="small" variant="tonal" color="primary">SubForge</v-chip>
+    <span class="wordmark">SubForge</span>
   </v-app-bar>
 </template>
 
@@ -36,6 +36,10 @@ function toggle(): void {
 }
 .breadcrumb {
   font-size: 14px;
+  color: var(--sf-text);
+}
+.wordmark {
+  font-weight: 600;
   color: var(--sf-text);
 }
 </style>

@@ -556,4 +556,150 @@ describe('ResourcePage', () => {
     await flushPromises()
     expect(w.find('[data-testid="help-panel"]').exists()).toBe(false)
   })
+
+  it('rankKey：按 rankKey 升序排名显示 1、2、3…，值不在表里时兜底显示原值', async () => {
+    const resource = makeResource([
+      { name: 'a', sort_order: 100 },
+      { name: 'b', sort_order: 50 },
+    ])
+    const w = mount(ResourcePage, {
+      props: {
+        title: 'T',
+        subtitle: 'S',
+        columns: [
+          { key: 'name', title: '名称' },
+          { key: 'sort_order', title: '顺序' },
+        ],
+        fields,
+        resource,
+        rankKey: 'sort_order',
+      },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const rows = w.findAll('tbody tr')
+    expect(rows.length).toBe(2)
+    // 升序排名：sort_order=100 排第 2，sort_order=50 排第 1
+    expect(rows[0].text()).toContain('2')
+    expect(rows[1].text()).toContain('1')
+
+    const vm = w.vm as unknown as ResourcePageVm & { rankOf: (row: any) => unknown }
+    expect(vm.rankOf({ sort_order: 999 })).toBe(999)
+  })
+
+  it('无 rankKey：rankMap 为空 Map，rankOf 兜底 undefined', async () => {
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const vm = w.vm as unknown as ResourcePageVm & { rankMap: Map<unknown, number>; rankOf: (row: any) => unknown }
+    expect(vm.rankMap instanceof Map).toBe(true)
+    expect(vm.rankMap.size).toBe(0)
+    expect(vm.rankOf({ foo: 1 })).toBeUndefined()
+
+    // 覆盖 doDelete 失败分支 (line 159 false)
+    const resource2 = makeResource()
+    resource2.remove.mockRejectedValue(new Error('del boom'))
+    const w2 = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource: resource2 },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const vm2 = w2.vm as unknown as ResourcePageVm
+    vm2.askDelete({ name: 'a' })
+    await flushPromises()
+    await vm2.doDelete()
+    await flushPromises()
+    expect(notifyState.kind).toBe('error')
+  })
+
+  it('rankKey 为字符串列：按 localeCompare 排名，null/undefined 排末尾', async () => {
+    const resource = makeResource([
+      { name: 'b-row', grade: 'b' },
+      { name: 'a-row', grade: 'a' },
+      { name: 'null-row', grade: null },
+    ])
+    const w = mount(ResourcePage, {
+      props: {
+        title: 'T',
+        subtitle: 'S',
+        columns: [
+          { key: 'name', title: '名称' },
+          { key: 'grade', title: '等级' },
+        ],
+        fields,
+        resource,
+        rankKey: 'grade',
+      },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const vm = w.vm as unknown as ResourcePageVm & { rankMap: Map<unknown, number>; rankOf: (row: any) => unknown }
+    expect(vm.rankMap instanceof Map).toBe(true)
+    expect(vm.rankOf({ grade: 'a' })).toBe(1)
+    expect(vm.rankOf({ grade: 'b' })).toBe(2)
+    expect(vm.rankOf({ grade: null })).toBe(3)
+    const rows = w.findAll('tbody tr')
+    expect(rows.length).toBe(3)
+    expect(rows[1].text()).toContain('1')
+    expect(rows[0].text()).toContain('2')
+    expect(rows[2].text()).toContain('3')
+
+    // 覆盖相等值/重复值分支 (lines 62, 70) 与 null 比较分支 (line 64)
+    const resource3 = makeResource([
+      { name: 'x', grade: 'a' },
+      { name: 'y', grade: 'a' },
+      { name: 'z', grade: null },
+    ])
+    const w3 = mount(ResourcePage, {
+      props: {
+        title: 'T',
+        subtitle: 'S',
+        columns: [
+          { key: 'name', title: '名称' },
+          { key: 'grade', title: '等级' },
+        ],
+        fields,
+        resource: resource3,
+        rankKey: 'grade',
+      },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const vm3 = w3.vm as unknown as ResourcePageVm & { rankMap: Map<unknown, number>; rankOf: (row: any) => unknown }
+    expect(vm3.rankOf({ grade: 'a' })).toBe(1)
+    expect(vm3.rankMap.size).toBe(2)
+
+    // 覆盖 bv 为 null 的比较分支 (line 64)
+    const resource4 = makeResource([
+      { name: 'y', grade: null },
+      { name: 'x', grade: 'a' },
+    ])
+    const w4 = mount(ResourcePage, {
+      props: {
+        title: 'T',
+        subtitle: 'S',
+        columns: [
+          { key: 'name', title: '名称' },
+          { key: 'grade', title: '等级' },
+        ],
+        fields,
+        resource: resource4,
+        rankKey: 'grade',
+      },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const vm4 = w4.vm as unknown as ResourcePageVm & { rankMap: Map<unknown, number>; rankOf: (row: any) => unknown }
+    expect(vm4.rankOf({ grade: 'a' })).toBe(1)
+    expect(vm4.rankOf({ grade: null })).toBe(2)
+  })
 })

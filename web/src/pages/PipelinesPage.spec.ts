@@ -561,4 +561,172 @@ describe('PipelinesPage', () => {
     w.unmount()
   })
 
+  it('W7D：script 步骤的 ref 参数用下拉选择已有脚本并可手输', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+
+    // filter.script 的 ref 走 v-combobox（其余 src/timeout 仍是 step-arg 文本框）
+    ;(w.vm as any).formSteps[0].op = 'filter.script'
+    await flushPromises()
+    const refComp = (w as any).findComponent('[data-testid="step-arg-ref"]')
+    expect(refComp.exists()).toBe(true)
+
+    // 下拉数据源来自已加载脚本列表
+    const names = ((refComp.props('items') ?? []) as string[]).map((x) => String(x))
+    expect(names).toContain('hk-filter')
+    expect(names).toContain('disabled-script')
+
+    // 选中已有脚本写入 args.ref
+    if (refComp.exists()) { await refComp.setValue('hk-filter'); await flushPromises() }
+    expect((w.vm as any).formSteps[0].args.ref).toBe('hk-filter')
+
+    // :model-value 双向绑定：外部改 args.ref 也要回显到组件
+    ;(w.vm as any).formSteps[0].args.ref = 'hk-filter'
+    await flushPromises()
+    expect(String(refComp.props('modelValue'))).toBe('hk-filter')
+
+    // 手输一个还没建的脚本名同样写进 args.ref（保留自由输入能力）
+    if (refComp.exists()) { await refComp.setValue('my-script'); await flushPromises() }
+    if (refComp.exists()) { expect((w.vm as any).formSteps[0].args.ref).toBe('my-script') }
+
+    w.unmount()
+  })
+
+  it('W7D：脚本 kind 与步骤不匹配时给出提示，匹配或未找到时不提示', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+
+    // op.script（需要 operate）引用了 filter 脚本 hk-filter → 提示
+    ;(w.vm as any).formSteps[0].op = 'op.script'
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].args.ref = 'hk-filter'
+    await flushPromises()
+    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toContain('类型可能不匹配')
+    const hint = document.querySelector('[data-testid="script-ref-kind-mismatch"]')
+    expect(hint).not.toBeNull()
+    expect(hint?.textContent).toContain('脚本 kind=filter')
+    expect(hint?.textContent).toContain('该步骤需要 operate')
+
+    // 换成 kind 匹配的 operate 脚本 disabled-script → 不提示
+    ;(w.vm as any).formSteps[0].args.ref = 'disabled-script'
+    await flushPromises()
+    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toBe('')
+
+    // filter.script（需要 filter）引用 operate 脚本 → 提示
+    ;(w.vm as any).formSteps[0].op = 'filter.script'
+    await flushPromises()
+    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toContain('该步骤需要 filter')
+
+    // 引用不存在的脚本 → 交给 script-ref-missing，不做 kind 提示
+    ;(w.vm as any).formSteps[0].args.ref = 'nonexistent'
+    await flushPromises()
+    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toBe('')
+
+    w.unmount()
+  })
+
+
+  it('W7L：openEdit 归一化缺 args / on_error 的步骤（覆盖 :131-132）', async () => {
+    const w = mountPage()
+    await flushPromises()
+    const legacy: Pipeline = {
+      id: 9,
+      name: 'pipe-legacy',
+      description: '',
+      steps_json: '[{"op":"op.rename","on_error":"warn"},{"op":"op.sort"}]',
+      enabled: true,
+      sort_order: 2,
+      source: 'ui',
+      read_only: false,
+    }
+    ;(w.vm as any).openEdit(legacy)
+    // 同步断言归一化结果（渲染前，避免组件回写干扰）
+    const steps = (w.vm as any).formSteps
+    expect(steps.length).toBe(2)
+    // 缺 args → 归一化为 {}
+    expect(steps[0].args).toEqual({})
+    expect(steps[1].args).toEqual({})
+    // 有 on_error 保留，缺 on_error → 归一化为 ''
+    expect(steps[0].on_error).toBe('warn')
+    expect(steps[1].on_error).toBe('')
+    await flushPromises()
+    // 编辑对话框已打开，args 表单为空值
+    expect((w.vm as any).dialog).toBe(true)
+    expect(String((w.vm as any).formSteps[0].args.pattern ?? '')).toBe('')
+    w.unmount()
+  })
+
+  it('W7L：paramHint 未知 op 回落字段名；scriptRefKindMismatch 对非脚本 op 早退（覆盖 :69/:90）', async () => {
+    const w = mountPage()
+    await flushPromises()
+
+    // :69 未知 op 不在 PIPELINE_HELP.steps 中 → 回落到字段名
+    expect((w.vm as any).paramHint('op.unknown', 'myField')).toBe('myField')
+    // 已知 op → 返回 help 里的 hint
+    expect((w.vm as any).paramHint('op.rename', 'pattern')).toContain('pattern=')
+
+    // :90 非脚本 op 提前 return ''，不进入 kind 比对
+    expect((w.vm as any).scriptRefKindMismatch({ op: 'op.rename', args: { ref: 'hk-filter' } })).toBe('')
+
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).formSteps = [{ op: 'op.rename', args: { ref: 'hk-filter' }, on_error: '' }]
+    await flushPromises()
+    // 非脚本 op 不渲染 kind 不匹配探针
+    expect(document.querySelector('[data-testid="script-ref-kind-mismatch"]')).toBeNull()
+    // 文本框 hint 走 paramHint 的已知 op 分支
+    const tf = (w as any).findComponent('[data-testid="step-arg"]')
+    if (tf.exists()) expect(String(tf.props('hint'))).toContain('pattern=')
+    w.unmount()
+  })
+
+  it('W7L：列表非空时渲染表格（:219 三元 false 分支）', async () => {
+    pipelinesMock.mockResolvedValue([samplePipelines[0]])
+    const w = mountPage()
+    await flushPromises()
+    expect(w.findAll('[data-testid="pipeline-row"]').length).toBe(1)
+    expect(w.find('[data-testid="pipeline-table"]').exists()).toBe(true)
+    expect(w.find('[data-testid="empty-state"]').exists()).toBe(false)
+    expect(w.find('[data-testid="async-empty"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('W7L：ref 组合框 update:model-value 传对象时归一化为字符串（覆盖 :281）', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].op = 'filter.script'
+    await flushPromises()
+
+    const refComp = (w as any).findComponent('[data-testid="step-arg-ref"]')
+    expect(refComp.exists()).toBe(true)
+
+    // 对象带 value → 取 value
+    refComp.vm.$emit('update:modelValue', { value: '脚本A' })
+    await flushPromises()
+    expect((w.vm as any).formSteps[0].args.ref).toBe('脚本A')
+
+    // 对象无 value（{ text } 形态）→ 归一化为空串
+    refComp.vm.$emit('update:modelValue', { text: 'x' })
+    await flushPromises()
+    expect((w.vm as any).formSteps[0].args.ref).toBe('')
+
+    // 字符串仍原样写入
+    refComp.vm.$emit('update:modelValue', 'plain-script')
+    await flushPromises()
+    expect((w.vm as any).formSteps[0].args.ref).toBe('plain-script')
+    w.unmount()
+  })
+
 })

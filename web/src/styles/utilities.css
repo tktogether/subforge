@@ -10,3 +10,10 @@
 .sf-prose {
   max-width: 65ch;
 }
+
+/* 状态：8px 圆点 + 文字（D1 语言，替代 tonal chip——用户点名「启用配色完全不可见」） */
+.sf-status { display: inline-flex; align-items: center; gap: 8px; }
+.sf-status__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.sf-status__dot--ok { background: var(--sf-ok); }
+.sf-status__dot--muted { background: var(--sf-text-faint); }
+.sf-status__dot--danger { background: var(--sf-danger); }

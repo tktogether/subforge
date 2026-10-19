@@ -77,7 +77,7 @@ onMounted(() => {
   <PageHeader title="设置" :subtitle="help.oneLiner" help-key="settings" />
   <AsyncSection :loading="loading" :error="error" :empty="settings.length === 0" empty-text="" :empty-state="emptyState" @retry="load">
     <div v-for="item in settings" :key="item.key" data-testid="setting-row" class="mb-4">
-      <v-card variant="tonal" class="pa-4">
+      <v-card class="pa-4">
         <div data-testid="setting-label">{{ item.label }}</div>
         <code data-testid="setting-key">{{ item.key }}</code>
         <div data-testid="setting-desc">{{ item.description }}</div>
@@ -104,7 +104,7 @@ onMounted(() => {
     </div>
     <div class="text-caption text-medium-emphasis mt-2">清空 = 恢复默认</div>
   </AsyncSection>
-  <v-card variant="tonal" class="pa-4 mt-4">
+  <v-card class="pa-4 mt-4">
     <div class="mb-2">支持的目标格式：{{ targets.length === 0 ? '（无）' : targets.join(', ') }}</div>
     <div class="mb-2">历史条数：{{ statsHistory }}</div>
     <div class="d-flex ga-2">
