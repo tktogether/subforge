@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -257,7 +258,11 @@ func TestGobcoPackageDir(t *testing.T) {
 	if filepath.IsAbs(under) || strings.HasPrefix(under, "..") {
 		t.Fatalf("under cwd should be relative: %s", under)
 	}
-	outside := gobcoPackageDir("C:\\other\\pkg")
+	outside := "C:\\other\\pkg"
+	if runtime.GOOS != "windows" {
+		outside = "/other/pkg"
+	}
+	outside = gobcoPackageDir(outside)
 	if !filepath.IsAbs(outside) {
 		t.Fatalf("outside cwd should stay absolute: %s", outside)
 	}
