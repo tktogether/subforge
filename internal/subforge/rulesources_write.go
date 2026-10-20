@@ -108,5 +108,8 @@ func (m *Manager) UpdateRuleSourceOne(ctx context.Context, name string) ([]manif
 		return nil, fmt.Errorf("规则源 %q 不存在", name)
 	}
 	mf.Sources = target
-	return mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	results, uerr := mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	// 单源更新也要把该源的「当前版本」指向刚写出的新版本（与全量更新一致）。
+	m.recordCurrentVersions(ctx, results)
+	return results, uerr
 }

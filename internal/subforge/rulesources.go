@@ -2,12 +2,14 @@ package subforge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/tktogether/subforge/internal/manifest"
 )
@@ -164,7 +166,142 @@ func (m *Manager) LoadRuleManifest(ctx context.Context) (manifest.Manifest, erro
 	return mf, nil
 }
 
+// ErrRollbackInsufficient 表示没有更早的版本可回滚（只有 1 版，或指针已指向首个版本）。
+// 单独导出成哨兵错误，API 层可据此把它映射成 400 而不是 500。
+var ErrRollbackInsufficient = errors.New("可回滚版本不足")
+
+// CurrentVersionsFile 是「当前版本指针」状态文件名，落在规则输出目录下。
+//
+// 版本文件本身按时间升序排列（名字是 YYYYMMDD-HHMMSS），所以「最新」= 列表最后一个。
+// 但回滚需要把「当前生效版本」钉在更早的版本上，且不能删任何版本文件（审计要求），
+// 于是用这个状态文件记录 source → 版本文件名。指针缺失/损坏/指向已删除文件时
+// 一律回退到最新版本，绝不报错——状态文件是显示层优化，不是正确性前提。
+const CurrentVersionsFile = ".current-versions.json"
+
+// currentVersionsMu 保护状态文件的读-改-写。规则源更新是低频操作（分钟级），
+// 用一把包级互斥锁足够，且调用点串行更不容易出现半写状态。
+var currentVersionsMu sync.Mutex
+
+// currentVersionsPath 返回状态文件完整路径。
+func currentVersionsPath(dir string) string {
+	return filepath.Join(dir, CurrentVersionsFile)
+}
+
+// loadCurrentVersions 读取状态文件；不存在、内容损坏、结构不是 map 时返回空 map。
+func loadCurrentVersions(dir string) map[string]string {
+	out := map[string]string{}
+	if strings.TrimSpace(dir) == "" {
+		return out
+	}
+	b, err := os.ReadFile(currentVersionsPath(dir))
+	if err != nil {
+		return out
+	}
+	var raw map[string]string
+	if err := json.Unmarshal(b, &raw); err != nil || raw == nil {
+		return out
+	}
+	for k, v := range raw {
+		if strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// saveCurrentVersions 原子地写状态文件（先写临时文件再改名），避免读到半截 JSON。
+func saveCurrentVersions(dir string, versions map[string]string) error {
+	if strings.TrimSpace(dir) == "" {
+		return fmt.Errorf("规则输出目录为空，无法记录当前版本")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("创建规则输出目录 %s: %w", dir, err)
+	}
+	if versions == nil {
+		versions = map[string]string{}
+	}
+	b, err := json.MarshalIndent(versions, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化当前版本状态: %w", err)
+	}
+	b = append(b, '\n')
+	path := currentVersionsPath(dir)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return fmt.Errorf("写当前版本状态 %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		// Windows 上目标文件被占用时 Rename 会失败，退回直写（内容很短，撕裂窗口可忽略）。
+		if werr := os.WriteFile(path, b, 0o644); werr != nil {
+			return fmt.Errorf("写当前版本状态 %s: %w", path, werr)
+		}
+	}
+	return nil
+}
+
+// getCurrentVersion 返回某 source 记录的当前版本文件名；没有记录返回空串。
+func getCurrentVersion(dir, name string) string {
+	currentVersionsMu.Lock()
+	defer currentVersionsMu.Unlock()
+	return loadCurrentVersions(dir)[name]
+}
+
+// setCurrentVersion 把某 source 的当前版本设为 version（读-改-写，加锁）。
+func setCurrentVersion(dir, name, version string) error {
+	currentVersionsMu.Lock()
+	defer currentVersionsMu.Unlock()
+	versions := loadCurrentVersions(dir)
+	versions[name] = version
+	return saveCurrentVersions(dir, versions)
+}
+
+// pickCurrentVersion 计算「当前版本」：状态文件里的值（且必须真实存在于 versions 中）
+// 优先，否则回退到 versions 最后一个（时间升序的最末 = 最新）。
+func pickCurrentVersion(dir, name string, versions []string) string {
+	if len(versions) == 0 {
+		return ""
+	}
+	if cur := getCurrentVersion(dir, name); cur != "" {
+		for _, v := range versions {
+			if v == cur {
+				return cur
+			}
+		}
+	}
+	return versions[len(versions)-1]
+}
+
+// recordCurrentVersions 把一批更新结果里成功的源记为「当前版本」。
+//
+// 失败的源不动指针（它沿用上一版）；状态写失败也不让更新失败——版本文件已经落盘，
+// 指针只是显示/回滚时的锚点，下一次成功更新会再写一次。
+func (m *Manager) recordCurrentVersions(ctx context.Context, results []manifest.UpdateResult) {
+	if len(results) == 0 {
+		return
+	}
+	dir, err := m.ResolveRulesOutputDir(ctx)
+	if err != nil {
+		dir = ""
+	}
+	for _, res := range results {
+		if res.Err != nil || strings.TrimSpace(res.Path) == "" {
+			continue
+		}
+		target := dir
+		if strings.TrimSpace(target) == "" {
+			target = filepath.Dir(res.Path)
+		}
+		name := res.Source
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		_ = setCurrentVersion(target, name, filepath.Base(res.Path))
+	}
+}
+
 // ListRuleSources 列出每个源的版本状态。manifest 不存在时返回空切片 + nil error。
+// Latest 是「当前版本」：状态文件指针优先，否则最新版本。
 func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, error) {
 	mf, err := m.LoadRuleManifest(ctx)
 	if err != nil {
@@ -195,15 +332,14 @@ func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, erro
 			Dir:      dir,
 			Versions: versions,
 		}
-		if len(versions) > 0 {
-			status.Latest = versions[0]
-		}
+		status.Latest = pickCurrentVersion(dir, name, versions)
 		out = append(out, status)
 	}
 	return out, nil
 }
 
 // UpdateRuleSources 执行一次全量更新，返回每个源的结果。
+// 成功写出的源会把「当前版本」指针指向刚生成的新版本。
 func (m *Manager) UpdateRuleSources(ctx context.Context) ([]manifest.UpdateResult, error) {
 	mf, err := m.LoadRuleManifest(ctx)
 	if err != nil {
@@ -213,10 +349,13 @@ func (m *Manager) UpdateRuleSources(ctx context.Context) ([]manifest.UpdateResul
 	if err == nil && dir != "" {
 		mf.Output.Path = dir
 	}
-	return mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	results, uerr := mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	m.recordCurrentVersions(ctx, results)
+	return results, uerr
 }
 
-// RollbackRuleSource 把指定源回滚到上一个版本，返回回滚后的文件路径。
+// RollbackRuleSource 把指定源的「当前版本」切到升序列表里的前一个版本，返回该版本完整路径。
+// 不删除任何版本文件；只有 1 版（或已指向首个版本）时返回可回滚版本不足。
 // name 不存在时返回错误（错误消息里含该 name）。
 func (m *Manager) RollbackRuleSource(ctx context.Context, name string) (string, error) {
 	mf, err := m.LoadRuleManifest(ctx)
@@ -238,9 +377,24 @@ func (m *Manager) RollbackRuleSource(ctx context.Context, name string) (string, 
 	if !found {
 		return "", fmt.Errorf("规则源 %s 不存在", name)
 	}
-	path, err := manifest.Rollback(dir, name, ext)
-	if err != nil {
+	versions, verr := manifest.ListVersions(dir, name, ext)
+	if verr != nil {
+		versions = nil
+	}
+	cur := pickCurrentVersion(dir, name, versions)
+	idx := -1
+	for i, v := range versions {
+		if v == cur {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return "", fmt.Errorf("规则源 %s %w（当前版本 %q，共 %d 个版本）", name, ErrRollbackInsufficient, cur, len(versions))
+	}
+	prev := versions[idx-1]
+	if err := setCurrentVersion(dir, name, prev); err != nil {
 		return "", fmt.Errorf("回滚规则源 %s: %w", name, err)
 	}
-	return path, nil
+	return filepath.Join(dir, prev), nil
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -156,10 +157,46 @@ func (s *Server) handleAPIRuleSourcesRollback(w http.ResponseWriter, r *http.Req
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return
 		}
+		// 只有 1 版（或已指向首个版本）是可解释的用户错误，而不是服务端故障。
+		if errors.Is(err, subforge.ErrRollbackInsufficient) {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"path": path})
+}
+
+// ruleSourceMRSFormat 推导 mrs.GenerateFile 需要的「源数据格式」。
+//
+// mrs 的 format 语义是源文件本身的格式（yaml/text/mrs），不是输出格式：把
+// "mrs" 传给一个 .yaml 源，内核会按二进制去解析它，报 magic number mismatch。
+// 请求显式给了 format 就以请求为准，但同样按这张表校验，避免脏值进内核。
+func ruleSourceMRSFormat(ext, explicit string) (string, error) {
+	format := strings.ToLower(strings.TrimSpace(explicit))
+	if format == "" {
+		switch strings.ToLower(strings.TrimSpace(ext)) {
+		case ".yaml", ".yml":
+			format = "yaml"
+		case ".txt", ".text":
+			format = "text"
+		case ".mrs":
+			format = "mrs"
+		default:
+			return "", fmt.Errorf("无法从版本文件扩展名 %q 推导源格式，请显式指定 format（yaml/text/mrs）", ext)
+		}
+	}
+	switch format {
+	case "yaml", "yml":
+		return "yaml", nil
+	case "text", "txt":
+		return "text", nil
+	case "mrs":
+		return "mrs", nil
+	default:
+		return "", fmt.Errorf("不支持的 format %q（仅支持 yaml/text/mrs）", explicit)
+	}
 }
 
 // handleAPIRuleSourcesMRS 处理 POST /api/rule-sources/mrs。
@@ -209,9 +246,10 @@ func (s *Server) handleAPIRuleSourcesMRS(w http.ResponseWriter, r *http.Request)
 	if behavior == "" {
 		behavior = "domain"
 	}
-	format := strings.TrimSpace(req.Format)
-	if format == "" {
-		format = "mrs"
+	format, err := ruleSourceMRSFormat(filepath.Ext(src.Latest), req.Format)
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, err)
+		return
 	}
 	srcPath := filepath.Join(src.Dir, src.Latest)
 	ext := filepath.Ext(src.Latest)

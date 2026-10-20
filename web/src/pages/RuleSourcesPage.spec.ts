@@ -105,11 +105,14 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
-  it('空版本显示 no-version', async () => {
+  it('空版本显示 no-version，表头是「当前版本」', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect(w.find('[data-testid="no-version"]').exists()).toBe(true)
-    expect(w.find('[data-testid="no-version"]').text()).toContain('暂无版本')
+    expect(w.find('[data-testid="no-version"]').text()).toContain('暂无当前版本')
+    const headers = w.findAll('th').map((th) => th.text())
+    expect(headers).toContain('当前版本')
+    expect(headers).not.toContain('最新版本')
     w.unmount()
   })
 
@@ -209,6 +212,87 @@ describe('RuleSourcesPage', () => {
     await flushPromises()
     expect(w.find('[data-testid="update-results"]').exists()).toBe(true)
     expect(w.find('[data-testid="source-update-error"]').text()).toContain('展开失败')
+    w.unmount()
+  })
+
+  it('全部更新请求进行中：重复点击被吞掉，行内更新/回滚/MRS 按钮全 disabled', async () => {
+    // D-12：没有进行中状态时，双击「全部更新」会发两次请求、写两份版本文件。
+    let resolveUpdate: (v: unknown) => void = () => {}
+    updateMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve
+        }),
+    )
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const allBtn = w.find('[data-testid="update-all"]')
+    await allBtn.trigger('click')
+    await w.vm.$nextTick()
+    expect((w.vm as any).updating).toBe(true)
+    expect(allBtn.attributes('disabled')).toBeDefined()
+    expect(w.find('[data-testid="source-update"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-testid="source-rollback"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-testid="source-mrs"]').attributes('disabled')).toBeDefined()
+    // 请求还在飞时再次触发 handler，必须被 guard 挡掉。
+    await (w.vm as any).updateAll()
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    resolveUpdate({ results: [] })
+    await flushPromises()
+    expect((w.vm as any).updating).toBe(false)
+    expect((w.vm as any).updatingAll).toBe(false)
+    expect(w.find('[data-testid="source-update"]').attributes('disabled')).toBeUndefined()
+    w.unmount()
+  })
+
+  it('单源更新请求进行中：该行按钮 loading、行内更新/回滚/MRS 全 disabled', async () => {
+    let resolveOne: (v: unknown) => void = () => {}
+    updateOneMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOne = resolve
+        }),
+    )
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="source-update"]').trigger('click')
+    await w.vm.$nextTick()
+    const updateBtn = w.find('[data-testid="source-update"]')
+    expect((w.vm as any).updatingOne).toBe('src1')
+    expect(updateBtn.attributes('disabled')).toBeDefined()
+    expect(updateBtn.find('.v-progress-circular').exists()).toBe(true)
+    expect(w.find('[data-testid="source-rollback"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-testid="source-mrs"]').attributes('disabled')).toBeDefined()
+    // 同一行再点一次也不能重复发请求。
+    await (w.vm as any).updateOne('src1')
+    expect(updateOneMock).toHaveBeenCalledTimes(1)
+    resolveOne({ results: [] })
+    await flushPromises()
+    expect((w.vm as any).updating).toBe(false)
+    expect((w.vm as any).updatingOne).toBe('')
+    w.unmount()
+  })
+
+  it('回滚请求进行中：确认按钮 loading 且已 disabled', async () => {
+    let resolveRollback: (v: unknown) => void = () => {}
+    rollbackMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRollback = resolve
+        }),
+    )
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).openRollback('src1')
+    const p = (w.vm as any).doRollback()
+    await w.vm.$nextTick()
+    expect((w.vm as any).updating).toBe(true)
+    await (w.vm as any).doRollback()
+    expect(rollbackMock).toHaveBeenCalledTimes(1)
+    resolveRollback({ path: '/rb/v1' })
+    await p
+    await flushPromises()
+    expect((w.vm as any).updating).toBe(false)
     w.unmount()
   })
 

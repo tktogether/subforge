@@ -2,6 +2,7 @@ package subforge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -154,7 +155,8 @@ func TestListRuleSourcesEmpty(t *testing.T) {
 	}
 }
 
-// TestListRuleSourcesWithVersions 覆盖有版本时 Latest == Versions[0]。
+// TestListRuleSourcesWithVersions 覆盖有版本时 Latest == 最新版本（升序列表末尾）。
+// 版本名是 YYYYMMDD-HHMMSS，升序即从旧到新，所以「最新」必须是最后一个而不是第一个。
 func TestListRuleSourcesWithVersions(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
@@ -173,8 +175,8 @@ func TestListRuleSourcesWithVersions(t *testing.T) {
 	if len(statuses[0].Versions) != 2 {
 		t.Fatalf("Versions = %v, want 2 个", statuses[0].Versions)
 	}
-	if statuses[0].Latest != statuses[0].Versions[0] {
-		t.Fatalf("Latest = %q, want Versions[0] = %q", statuses[0].Latest, statuses[0].Versions[0])
+	if got, want := statuses[0].Latest, statuses[0].Versions[len(statuses[0].Versions)-1]; got != want {
+		t.Fatalf("Latest = %q, want 最新版本 %q", got, want)
 	}
 	for _, v := range statuses[0].Versions {
 		if !strings.HasSuffix(v, ".txt") {
@@ -208,8 +210,19 @@ func TestUpdateRuleSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("输出目录文件数 = %d, want 1", len(entries))
+	versionFiles := 0
+	for _, e := range entries {
+		// 输出目录里现在还有一个 .current-versions.json 状态文件，只数版本文件。
+		if e.Name() == CurrentVersionsFile {
+			continue
+		}
+		versionFiles++
+	}
+	if versionFiles != 1 {
+		t.Fatalf("输出目录版本文件数 = %d, want 1", versionFiles)
+	}
+	if got := latestOf(t, m, results[0].Source); got != filepath.Base(results[0].Path) {
+		t.Fatalf("更新后当前版本 = %q, want %q", got, filepath.Base(results[0].Path))
 	}
 }
 
@@ -680,3 +693,241 @@ func TestRollbackRuleSourceOK(t *testing.T) {
 		t.Errorf("回滚路径 %q 扩展名不在 .txt/.yaml/.mrs 中", path)
 	}
 }
+
+// writeCurrentVersions 在输出目录写「当前版本」状态文件。
+func writeCurrentVersions(t *testing.T, dir string, versions map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	b, err := json.Marshal(versions)
+	if err != nil {
+		t.Fatalf("Marshal 状态文件: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, CurrentVersionsFile), b, 0o644); err != nil {
+		t.Fatalf("写状态文件: %v", err)
+	}
+}
+
+// seedVersionFiles 按给定时间戳造版本文件，返回与时间戳同序（升序）的文件名。
+func seedVersionFiles(t *testing.T, dir, name, ext string, stamps ...string) []string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	names := make([]string, 0, len(stamps))
+	for _, v := range stamps {
+		n := name + "-" + v + "." + ext
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatalf("写版本文件: %v", err)
+		}
+		names = append(names, n)
+	}
+	return names
+}
+
+// latestOf 通过 ListRuleSources 读某源的「当前版本」，端到端断言 UI/API 看到的显示值。
+func latestOf(t *testing.T, m *Manager, name string) string {
+	t.Helper()
+	statuses, err := m.ListRuleSources(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuleSources: %v", err)
+	}
+	for _, s := range statuses {
+		if s.Name == name {
+			return s.Latest
+		}
+	}
+	t.Fatalf("规则源 %q 不在列表里", name)
+	return ""
+}
+
+// TestListRuleSourcesCurrentVersionFromStateFile 覆盖状态文件指针优先于「最新」。
+func TestListRuleSourcesCurrentVersionFromStateFile(t *testing.T) {
+	m := newTestManager(t)
+	srv := httptest.NewServer(ruleSourceHandler())
+	defer srv.Close()
+	outDir := filepath.Join(t.TempDir(), "out")
+	names := seedVersionFiles(t, outDir, "a", "txt", "20240101-000000", "20240102-000000", "20240103-000000")
+	writeRuleManifest(t, m, srv.URL, "text", outDir)
+	writeCurrentVersions(t, outDir, map[string]string{"a": names[0]})
+	if got := latestOf(t, m, "a"); got != names[0] {
+		t.Fatalf("Latest = %q, want 状态文件指针 %q", got, names[0])
+	}
+}
+
+// TestListRuleSourcesCurrentVersionFallback 覆盖状态文件损坏或指向已删文件时回退最新版本。
+func TestListRuleSourcesCurrentVersionFallback(t *testing.T) {
+	cases := []struct {
+		name  string
+		write func(t *testing.T, dir string)
+	}{
+		{
+			name: "内容损坏",
+			write: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, CurrentVersionsFile), []byte("{ 不是合法 json"), 0o644); err != nil {
+					t.Fatalf("写损坏状态文件: %v", err)
+				}
+			},
+		},
+		{
+			name: "指向已删除版本",
+			write: func(t *testing.T, dir string) {
+				writeCurrentVersions(t, dir, map[string]string{"a": "a-20990101-000000.txt"})
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestManager(t)
+			srv := httptest.NewServer(ruleSourceHandler())
+			defer srv.Close()
+			outDir := filepath.Join(t.TempDir(), "out")
+			names := seedVersionFiles(t, outDir, "a", "txt", "20240101-000000", "20240102-000000")
+			writeRuleManifest(t, m, srv.URL, "text", outDir)
+			tc.write(t, outDir)
+			if got := latestOf(t, m, "a"); got != names[len(names)-1] {
+				t.Fatalf("Latest = %q, want 回退到最新 %q", got, names[len(names)-1])
+			}
+		})
+	}
+}
+
+// TestRollbackRuleSourceMovesCurrentVersion 覆盖回滚真的改变当前版本、不删版本、用尽后报错。
+func TestRollbackRuleSourceMovesCurrentVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	srv := httptest.NewServer(ruleSourceHandler())
+	defer srv.Close()
+	outDir := filepath.Join(t.TempDir(), "out")
+	names := seedVersionFiles(t, outDir, "a", "txt", "20240101-000000", "20240102-000000", "20240103-000000")
+	writeRuleManifest(t, m, srv.URL, "text", outDir)
+
+	// 初始没有指针，当前版本应是最新（升序最后一个）。
+	if got := latestOf(t, m, "a"); got != names[2] {
+		t.Fatalf("初始 Latest = %q, want %q", got, names[2])
+	}
+	// 第一次回滚：指针前移一个版本，并返回它的完整路径。
+	path, err := m.RollbackRuleSource(ctx, "a")
+	if err != nil {
+		t.Fatalf("第一次回滚: %v", err)
+	}
+	if filepath.Base(path) != names[1] {
+		t.Fatalf("回滚路径 = %q, want %q", path, names[1])
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("回滚路径不存在: %v", err)
+	}
+	if got := latestOf(t, m, "a"); got != names[1] {
+		t.Fatalf("回滚后 Latest = %q, want %q（回滚必须真正改变当前版本）", got, names[1])
+	}
+	// 第二次回滚：再往前一个。
+	path2, err := m.RollbackRuleSource(ctx, "a")
+	if err != nil {
+		t.Fatalf("第二次回滚: %v", err)
+	}
+	if filepath.Base(path2) != names[0] {
+		t.Fatalf("第二次回滚路径 = %q, want %q", path2, names[0])
+	}
+	if got := latestOf(t, m, "a"); got != names[0] {
+		t.Fatalf("第二次回滚后 Latest = %q, want %q", got, names[0])
+	}
+	// 已到最早版本，再回滚必须报「可回滚版本不足」，且状态不变。
+	if _, err := m.RollbackRuleSource(ctx, "a"); err == nil {
+		t.Fatal("已到最早版本，回滚应报错")
+	} else if !errors.Is(err, ErrRollbackInsufficient) {
+		t.Fatalf("错误 = %v, want ErrRollbackInsufficient", err)
+	}
+	if got := latestOf(t, m, "a"); got != names[0] {
+		t.Fatalf("失败回滚后 Latest = %q, want 不变 %q", got, names[0])
+	}
+	// 回滚不得删除任何版本文件。
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	count := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".txt") {
+			count++
+		}
+	}
+	if count != 3 {
+		t.Fatalf("回滚后版本数 = %d, want 3（回滚不得删版本）", count)
+	}
+}
+
+// TestRollbackRuleSourceSingleVersion 覆盖只有 1 个版本时回滚报「可回滚版本不足」。
+func TestRollbackRuleSourceSingleVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	srv := httptest.NewServer(ruleSourceHandler())
+	defer srv.Close()
+	outDir := filepath.Join(t.TempDir(), "out")
+	names := seedVersionFiles(t, outDir, "a", "txt", "20240101-000000")
+	writeRuleManifest(t, m, srv.URL, "text", outDir)
+	_, err := m.RollbackRuleSource(ctx, "a")
+	if err == nil {
+		t.Fatal("只有 1 个版本，回滚应报错")
+	}
+	if !errors.Is(err, ErrRollbackInsufficient) {
+		t.Fatalf("错误 = %v, want ErrRollbackInsufficient", err)
+	}
+	if !strings.Contains(err.Error(), "可回滚版本不足") {
+		t.Fatalf("错误消息 %q 未包含「可回滚版本不足」", err.Error())
+	}
+	if got := latestOf(t, m, "a"); got != names[0] {
+		t.Fatalf("Latest = %q, want %q", got, names[0])
+	}
+	if _, err := os.Stat(filepath.Join(outDir, names[0])); err != nil {
+		t.Fatalf("版本文件被删: %v", err)
+	}
+}
+
+// TestUpdateRuleSourcesResetsCurrentVersion 覆盖成功更新会把当前版本重新指向新版本。
+func TestUpdateRuleSourcesResetsCurrentVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	srv := httptest.NewServer(ruleSourceHandler())
+	defer srv.Close()
+	outDir := filepath.Join(t.TempDir(), "out")
+	names := seedVersionFiles(t, outDir, "a", "txt", "20240101-000000", "20240102-000000")
+	writeRuleManifest(t, m, srv.URL, "text", outDir)
+	// 模拟上一次回滚：指针停在旧版本上。
+	writeCurrentVersions(t, outDir, map[string]string{"a": names[0]})
+	results, err := m.UpdateRuleSources(ctx)
+	if err != nil {
+		t.Fatalf("UpdateRuleSources: %v", err)
+	}
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("更新结果 = %+v", results)
+	}
+	want := filepath.Base(results[0].Path)
+	if got := latestOf(t, m, "a"); got != want {
+		t.Fatalf("更新后 Latest = %q, want 新版本 %q（成功更新必须把当前版本指向新版本）", got, want)
+	}
+}
+
+// TestUpdateRuleSourceOneResetsCurrentVersion 覆盖单源更新同样重设当前版本。
+func TestUpdateRuleSourceOneResetsCurrentVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	srv := httptest.NewServer(ruleSourceHandler())
+	defer srv.Close()
+	outDir := filepath.Join(t.TempDir(), "out")
+	names := seedVersionFiles(t, outDir, "a", "txt", "20240101-000000", "20240102-000000")
+	writeRuleManifest(t, m, srv.URL, "text", outDir)
+	writeCurrentVersions(t, outDir, map[string]string{"a": names[0]})
+	results, err := m.UpdateRuleSourceOne(ctx, "a")
+	if err != nil {
+		t.Fatalf("UpdateRuleSourceOne: %v", err)
+	}
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("更新结果 = %+v", results)
+	}
+	want := filepath.Base(results[0].Path)
+	if got := latestOf(t, m, "a"); got != want {
+		t.Fatalf("单源更新后 Latest = %q, want 新版本 %q", got, want)
+	}
+}
+

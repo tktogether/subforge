@@ -40,6 +40,12 @@ const removeDialog = ref(false)
 const removeName = ref('')
 const removeSaving = ref(false)
 const updatingOne = ref('')
+// updating 表示「有一条会改动版本状态的请求正在飞」：全部更新、单源更新、回滚、生成 MRS。
+// 请求期间把所有会再次发请求的按钮一起 disable —— 之前没有这个状态，双击「全部更新」
+// 会真的发两次请求、写两次版本文件（D-12）。
+const updating = ref(false)
+// updatingAll 单独标记「全部更新」这一路，用于 update-all 按钮自己的 loading。
+const updatingAll = ref(false)
 
 const updateResults = ref<RuleSourceUpdateResult[]>([])
 const showUpdateResults = ref(false)
@@ -97,6 +103,9 @@ function cancelInit(): void {
 }
 
 async function updateAll(): Promise<void> {
+  if (updating.value) return
+  updating.value = true
+  updatingAll.value = true
   try {
     const r = await endpoints.updateRuleSources()
     updateResults.value = r.results ?? []
@@ -105,6 +114,9 @@ async function updateAll(): Promise<void> {
     await load()
   } catch (err) {
     showUpdateFailure(err)
+  } finally {
+    updating.value = false
+    updatingAll.value = false
   }
 }
 
@@ -114,6 +126,8 @@ function openRollback(name: string): void {
 }
 
 async function doRollback(): Promise<void> {
+  if (updating.value) return
+  updating.value = true
   try {
     const r = await endpoints.rollbackRuleSource(rollbackName.value)
     notify('已回滚: ' + r.path, 'ok')
@@ -121,6 +135,8 @@ async function doRollback(): Promise<void> {
     await load()
   } catch (err) {
     notify(errorMessage(err), 'error')
+  } finally {
+    updating.value = false
   }
 }
 
@@ -136,6 +152,8 @@ function openMrs(name: string): void {
 }
 
 async function doMrs(): Promise<void> {
+  if (updating.value) return
+  updating.value = true
   try {
     const r = await endpoints.generateMRS(mrsName.value, mrsBehavior.value)
     notify('已生成: ' + r.path + ' (' + formatBytes(r.bytes) + ')', 'ok')
@@ -143,6 +161,8 @@ async function doMrs(): Promise<void> {
     await load()
   } catch (err) {
     notify(errorMessage(err), 'error')
+  } finally {
+    updating.value = false
   }
 }
 
@@ -221,7 +241,8 @@ function showUpdateFailure(err: unknown): void {
 }
 
 async function updateOne(name: string): Promise<void> {
-  if (updatingOne.value) return
+  if (updating.value || updatingOne.value) return
+  updating.value = true
   updatingOne.value = name
   try {
     const r = await endpoints.updateRuleSourceOne(name)
@@ -231,6 +252,7 @@ async function updateOne(name: string): Promise<void> {
   } catch (err) {
     showUpdateFailure(err)
   } finally {
+    updating.value = false
     updatingOne.value = ''
   }
 }
@@ -246,7 +268,7 @@ onMounted(() => {
       <v-btn data-testid="init-manifest" :color="exists ? undefined : 'primary'" variant="tonal" @click="openInit">
         生成默认清单
       </v-btn>
-      <v-btn data-testid="update-all" variant="tonal" @click="updateAll">全部更新</v-btn>
+      <v-btn data-testid="update-all" variant="tonal" :loading="updatingAll" :disabled="updating" @click="updateAll">全部更新</v-btn>
       <v-btn data-testid="source-add" variant="tonal" @click="openAdd">新增规则源</v-btn>
     </template>
   </PageHeader>
@@ -276,7 +298,7 @@ onMounted(() => {
           <th>格式</th>
           <th>输出目录</th>
           <th>版本数</th>
-          <th>最新版本</th>
+          <th>当前版本</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -288,13 +310,13 @@ onMounted(() => {
           <td>{{ s.dir }}</td>
           <td>{{ s.versions.length }}</td>
           <td>
-            <span v-if="s.latest === ''" data-testid="no-version">暂无版本</span>
+            <span v-if="s.latest === ''" data-testid="no-version">暂无当前版本</span>
             <span v-else>{{ s.latest }}</span>
           </td>
           <td>
-            <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" @click="updateOne(s.name)">更新</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
-            <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
+            <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" :disabled="updating" @click="updateOne(s.name)">更新</v-btn>
+            <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
+            <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="updating || s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
             <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1" @click="openRemove(s.name)">删除</v-btn>
           </td>
         </tr>
@@ -356,12 +378,12 @@ onMounted(() => {
     <v-card>
       <v-card-title>确认回滚 {{ rollbackName }}</v-card-title>
       <v-card-text>
-        回滚会把该规则源的最新版本换成上一个版本，订阅产物在下一次生成时才会变化。回滚只切换 latest 指针到指定版本文件，不改配置。
+        回滚会把该规则源的当前版本换成上一个版本，订阅产物在下一次生成时才会变化。回滚只切换当前版本，不删除任何版本文件，也不改配置。
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="cancelRollback">取消</v-btn>
-        <v-btn color="primary" @click="doRollback">确认回滚</v-btn>
+        <v-btn variant="text" :disabled="updating" @click="cancelRollback">取消</v-btn>
+        <v-btn color="primary" :loading="updating" :disabled="updating" @click="doRollback">确认回滚</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -371,12 +393,12 @@ onMounted(() => {
     <v-card>
       <v-card-title>生成 MRS - {{ mrsName }}</v-card-title>
       <v-card-text>
-        <v-select v-model="mrsBehavior" :items="['domain', 'ipcidr']" label="行为" />
+        <v-select v-model="mrsBehavior" :items="['domain', 'ipcidr']" label="行为" :disabled="updating" />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="cancelMrs">取消</v-btn>
-        <v-btn color="primary" @click="doMrs">生成</v-btn>
+        <v-btn variant="text" :disabled="updating" @click="cancelMrs">取消</v-btn>
+        <v-btn color="primary" :loading="updating" :disabled="updating" @click="doMrs">生成</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
