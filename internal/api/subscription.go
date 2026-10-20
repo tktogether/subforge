@@ -10,14 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/parse"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/store"
 	"github.com/tktogether/subforge/internal/subforge"
@@ -66,6 +69,96 @@ func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, dst any) boo
 	return true
 }
 
+// --- 输入校验（D-05 / D-07 / D-08 / D-10 / D-11）---
+//
+// 这些校验只负责"能不能入库"，不负责业务语义：名字/链接非空、URL 必须是 http(s)、
+// 分组类型与正则合法、自建节点链接能被解析引擎逐节点解析。校验失败一律 400 JSON，
+// 由 s.writeAPIError 统一出口，前端 api() 助手才能拿到错误原因。
+
+// validateAirport 校验机场输入：名称非空，订阅地址必须是 http(s) URL。
+func validateAirport(name, subscriptionURL string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("名称不能为空")
+	}
+	return validateSubscriptionURL(subscriptionURL)
+}
+
+// validateSubscriptionURL 校验订阅地址：非空且 scheme 必须是 http/https 且带 host。
+func validateSubscriptionURL(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return errors.New("订阅地址不能为空")
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return errors.New("订阅地址必须以 http:// 或 https:// 开头")
+	}
+	return nil
+}
+
+// validGroupTypes 是分组 type 的合法集合（入库统一存小写）。
+var validGroupTypes = map[string]bool{
+	"select":       true,
+	"url-test":     true,
+	"fallback":     true,
+	"load-balance": true,
+}
+
+// validateProxyGroup 校验分组输入，返回规范化后的 type（空 -> "select"，统一小写）。
+func validateProxyGroup(name, typ, regex string, interval int) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", errors.New("名称不能为空")
+	}
+	t := strings.ToLower(strings.TrimSpace(typ))
+	if t == "" {
+		t = "select"
+	}
+	if !validGroupTypes[t] {
+		return "", errors.New("分组类型必须是 select/url-test/fallback/load-balance 之一")
+	}
+	if r := strings.TrimSpace(regex); r != "" {
+		if _, err := regexp.Compile(r); err != nil {
+			return "", fmt.Errorf("匹配正则不合法: %v", err)
+		}
+	}
+	if interval < 0 {
+		return "", errors.New("测活间隔不能为负数")
+	}
+	return t, nil
+}
+
+// validateRule 校验规则输入：类型与参数都非空。
+func validateRule(ruleType, ruleParam string) error {
+	if strings.TrimSpace(ruleType) == "" {
+		return errors.New("类型不能为空")
+	}
+	if strings.TrimSpace(ruleParam) == "" {
+		return errors.New("参数不能为空")
+	}
+	return nil
+}
+
+// validateSelfNode 校验自建节点：名称/链接非空，且链接能被解析引擎逐节点解析。
+// 链接先经 parse.ConvertSubscription 转成节点列表，再逐个 parse.Validate——
+// 任一节点解析失败都拒绝入库，避免"填错链接但节点静默不出现"。
+func validateSelfNode(name, link string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("名称不能为空")
+	}
+	if strings.TrimSpace(link) == "" {
+		return errors.New("分享链接不能为空")
+	}
+	nodes, err := parse.ConvertSubscription([]byte(strings.TrimSpace(link)))
+	if err != nil {
+		return fmt.Errorf("分享链接格式不正确：%v", err)
+	}
+	for _, node := range nodes {
+		if err := parse.Validate(node); err != nil {
+			return fmt.Errorf("分享链接格式不正确：%v", err)
+		}
+	}
+	return nil
+}
+
 // --- /api/airports ---
 
 func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +185,10 @@ func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
 			Enabled         bool   `json:"enabled"`
 		}
 		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if err := validateAirport(req.Name, req.SubscriptionURL); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
 		a, err := m.AddAirport(r.Context(), req.Name, req.SubscriptionURL, req.Remarks, req.Enabled)
@@ -132,6 +229,10 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
+		if err := validateAirport(req.Name, req.SubscriptionURL); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
 		a, err := m.UpdateAirport(r.Context(), id, req.Name, req.SubscriptionURL, req.Remarks, req.Enabled)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -169,16 +270,22 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
 	case http.MethodPost:
 		var req struct {
-			Name     string `json:"name"`
-			Type     string `json:"type"`
-			Regex    string `json:"regex"`
-			URL      string `json:"url"`
-			Interval int    `json:"interval"`
+			Name      string `json:"name"`
+			Type      string `json:"type"`
+			Regex     string `json:"regex"`
+			URL       string `json:"url"`
+			Interval  int    `json:"interval"`
+			SortOrder int    `json:"sort_order"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
-		g, err := m.AddProxyGroup(r.Context(), req.Name, req.Type, req.Regex, req.URL, req.Interval)
+		gtype, err := validateProxyGroup(req.Name, req.Type, req.Regex, req.Interval)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		g, err := m.AddProxyGroup(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -208,16 +315,22 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"group": g})
 	case http.MethodPut:
 		var req struct {
-			Name     string `json:"name"`
-			Type     string `json:"type"`
-			Regex    string `json:"regex"`
-			URL      string `json:"url"`
-			Interval int    `json:"interval"`
+			Name      string `json:"name"`
+			Type      string `json:"type"`
+			Regex     string `json:"regex"`
+			URL       string `json:"url"`
+			Interval  int    `json:"interval"`
+			SortOrder int    `json:"sort_order"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
-		if err := m.UpdateProxyGroup(r.Context(), id, req.Name, req.Type, req.Regex, req.URL, req.Interval); err != nil {
+		gtype, err := validateProxyGroup(req.Name, req.Type, req.Regex, req.Interval)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		if err := m.UpdateProxyGroup(r.Context(), id, req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -282,6 +395,10 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
+		if err := validateRule(req.RuleType, req.RuleParam); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
 		rule, err := m.AddRule(r.Context(), req.RuleType, req.RuleParam, req.RuleConfig, req.ResolveDNS, req.Enabled)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -319,6 +436,10 @@ func (s *Server) handleAPIRule(w http.ResponseWriter, r *http.Request) {
 			Enabled    bool   `json:"enabled"`
 		}
 		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if err := validateRule(req.RuleType, req.RuleParam); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
 		if err := m.UpdateRule(r.Context(), id, req.RuleType, req.RuleParam, req.RuleConfig, req.ResolveDNS, req.Enabled); err != nil {
@@ -489,18 +610,19 @@ func (s *Server) handleAPISelfNodes(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"self_nodes": nodes})
 	case http.MethodPost:
 		var req struct {
-			Link    string `json:"link"`
-			Name    string `json:"name"`
-			Enabled bool   `json:"enabled"`
+			Link      string `json:"link"`
+			Name      string `json:"name"`
+			Enabled   bool   `json:"enabled"`
+			SortOrder int    `json:"sort_order"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
-		if strings.TrimSpace(req.Link) == "" {
-			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("链接不能为空"))
+		if err := validateSelfNode(req.Name, req.Link); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		n, err := m.AddSelfNode(r.Context(), req.Link, req.Name, req.Enabled)
+		n, err := m.AddSelfNode(r.Context(), req.Link, req.Name, req.Enabled, req.SortOrder)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -530,18 +652,19 @@ func (s *Server) handleAPISelfNode(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"self_node": n})
 	case http.MethodPut:
 		var req struct {
-			Link    string `json:"link"`
-			Name    string `json:"name"`
-			Enabled bool   `json:"enabled"`
+			Link      string `json:"link"`
+			Name      string `json:"name"`
+			Enabled   bool   `json:"enabled"`
+			SortOrder int    `json:"sort_order"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
-		if strings.TrimSpace(req.Link) == "" {
-			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("链接不能为空"))
+		if err := validateSelfNode(req.Name, req.Link); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		if err := m.UpdateSelfNode(r.Context(), id, req.Link, req.Name, req.Enabled); err != nil {
+		if err := m.UpdateSelfNode(r.Context(), id, req.Link, req.Name, req.Enabled, req.SortOrder); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}

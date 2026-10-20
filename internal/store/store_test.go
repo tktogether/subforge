@@ -112,14 +112,14 @@ func TestSelfNodeCRUD(t *testing.T) {
 	}
 
 	// Add 两个节点
-	n1, err := d.AddSelfNode(ctx, "vless://a", "n1", true)
+	n1, err := d.AddSelfNode(ctx, "vless://a", "n1", true, 0)
 	if err != nil {
 		t.Fatalf("AddSelfNode(n1) 失败: %v", err)
 	}
 	if n1.Link != "vless://a" || n1.Name != "n1" || !n1.Enabled || n1.ID <= 0 {
 		t.Fatalf("AddSelfNode(n1) 返回字段不符: %+v", n1)
 	}
-	if _, err := d.AddSelfNode(ctx, "trojan://b", "n2", false); err != nil {
+	if _, err := d.AddSelfNode(ctx, "trojan://b", "n2", false, 0); err != nil {
 		t.Fatalf("AddSelfNode(n2) 失败: %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestSelfNodeCRUD(t *testing.T) {
 	}
 
 	// UpdateSelfNode 成功
-	if err := d.UpdateSelfNode(ctx, n1.ID, "vmess://c", "n1b", false); err != nil {
+	if err := d.UpdateSelfNode(ctx, n1.ID, "vmess://c", "n1b", false, 0); err != nil {
 		t.Fatalf("UpdateSelfNode 失败: %v", err)
 	}
 	got1b, err := d.GetSelfNode(ctx, n1.ID)
@@ -168,7 +168,7 @@ func TestSelfNodeNotFound(t *testing.T) {
 	if _, err := d.GetSelfNode(ctx, 9999); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetSelfNode(9999) 错误=%v，期望 sql.ErrNoRows", err)
 	}
-	if err := d.UpdateSelfNode(ctx, 9999, "x", "y", true); !errors.Is(err, sql.ErrNoRows) {
+	if err := d.UpdateSelfNode(ctx, 9999, "x", "y", true, 0); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("UpdateSelfNode(9999) 错误=%v，期望 sql.ErrNoRows", err)
 	}
 }
@@ -260,7 +260,7 @@ func TestProxyGroupGetUpdate(t *testing.T) {
 		t.Fatalf("GetProxyGroup 字段不符: %+v", g)
 	}
 
-	if err := d.UpdateProxyGroup(ctx, id, "g1b", "url-test", "re:^JP", "http://y", 600); err != nil {
+	if err := d.UpdateProxyGroup(ctx, id, "g1b", "url-test", "re:^JP", "http://y", 600, 0); err != nil {
 		t.Fatalf("UpdateProxyGroup 失败: %v", err)
 	}
 	g2, err := d.GetProxyGroup(ctx, id)
@@ -274,7 +274,7 @@ func TestProxyGroupGetUpdate(t *testing.T) {
 	if _, err := d.GetProxyGroup(ctx, 9999); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetProxyGroup(9999) 错误=%v，期望 sql.ErrNoRows", err)
 	}
-	if err := d.UpdateProxyGroup(ctx, 9999, "x", "y", "z", "w", 1); !errors.Is(err, sql.ErrNoRows) {
+	if err := d.UpdateProxyGroup(ctx, 9999, "x", "y", "z", "w", 1, 0); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("UpdateProxyGroup(9999) 错误=%v，期望 sql.ErrNoRows", err)
 	}
 }
@@ -376,11 +376,11 @@ func TestClosedDBErrors(t *testing.T) {
 		t.Error("ListSelfNodes(closed) 期望失败")
 	}
 	// AddSelfNode ExecContext err 分支（L132）
-	if _, err := d.AddSelfNode(ctx, "a", "b", true); err == nil {
+	if _, err := d.AddSelfNode(ctx, "a", "b", true, 0); err == nil {
 		t.Error("AddSelfNode(closed) 期望失败")
 	}
 	// UpdateSelfNode ExecContext err 分支（L144）
-	if err := d.UpdateSelfNode(ctx, 1, "a", "b", true); err == nil {
+	if err := d.UpdateSelfNode(ctx, 1, "a", "b", true, 0); err == nil {
 		t.Error("UpdateSelfNode(closed) 期望失败")
 	}
 	// ListSubTokens QueryContext err 分支（L188）
@@ -388,7 +388,7 @@ func TestClosedDBErrors(t *testing.T) {
 		t.Error("ListSubTokens(closed) 期望失败")
 	}
 	// UpdateProxyGroup ExecContext err 分支（L220）
-	if err := d.UpdateProxyGroup(ctx, 1, "a", "b", "c", "d", 1); err == nil {
+	if err := d.UpdateProxyGroup(ctx, 1, "a", "b", "c", "d", 1, 0); err == nil {
 		t.Error("UpdateProxyGroup(closed) 期望失败")
 	}
 	// UpdateRule ExecContext err 分支（L250）
@@ -433,7 +433,7 @@ func TestScanBadSubToken(t *testing.T) {
 // 先插入一行，再用已取消的 ctx 调 Update，触发 ExecContext 的 err 分支。
 func TestUpdateCancelledCtx(t *testing.T) {
 	d, ctx := newTestDB(t)
-	sn, err := d.AddSelfNode(ctx, "x", "y", true)
+	sn, err := d.AddSelfNode(ctx, "x", "y", true, 0)
 	if err != nil {
 		t.Fatalf("AddSelfNode 失败: %v", err)
 	}
@@ -455,10 +455,10 @@ func TestUpdateCancelledCtx(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := d.UpdateSelfNode(cancelled, sn.ID, "a", "b", false); err == nil {
+	if err := d.UpdateSelfNode(cancelled, sn.ID, "a", "b", false, 0); err == nil {
 		t.Error("UpdateSelfNode(cancelled ctx) 期望失败")
 	}
-	if err := d.UpdateProxyGroup(cancelled, pgID, "a", "b", "c", "d", 1); err == nil {
+	if err := d.UpdateProxyGroup(cancelled, pgID, "a", "b", "c", "d", 1, 0); err == nil {
 		t.Error("UpdateProxyGroup(cancelled ctx) 期望失败")
 	}
 	if err := d.UpdateRule(cancelled, rlID, "a", "b", 1, true, true); err == nil {
@@ -755,7 +755,7 @@ func TestNewDBHasSchemaColumns(t *testing.T) {
 	d, ctx := newTestDB(t)
 
 	scriptCols := tableColumns(t, d, "scripts")
-	for _, want := range []string{"id", "name", "description", "code", "enabled", "created_at", "updated_at"} {
+	for _, want := range []string{"id", "name", "description", "kind", "code", "enabled", "created_at", "updated_at"} {
 		if !scriptCols[want] {
 			t.Errorf("scripts 缺少列 %q，实际：%v", want, scriptCols)
 		}
@@ -917,6 +917,138 @@ func TestScriptCreateExplicitTimestamps(t *testing.T) {
 	if !g.UpdatedAt.Equal(t1) {
 		t.Errorf("UpdateScript 未用显式 UpdatedAt：%v", g.UpdatedAt)
 	}
+}
+
+// TestScriptsKindRoundTrip 覆盖 script.kind 存取往返（D-01：kind 全链路丢失）。
+func TestScriptsKindRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	s, err := d.CreateScript(ctx, Script{Name: "oper", Kind: "operate", Code: "node.port = 443", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateScript: %v", err)
+	}
+	if s.Kind != "operate" {
+		t.Fatalf("CreateScript 返回 kind = %q，期望 operate", s.Kind)
+	}
+	g, err := d.GetScript(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetScript: %v", err)
+	}
+	if g.Kind != "operate" {
+		t.Errorf("GetScript kind = %q，期望 operate", g.Kind)
+	}
+	gb, err := d.GetScriptByName(ctx, "oper")
+	if err != nil {
+		t.Fatalf("GetScriptByName: %v", err)
+	}
+	if gb.Kind != "operate" {
+		t.Errorf("GetScriptByName kind = %q，期望 operate", gb.Kind)
+	}
+
+	// 未指定 kind：store 原样存空串，默认值属于 API 层（POST 默认 filter）。
+	plain, err := d.CreateScript(ctx, Script{Name: "plain", Code: "return node"})
+	if err != nil {
+		t.Fatalf("CreateScript(plain): %v", err)
+	}
+	if plain.Kind != "" {
+		t.Errorf("未指定 kind 时应为空串，实际 %q", plain.Kind)
+	}
+
+	// UpdateScript 改成 filter → 回来是 filter，列表同步。
+	g.Kind = "filter"
+	g.Code = "node.type === 'ss'"
+	if err := d.UpdateScript(ctx, g); err != nil {
+		t.Fatalf("UpdateScript: %v", err)
+	}
+	g2, err := d.GetScript(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("Update 后 GetScript: %v", err)
+	}
+	if g2.Kind != "filter" || g2.Code != "node.type === 'ss'" {
+		t.Errorf("UpdateScript 未生效: kind=%q code=%q", g2.Kind, g2.Code)
+	}
+	list, err := d.ListScripts(ctx)
+	if err != nil {
+		t.Fatalf("ListScripts: %v", err)
+	}
+	found := false
+	for _, it := range list {
+		if it.ID == s.ID {
+			found = true
+			if it.Kind != "filter" {
+				t.Errorf("ListScripts kind = %q，期望 filter", it.Kind)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("ListScripts 未包含 id=%d", s.ID)
+	}
+}
+
+// TestMigrateAddsScriptKindToLegacyDB 覆盖老库 scripts 表无 kind 列的迁移回归（D-01）。
+func TestMigrateAddsScriptKindToLegacyDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-scripts.db")
+
+	// 1) 造老库：旧版 scripts 表（无 kind 列）+ 一条老脚本
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE scripts (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		code        TEXT NOT NULL,
+		enabled     INTEGER NOT NULL DEFAULT 1,
+		created_at  INTEGER NOT NULL DEFAULT 0,
+		updated_at  INTEGER NOT NULL DEFAULT 0
+	);`); err != nil {
+		t.Fatalf("建老库: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO scripts (name, description, code, enabled) VALUES ('老脚本', '旧', 'return 1', 1)"); err != nil {
+		t.Fatalf("插老数据: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("关老库: %v", err)
+	}
+
+	// 2) store.Open 应自动补 kind 列；老记录 kind 为空串且原字段不被改写
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(老库): %v", err)
+	}
+	cols := tableColumns(t, d, "scripts")
+	if !cols["kind"] {
+		t.Errorf("老库迁移后缺少列 kind，实际：%v", cols)
+	}
+	ctx := context.Background()
+	old, err := d.GetScriptByName(ctx, "老脚本")
+	if err != nil {
+		t.Fatalf("GetScriptByName(老脚本): %v", err)
+	}
+	if old.Kind != "" {
+		t.Errorf("老记录 kind 应为空串，实际 %q", old.Kind)
+	}
+	if old.Code != "return 1" {
+		t.Errorf("老记录 code 被破坏：%q", old.Code)
+	}
+	created, err := d.CreateScript(ctx, Script{Name: "新脚本", Kind: "operate", Code: "node.port = 443", Enabled: true})
+	if err != nil {
+		t.Fatalf("迁移后 CreateScript: %v", err)
+	}
+	if created.Kind != "operate" {
+		t.Errorf("迁移后 CreateScript kind = %q，期望 operate", created.Kind)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// 3) 幂等：再 Open 一次不许报 duplicate column
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("二次 Open 应幂等，实际: %v", err)
+	}
+	defer d2.Close()
 }
 
 // TestPipelinesCRUD 覆盖 pipelines Create/Get/GetByName/Update/Delete 往返与排序。
@@ -1381,5 +1513,119 @@ func TestSetRuleProviderEnabled(t *testing.T) {
 	found, err = d.SetRuleProviderEnabled(ctx, 9999, true)
 	if err != nil || found {
 		t.Fatalf("SetRuleProviderEnabled(missing) = (%v, %v)，应为 (false, nil)", found, err)
+	}
+}
+
+// TestSortOrderPersisted 覆盖 sort_order 的落库语义：
+// Add 用用户值（>0），0 则回退时间戳；Update 用用户值覆盖，0 则保持原值。
+func TestSortOrderPersisted(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	// --- proxy_groups ---
+	g1, err := d.AddProxyGroup(ctx, "g1", "select", "", "", 0, 7)
+	if err != nil {
+		t.Fatalf("AddProxyGroup(g1): %v", err)
+	}
+	if g1.SortOrder != 7 {
+		t.Fatalf("AddProxyGroup(g1).SortOrder = %d，应为 7", g1.SortOrder)
+	}
+	g2, err := d.AddProxyGroup(ctx, "g2", "select", "", "", 0, 0)
+	if err != nil {
+		t.Fatalf("AddProxyGroup(g2): %v", err)
+	}
+	if g2.SortOrder <= 0 {
+		t.Fatalf("AddProxyGroup(g2) 未指定顺序时应回退为正时间戳，got %d", g2.SortOrder)
+	}
+
+	// Update 传 0：保持原值
+	if err := d.UpdateProxyGroup(ctx, g1.ID, "g1", "select", "", "", 0, 0); err != nil {
+		t.Fatalf("UpdateProxyGroup(g1, 0): %v", err)
+	}
+	got, err := d.GetProxyGroup(ctx, g1.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup(g1): %v", err)
+	}
+	if got.SortOrder != 7 {
+		t.Fatalf("UpdateProxyGroup(sortOrder=0) 后 SortOrder = %d，应保持 7", got.SortOrder)
+	}
+
+	// Update 传正数：覆盖
+	if err := d.UpdateProxyGroup(ctx, g1.ID, "g1", "select", "", "", 0, 3); err != nil {
+		t.Fatalf("UpdateProxyGroup(g1, 3): %v", err)
+	}
+	got, err = d.GetProxyGroup(ctx, g1.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup(g1): %v", err)
+	}
+	if got.SortOrder != 3 {
+		t.Fatalf("UpdateProxyGroup(sortOrder=3) 后 SortOrder = %d，应为 3", got.SortOrder)
+	}
+
+	// List 按 sort_order 升序（g1=3 在 g2 之前，因为 g2 是纳秒时间戳）
+	// store 层没有 ListProxyGroup（列表在 Manager 里用 raw SQL 查），这里直接查库验证排序。
+	rows, err := d.Raw().QueryContext(ctx, "SELECT id FROM proxy_groups ORDER BY sort_order, id")
+	if err != nil {
+		t.Fatalf("查询 proxy_groups 失败: %v", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("Scan 失败: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("遍历失败: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != g1.ID || ids[1] != g2.ID {
+		t.Fatalf("proxy_groups 排序不对: %+v", ids)
+	}
+
+	// --- self_nodes ---
+	n1, err := d.AddSelfNode(ctx, "ss://a", "n1", true, 9)
+	if err != nil {
+		t.Fatalf("AddSelfNode(n1): %v", err)
+	}
+	if n1.SortOrder != 9 {
+		t.Fatalf("AddSelfNode(n1).SortOrder = %d，应为 9", n1.SortOrder)
+	}
+	n2, err := d.AddSelfNode(ctx, "ss://b", "n2", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode(n2): %v", err)
+	}
+	if n2.SortOrder <= 0 {
+		t.Fatalf("AddSelfNode(n2) 未指定顺序时应回退为正时间戳，got %d", n2.SortOrder)
+	}
+	if err := d.UpdateSelfNode(ctx, n1.ID, "ss://a", "n1", true, 0); err != nil {
+		t.Fatalf("UpdateSelfNode(n1, 0): %v", err)
+	}
+	gotNode, err := d.GetSelfNode(ctx, n1.ID)
+	if err != nil {
+		t.Fatalf("GetSelfNode(n1): %v", err)
+	}
+	if gotNode.SortOrder != 9 {
+		t.Fatalf("UpdateSelfNode(sortOrder=0) 后 SortOrder = %d，应保持 9", gotNode.SortOrder)
+	}
+	if err := d.UpdateSelfNode(ctx, n1.ID, "ss://a", "n1", true, 4); err != nil {
+		t.Fatalf("UpdateSelfNode(n1, 4): %v", err)
+	}
+	gotNode, err = d.GetSelfNode(ctx, n1.ID)
+	if err != nil {
+		t.Fatalf("GetSelfNode(n1): %v", err)
+	}
+	if gotNode.SortOrder != 4 {
+		t.Fatalf("UpdateSelfNode(sortOrder=4) 后 SortOrder = %d，应为 4", gotNode.SortOrder)
+	}
+	nodes, err := d.ListSelfNodes(ctx)
+	if err != nil {
+		t.Fatalf("ListSelfNodes: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("ListSelfNodes 应有 2 条，got %d", len(nodes))
+	}
+	if nodes[0].ID != n1.ID || nodes[1].ID != n2.ID {
+		t.Fatalf("ListSelfNodes 顺序不对: %+v", nodes)
 	}
 }

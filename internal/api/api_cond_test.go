@@ -1102,7 +1102,7 @@ func TestCondSubscriptionSelfNodeDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if _, err := m.AddSelfNode(context.Background(), "", "disabled", false); err != nil {
+	if _, err := m.AddSelfNode(context.Background(), "", "disabled", false, 0); err != nil {
 		t.Fatal(err)
 	}
 	s := New(Config{Engine: &convert.Engine{}, Logger: quietLogger(), Timeout: 5 * time.Second})

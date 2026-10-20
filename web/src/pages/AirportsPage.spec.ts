@@ -5,6 +5,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import AirportsPage from './AirportsPage.vue'
 import { endpoints } from '../api/endpoints'
+import { notifyState } from '../composables/useNotify'
 
 vi.mock('../api/endpoints', () => ({
   endpoints: {
@@ -603,6 +604,22 @@ describe('AirportsPage', () => {
     await w.find('[data-testid="import-rules"]').trigger('click')
     await flushPromises()
     expect(importMock).toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('导入规则返回 warnings 时显示首条提示', async () => {
+    importMock.mockResolvedValueOnce({
+      rules_added: 3,
+      rules_skipped: 0,
+      providers_added: 0,
+      warnings: ['2 条规则的目标分组（如 📺 Netflix）还没在「分组」页里建'],
+    })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="import-rules"]').trigger('click')
+    await flushPromises()
+    expect(notifyState.text).toBe('2 条规则的目标分组（如 📺 Netflix）还没在「分组」页里建')
+    expect(notifyState.kind).toBe('info')
     w.unmount()
   })
 

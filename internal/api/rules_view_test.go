@@ -11,7 +11,7 @@ func TestRulesViewGroupNames(t *testing.T) {
 	ts, mgr := uiSubServer(t)
 	ctx := context.Background()
 
-	g, err := mgr.AddProxyGroup(ctx, "机场A", "select", "", "", 0)
+	g, err := mgr.AddProxyGroup(ctx, "机场A", "select", "", "", 0, 0)
 	if err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}

@@ -131,7 +131,7 @@ func TestSelfNodeDelegate(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
 
-	n, err := m.AddSelfNode(ctx, "vmess://x", "node1", true)
+	n, err := m.AddSelfNode(ctx, "vmess://x", "node1", true, 0)
 	if err != nil {
 		t.Fatalf("AddSelfNode: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSelfNodeDelegate(t *testing.T) {
 		t.Fatalf("应有 1 条, got %d", len(list))
 	}
 
-	if err := m.UpdateSelfNode(ctx, n.ID, "vmess://y", "node2", false); err != nil {
+	if err := m.UpdateSelfNode(ctx, n.ID, "vmess://y", "node2", false, 0); err != nil {
 		t.Fatalf("UpdateSelfNode: %v", err)
 	}
 	got, _ = m.GetSelfNode(ctx, n.ID)
@@ -172,7 +172,7 @@ func TestSelfNodeDelegate(t *testing.T) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetSelfNode 应 sql.ErrNoRows, got %v", err)
 	}
-	if err := m.UpdateSelfNode(ctx, 9999, "x", "y", true); !errors.Is(err, sql.ErrNoRows) {
+	if err := m.UpdateSelfNode(ctx, 9999, "x", "y", true, 0); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("UpdateSelfNode 应 sql.ErrNoRows, got %v", err)
 	}
 }
@@ -192,7 +192,7 @@ func TestProxyGroupCRUD(t *testing.T) {
 		t.Fatalf("空库应有 0 条, got %d", len(got))
 	}
 
-	g, err := m.AddProxyGroup(ctx, "g1", "select", "re:^HK", "http://x", 300)
+	g, err := m.AddProxyGroup(ctx, "g1", "select", "re:^HK", "http://x", 300, 0)
 	if err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestProxyGroupNotFound(t *testing.T) {
 	if err == nil || err.Error() != "代理分组 9999 不存在" {
 		t.Fatalf("GetProxyGroup 错误不符: %v", err)
 	}
-	if err := m.UpdateProxyGroup(ctx, 9999, "x", "y", "z", "w", 1); err == nil || err.Error() != "代理分组 9999 不存在" {
+	if err := m.UpdateProxyGroup(ctx, 9999, "x", "y", "z", "w", 1, 0); err == nil || err.Error() != "代理分组 9999 不存在" {
 		t.Fatalf("UpdateProxyGroup 错误不符: %v", err)
 	}
 }
@@ -231,7 +231,7 @@ func TestProxyGroupGetUpdateHappy(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
 
-	g, err := m.AddProxyGroup(ctx, "g1", "url-test", "re:^US", "http://a", 600)
+	g, err := m.AddProxyGroup(ctx, "g1", "url-test", "re:^US", "http://a", 600, 0)
 	if err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestProxyGroupGetUpdateHappy(t *testing.T) {
 		t.Fatalf("GetProxyGroup 不符: %+v", got)
 	}
 
-	if err := m.UpdateProxyGroup(ctx, g.ID, "g2", "select", "re:^JP", "http://b", 120); err != nil {
+	if err := m.UpdateProxyGroup(ctx, g.ID, "g2", "select", "re:^JP", "http://b", 120, 0); err != nil {
 		t.Fatalf("UpdateProxyGroup: %v", err)
 	}
 	got, _ = m.GetProxyGroup(ctx, g.ID)
@@ -391,7 +391,7 @@ func TestGenerateSubscription(t *testing.T) {
 	if _, err := m.AddAirport(ctx, "off", "https://off", "", false); err != nil {
 		t.Fatalf("AddAirport off: %v", err)
 	}
-	if _, err := m.AddProxyGroup(ctx, "g1", "select", "re:^HK", "http://x", 300); err != nil {
+	if _, err := m.AddProxyGroup(ctx, "g1", "select", "re:^HK", "http://x", 300, 0); err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}
 	if _, err := m.AddRule(ctx, "DOMAIN-SUFFIX", "a.com", 1, true, true); err != nil {
@@ -485,10 +485,10 @@ func TestManagerDBClosedErrors(t *testing.T) {
 	if _, err := m.GetSelfNode(ctx, 1); err == nil {
 		t.Fatal("GetSelfNode 应返回错误")
 	}
-	if _, err := m.AddSelfNode(ctx, "x", "y", true); err == nil {
+	if _, err := m.AddSelfNode(ctx, "x", "y", true, 0); err == nil {
 		t.Fatal("AddSelfNode 应返回错误")
 	}
-	if err := m.UpdateSelfNode(ctx, 1, "x", "y", true); err == nil {
+	if err := m.UpdateSelfNode(ctx, 1, "x", "y", true, 0); err == nil {
 		t.Fatal("UpdateSelfNode 应返回错误")
 	}
 	if err := m.DeleteSelfNode(ctx, 1); err == nil {
@@ -497,7 +497,7 @@ func TestManagerDBClosedErrors(t *testing.T) {
 	if _, err := m.ListProxyGroups(ctx); err == nil {
 		t.Fatal("ListProxyGroups 应返回错误")
 	}
-	if _, err := m.AddProxyGroup(ctx, "g", "t", "r", "u", 1); err == nil {
+	if _, err := m.AddProxyGroup(ctx, "g", "t", "r", "u", 1, 0); err == nil {
 		t.Fatal("AddProxyGroup 应返回错误")
 	}
 	if err := m.DeleteProxyGroup(ctx, 1); err == nil {
@@ -527,7 +527,7 @@ func TestManagerDBClosedErrors(t *testing.T) {
 	if _, err := m.GetProxyGroup(ctx, 1); err == nil {
 		t.Fatal("GetProxyGroup 应返回错误")
 	}
-	if err := m.UpdateProxyGroup(ctx, 1, "n", "t", "r", "u", 1); err == nil {
+	if err := m.UpdateProxyGroup(ctx, 1, "n", "t", "r", "u", 1, 0); err == nil {
 		t.Fatal("UpdateProxyGroup 应返回错误")
 	}
 	if _, err := m.GetRule(ctx, 1); err == nil {
@@ -636,5 +636,101 @@ func TestListRulesPreservesSourceRawOriginKey(t *testing.T) {
 	}
 	if got.OriginKey != origin {
 		t.Errorf("OriginKey = %q, want %q", got.OriginKey, origin)
+	}
+}
+
+// TestSortOrderPassthrough 覆盖 Manager 层 sort_order 的透传与排序：
+// Add 用用户值（>0），0 回退时间戳；Update 用用户值覆盖，0 保持原值。
+func TestSortOrderPassthrough(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+
+	g1, err := m.AddProxyGroup(ctx, "g1", "select", "", "", 0, 5)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+	if g1.SortOrder != 5 {
+		t.Fatalf("AddProxyGroup.SortOrder = %d，应为 5", g1.SortOrder)
+	}
+	g2, err := m.AddProxyGroup(ctx, "g2", "select", "", "", 0, 1)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+	if g2.SortOrder != 1 {
+		t.Fatalf("AddProxyGroup.SortOrder = %d，应为 1", g2.SortOrder)
+	}
+
+	// Update 传 0 保持原值
+	if err := m.UpdateProxyGroup(ctx, g1.ID, "g1", "select", "", "", 0, 0); err != nil {
+		t.Fatalf("UpdateProxyGroup(0): %v", err)
+	}
+	got, err := m.GetProxyGroup(ctx, g1.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if got.SortOrder != 5 {
+		t.Fatalf("UpdateProxyGroup(0) 后 SortOrder = %d，应保持 5", got.SortOrder)
+	}
+	// Update 传正数覆盖
+	if err := m.UpdateProxyGroup(ctx, g1.ID, "g1", "select", "", "", 0, 2); err != nil {
+		t.Fatalf("UpdateProxyGroup(2): %v", err)
+	}
+	got, err = m.GetProxyGroup(ctx, g1.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if got.SortOrder != 2 {
+		t.Fatalf("UpdateProxyGroup(2) 后 SortOrder = %d，应为 2", got.SortOrder)
+	}
+
+	groups, err := m.ListProxyGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListProxyGroups: %v", err)
+	}
+	if len(groups) != 2 || groups[0].ID != g2.ID || groups[1].ID != g1.ID {
+		t.Fatalf("ListProxyGroups 顺序不对: %+v", groups)
+	}
+
+	// self nodes
+	n1, err := m.AddSelfNode(ctx, "ss://a", "n1", true, 9)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+	if n1.SortOrder != 9 {
+		t.Fatalf("AddSelfNode.SortOrder = %d，应为 9", n1.SortOrder)
+	}
+	n2, err := m.AddSelfNode(ctx, "ss://b", "n2", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+	if n2.SortOrder <= 0 {
+		t.Fatalf("AddSelfNode 未指定顺序时应回退为正时间戳，got %d", n2.SortOrder)
+	}
+	if err := m.UpdateSelfNode(ctx, n1.ID, "ss://a", "n1", true, 0); err != nil {
+		t.Fatalf("UpdateSelfNode(0): %v", err)
+	}
+	gotNode, err := m.GetSelfNode(ctx, n1.ID)
+	if err != nil {
+		t.Fatalf("GetSelfNode: %v", err)
+	}
+	if gotNode.SortOrder != 9 {
+		t.Fatalf("UpdateSelfNode(0) 后 SortOrder = %d，应保持 9", gotNode.SortOrder)
+	}
+	if err := m.UpdateSelfNode(ctx, n1.ID, "ss://a", "n1", true, 6); err != nil {
+		t.Fatalf("UpdateSelfNode(6): %v", err)
+	}
+	gotNode, err = m.GetSelfNode(ctx, n1.ID)
+	if err != nil {
+		t.Fatalf("GetSelfNode: %v", err)
+	}
+	if gotNode.SortOrder != 6 {
+		t.Fatalf("UpdateSelfNode(6) 后 SortOrder = %d，应为 6", gotNode.SortOrder)
+	}
+	nodes, err := m.ListSelfNodes(ctx)
+	if err != nil {
+		t.Fatalf("ListSelfNodes: %v", err)
+	}
+	if len(nodes) != 2 || nodes[0].ID != n1.ID || nodes[1].ID != n2.ID {
+		t.Fatalf("ListSelfNodes 顺序不对: %+v", nodes)
 	}
 }

@@ -190,14 +190,14 @@ func (m *Manager) GetSelfNode(ctx context.Context, id int64) (*SelfNode, error) 
 	return m.db.GetSelfNode(ctx, id)
 }
 
-// AddSelfNode 新增自建节点。
-func (m *Manager) AddSelfNode(ctx context.Context, link, name string, enabled bool) (*SelfNode, error) {
-	return m.db.AddSelfNode(ctx, link, name, enabled)
+// AddSelfNode 新增自建节点。sortOrder>0 用用户值，<=0 表示"未指定"（由 store 回退时间戳）。
+func (m *Manager) AddSelfNode(ctx context.Context, link, name string, enabled bool, sortOrder int) (*SelfNode, error) {
+	return m.db.AddSelfNode(ctx, link, name, enabled, sortOrder)
 }
 
-// UpdateSelfNode 更新自建节点。
-func (m *Manager) UpdateSelfNode(ctx context.Context, id int64, link, name string, enabled bool) error {
-	return m.db.UpdateSelfNode(ctx, id, link, name, enabled)
+// UpdateSelfNode 更新自建节点。sortOrder>0 覆盖，<=0 保持原值。
+func (m *Manager) UpdateSelfNode(ctx context.Context, id int64, link, name string, enabled bool, sortOrder int) error {
+	return m.db.UpdateSelfNode(ctx, id, link, name, enabled, sortOrder)
 }
 
 // DeleteSelfNode 删除自建节点。
@@ -230,23 +230,9 @@ func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
 	return out, rows.Err()
 }
 
-// AddProxyGroup 新增代理分组。
-func (m *Manager) AddProxyGroup(ctx context.Context, name, typ, regex, url string, interval int) (*ProxyGroup, error) {
-	res, err := m.db.Raw().ExecContext(ctx,
-		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-		name, typ, regex, url, interval, time.Now().UnixNano())
-	if err != nil {
-		return nil, err
-	}
-	id, _ := res.LastInsertId()
-	var g ProxyGroup
-	err = m.db.Raw().QueryRowContext(ctx,
-		"SELECT id, name, type, regex, url, interval, sort_order, created_at, updated_at FROM proxy_groups WHERE id = ?", id).
-		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.CreatedAt, &g.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &g, nil
+// AddProxyGroup 新增代理分组。sortOrder>0 用用户值，<=0 表示"未指定"（由 store 回退时间戳）。
+func (m *Manager) AddProxyGroup(ctx context.Context, name, typ, regex, url string, interval, sortOrder int) (*ProxyGroup, error) {
+	return m.db.AddProxyGroup(ctx, name, typ, regex, url, interval, sortOrder)
 }
 
 // DeleteProxyGroup 删除代理分组。
@@ -369,9 +355,9 @@ func (m *Manager) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, err
 	return g, nil
 }
 
-// UpdateProxyGroup 更新代理分组。
-func (m *Manager) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex, url string, interval int) error {
-	if err := m.db.UpdateProxyGroup(ctx, id, name, gtype, regex, url, interval); err != nil {
+// UpdateProxyGroup 更新代理分组。sortOrder>0 覆盖，<=0 保持原值。
+func (m *Manager) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex, url string, interval, sortOrder int) error {
+	if err := m.db.UpdateProxyGroup(ctx, id, name, gtype, regex, url, interval, sortOrder); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("代理分组 %d 不存在", id)
 		}

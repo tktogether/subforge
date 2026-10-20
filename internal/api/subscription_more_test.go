@@ -85,7 +85,7 @@ func TestSelfNodesListEmpty(t *testing.T) {
 
 func TestSelfNodesPostValid(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	status, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"vmess://x","name":"n1","enabled":true}`)
+	status, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe","name":"n1","enabled":true}`)
 	if status != http.StatusCreated {
 		t.Fatalf("POST 合法状态码 = %d，应为 201；body=%s", status, body)
 	}
@@ -99,8 +99,8 @@ func TestSelfNodesPostValid(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		t.Fatalf("解析 JSON 失败: %v; body=%s", err, body)
 	}
-	if resp.SelfNode.Link != "vmess://x" {
-		t.Fatalf("self_node.link = %q，应为 vmess://x", resp.SelfNode.Link)
+	if resp.SelfNode.Link != "ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe" {
+		t.Fatalf("self_node.link = %q，应为 ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe", resp.SelfNode.Link)
 	}
 	if resp.SelfNode.Name != "n1" {
 		t.Fatalf("self_node.name = %q，应为 n1", resp.SelfNode.Name)
@@ -122,8 +122,8 @@ func TestSelfNodesPostBlankLink(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		t.Fatalf("解析 JSON 失败: %v; body=%s", err, body)
 	}
-	if resp.Error != "链接不能为空" {
-		t.Fatalf("error = %q，应为 链接不能为空", resp.Error)
+	if resp.Error != "分享链接不能为空" {
+		t.Fatalf("error = %q，应为 分享链接不能为空", resp.Error)
 	}
 }
 
@@ -138,7 +138,7 @@ func TestSelfNodesPostInvalidJSON(t *testing.T) {
 
 func TestSelfNodesListNonEmpty(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	status, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"vmess://x","name":"n1","enabled":true}`)
+	status, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe","name":"n1","enabled":true}`)
 	if status != http.StatusCreated {
 		t.Fatalf("前置 POST 失败: %d; %s", status, body)
 	}
@@ -181,7 +181,7 @@ func TestSelfNodesDefault405(t *testing.T) {
 
 func TestSelfNodeGetDetail(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"vmess://x","name":"n1","enabled":true}`)
+	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe","name":"n1","enabled":true}`)
 	var created struct {
 		SelfNode struct {
 			ID int64 `json:"id"`
@@ -209,8 +209,8 @@ func TestSelfNodeGetDetail(t *testing.T) {
 	if resp.SelfNode.ID != id {
 		t.Fatalf("self_node.id = %d，应为 %d", resp.SelfNode.ID, id)
 	}
-	if resp.SelfNode.Link != "vmess://x" {
-		t.Fatalf("self_node.link = %q，应为 vmess://x", resp.SelfNode.Link)
+	if resp.SelfNode.Link != "ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe" {
+		t.Fatalf("self_node.link = %q，应为 ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe", resp.SelfNode.Link)
 	}
 }
 
@@ -234,7 +234,7 @@ func TestSelfNodeGetInvalidID(t *testing.T) {
 
 func TestSelfNodePutValid(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"vmess://x","name":"n1","enabled":true}`)
+	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe","name":"n1","enabled":true}`)
 	var created struct {
 		SelfNode struct {
 			ID int64 `json:"id"`
@@ -245,7 +245,7 @@ func TestSelfNodePutValid(t *testing.T) {
 	}
 	idStr := fmt.Sprintf("%d", created.SelfNode.ID)
 
-	status, _, body := uiDoJSON(t, ts, "PUT", "/api/self-nodes/"+idStr, `{"link":"trojan://y","name":"n2","enabled":false}`)
+	status, _, body := uiDoJSON(t, ts, "PUT", "/api/self-nodes/"+idStr, `{"link":"trojan://pass@198.51.100.10:443?sni=example.com#probe","name":"n2","enabled":false}`)
 	if status != http.StatusOK {
 		t.Fatalf("PUT 合法状态码 = %d，应为 200；body=%s", status, body)
 	}
@@ -268,8 +268,8 @@ func TestSelfNodePutValid(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &detail); err != nil {
 		t.Fatalf("解析详情失败: %v; body=%s", err, body)
 	}
-	if detail.SelfNode.Link != "trojan://y" {
-		t.Fatalf("PUT 后 link = %q，应为 trojan://y", detail.SelfNode.Link)
+	if detail.SelfNode.Link != "trojan://pass@198.51.100.10:443?sni=example.com#probe" {
+		t.Fatalf("PUT 后 link = %q，应为 trojan://pass@198.51.100.10:443?sni=example.com#probe", detail.SelfNode.Link)
 	}
 	if detail.SelfNode.Enabled {
 		t.Fatalf("PUT 后 enabled 应为 false")
@@ -278,7 +278,7 @@ func TestSelfNodePutValid(t *testing.T) {
 
 func TestSelfNodePutBlankLink(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"vmess://x","name":"n1","enabled":true}`)
+	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe","name":"n1","enabled":true}`)
 	var created struct {
 		SelfNode struct {
 			ID int64 `json:"id"`
@@ -296,14 +296,14 @@ func TestSelfNodePutBlankLink(t *testing.T) {
 	var resp struct {
 		Error string `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Error != "链接不能为空" {
-		t.Fatalf("PUT 空白 link error = %q，应为 链接不能为空；body=%s", resp.Error, body)
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Error != "分享链接不能为空" {
+		t.Fatalf("PUT 空白 link error = %q，应为 分享链接不能为空；body=%s", resp.Error, body)
 	}
 }
 
 func TestSelfNodeDelete(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"vmess://x","name":"n1","enabled":true}`)
+	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe","name":"n1","enabled":true}`)
 	var created struct {
 		SelfNode struct {
 			ID int64 `json:"id"`
@@ -332,7 +332,7 @@ func TestSelfNodeDelete(t *testing.T) {
 
 func TestSelfNodeDefault405(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"vmess://x","name":"n1","enabled":true}`)
+	_, _, body := uiPostJSON(t, ts, "/api/self-nodes", `{"link":"ss://YWVzLTI1Ni1nY206cGFzcw==@198.51.100.10:8388#probe","name":"n1","enabled":true}`)
 	var created struct {
 		SelfNode struct {
 			ID int64 `json:"id"`

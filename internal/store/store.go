@@ -146,11 +146,20 @@ func (d *DB) GetSelfNode(ctx context.Context, id int64) (*SelfNode, error) {
 	return &n, nil
 }
 
-// AddSelfNode 新增自建节点。
-func (d *DB) AddSelfNode(ctx context.Context, link, name string, enabled bool) (*SelfNode, error) {
+// resolveSortOrder 把"用户显式指定的顺序"转成最终落库值：
+// >0 用用户值；<=0 表示"没指定"，回退到纳秒时间戳（按创建时间自然排序）。
+func resolveSortOrder(sortOrder int) int {
+	if sortOrder > 0 {
+		return sortOrder
+	}
+	return int(time.Now().UnixNano())
+}
+
+// AddSelfNode 新增自建节点；sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
+func (d *DB) AddSelfNode(ctx context.Context, link, name string, enabled bool, sortOrder int) (*SelfNode, error) {
 	res, err := d.db.ExecContext(ctx,
 		"INSERT INTO self_nodes (link, name, enabled, sort_order) VALUES (?, ?, ?, ?)",
-		link, name, enabled, time.Now().UnixNano())
+		link, name, enabled, resolveSortOrder(sortOrder))
 	if err != nil {
 		return nil, err
 	}
@@ -158,11 +167,12 @@ func (d *DB) AddSelfNode(ctx context.Context, link, name string, enabled bool) (
 	return d.GetSelfNode(ctx, id)
 }
 
-// UpdateSelfNode 按 id 更新自建节点。
-func (d *DB) UpdateSelfNode(ctx context.Context, id int64, link, name string, enabled bool) error {
+// UpdateSelfNode 按 id 更新自建节点；sortOrder>0 覆盖，<=0 保持原值。
+func (d *DB) UpdateSelfNode(ctx context.Context, id int64, link, name string, enabled bool, sortOrder int) error {
 	res, err := d.db.ExecContext(ctx,
-		"UPDATE self_nodes SET link = ?, name = ?, enabled = ?, updated_at = ? WHERE id = ?",
-		link, name, enabled, time.Now(), id)
+		"UPDATE self_nodes SET link = ?, name = ?, enabled = ?, "+
+			"sort_order = CASE WHEN ? > 0 THEN ? ELSE sort_order END, updated_at = ? WHERE id = ?",
+		link, name, enabled, sortOrder, sortOrder, time.Now(), id)
 	if err != nil {
 		return err
 	}
@@ -202,13 +212,16 @@ type Rule struct {
 // Script 是 scripts 表的一行：goja 脚本库。
 // 时间列用 INTEGER unix 秒（与 fetch_audit 一致），由 Create/Update 写入。
 type Script struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Code        string    `json:"code"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Kind 是脚本类型：filter（过滤节点）/ operate（加工节点）。
+	// 老库/老脚本为空串，由 API 层给默认值（POST 默认 filter），store 原样存储。
+	Kind      string    `json:"kind"`
+	Code      string    `json:"code"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Pipeline 是 pipelines 表的一行：有序步骤管线。
@@ -345,6 +358,18 @@ func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate)
 	return nil
 }
 
+// AddProxyGroup 新增代理分组；sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
+func (d *DB) AddProxyGroup(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int) (*ProxyGroup, error) {
+	res, err := d.db.ExecContext(ctx,
+		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+		name, gtype, regex, url, interval, resolveSortOrder(sortOrder))
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return d.GetProxyGroup(ctx, id)
+}
+
 // GetProxyGroup 按 id 返回代理分组；不存在时返回 sql.ErrNoRows。
 func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 	var g ProxyGroup
@@ -358,10 +383,12 @@ func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 }
 
 // UpdateProxyGroup 按 id 更新代理分组（SQL 参数化）；目标不存在时返回 sql.ErrNoRows。
-func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex, url string, interval int) error {
+// sortOrder>0 覆盖，<=0 保持原值。
+func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex, url string, interval, sortOrder int) error {
 	res, err := d.db.ExecContext(ctx,
-		"UPDATE proxy_groups SET name = ?, type = ?, regex = ?, url = ?, interval = ?, updated_at = ? WHERE id = ?",
-		name, gtype, regex, url, interval, time.Now(), id)
+		"UPDATE proxy_groups SET name = ?, type = ?, regex = ?, url = ?, interval = ?, "+
+			"sort_order = CASE WHEN ? > 0 THEN ? ELSE sort_order END, updated_at = ? WHERE id = ?",
+		name, gtype, regex, url, interval, sortOrder, sortOrder, time.Now(), id)
 	if err != nil {
 		return err
 	}
@@ -562,6 +589,7 @@ func migrate(db *sql.DB) error {
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			name        TEXT NOT NULL UNIQUE,
 			description TEXT NOT NULL DEFAULT '',
+			kind        TEXT NOT NULL DEFAULT '',
 			code        TEXT NOT NULL,
 			enabled     INTEGER NOT NULL DEFAULT 1,
 			created_at  INTEGER NOT NULL DEFAULT 0,
@@ -582,6 +610,11 @@ func migrate(db *sql.DB) error {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("执行建表: %w", err)
 		}
+	}
+	// scripts.kind：老库用 ALTER 幂等补齐（与上面 CREATE TABLE 同一定义，
+	// 老脚本迁移后 kind 为空串，不改变历史数据语义）。
+	if err := addColumnIfMissing(db, "scripts", "kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("迁移 scripts.kind: %w", err)
 	}
 	// rules 溯源列：老库用 ALTER 幂等补齐。
 	for _, c := range []struct{ col, decl string }{
@@ -668,7 +701,7 @@ func (d *DB) PruneFetchAudit(ctx context.Context, keep int) (int64, error) {
 // ListScripts 返回所有脚本，按 name 排序。
 func (d *DB) ListScripts(ctx context.Context) ([]Script, error) {
 	rows, err := d.db.QueryContext(ctx,
-		"SELECT id, name, COALESCE(description, ''), code, enabled, created_at, updated_at FROM scripts ORDER BY name")
+		"SELECT id, name, COALESCE(description, ''), kind, code, enabled, created_at, updated_at FROM scripts ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -680,7 +713,7 @@ func (d *DB) ListScripts(ctx context.Context) ([]Script, error) {
 			createdSec int64
 			updatedSec int64
 		)
-		if err := rows.Scan(&s.ID, &s.Name, &s.Description, &s.Code, &s.Enabled, &createdSec, &updatedSec); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Description, &s.Kind, &s.Code, &s.Enabled, &createdSec, &updatedSec); err != nil {
 			return nil, err
 		}
 		s.CreatedAt = time.Unix(createdSec, 0).UTC()
@@ -698,8 +731,8 @@ func (d *DB) GetScript(ctx context.Context, id int64) (Script, error) {
 		updatedSec int64
 	)
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, COALESCE(description, ''), code, enabled, created_at, updated_at FROM scripts WHERE id = ?", id).
-		Scan(&s.ID, &s.Name, &s.Description, &s.Code, &s.Enabled, &createdSec, &updatedSec)
+		"SELECT id, name, COALESCE(description, ''), kind, code, enabled, created_at, updated_at FROM scripts WHERE id = ?", id).
+		Scan(&s.ID, &s.Name, &s.Description, &s.Kind, &s.Code, &s.Enabled, &createdSec, &updatedSec)
 	if err != nil {
 		return Script{}, err
 	}
@@ -716,8 +749,8 @@ func (d *DB) GetScriptByName(ctx context.Context, name string) (Script, error) {
 		updatedSec int64
 	)
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, COALESCE(description, ''), code, enabled, created_at, updated_at FROM scripts WHERE name = ?", name).
-		Scan(&s.ID, &s.Name, &s.Description, &s.Code, &s.Enabled, &createdSec, &updatedSec)
+		"SELECT id, name, COALESCE(description, ''), kind, code, enabled, created_at, updated_at FROM scripts WHERE name = ?", name).
+		Scan(&s.ID, &s.Name, &s.Description, &s.Kind, &s.Code, &s.Enabled, &createdSec, &updatedSec)
 	if err != nil {
 		return Script{}, err
 	}
@@ -738,8 +771,8 @@ func (d *DB) CreateScript(ctx context.Context, s Script) (*Script, error) {
 		updated = now
 	}
 	res, err := d.db.ExecContext(ctx,
-		"INSERT INTO scripts (name, description, code, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-		s.Name, s.Description, s.Code, s.Enabled, created.Unix(), updated.Unix())
+		"INSERT INTO scripts (name, description, kind, code, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		s.Name, s.Description, s.Kind, s.Code, s.Enabled, created.Unix(), updated.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -762,8 +795,8 @@ func (d *DB) UpdateScript(ctx context.Context, s Script) error {
 		updated = now
 	}
 	res, err := d.db.ExecContext(ctx,
-		"UPDATE scripts SET name = ?, description = ?, code = ?, enabled = ?, updated_at = ? WHERE id = ?",
-		s.Name, s.Description, s.Code, s.Enabled, updated.Unix(), s.ID)
+		"UPDATE scripts SET name = ?, description = ?, kind = ?, code = ?, enabled = ?, updated_at = ? WHERE id = ?",
+		s.Name, s.Description, s.Kind, s.Code, s.Enabled, updated.Unix(), s.ID)
 	if err != nil {
 		return err
 	}

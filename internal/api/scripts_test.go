@@ -252,3 +252,143 @@ func TestScriptsNoManager(t *testing.T) {
 		t.Fatalf("无 manager DELETE 应 503，got=%d", code)
 	}
 }
+
+// TestScriptsKindCreateAndList 覆盖 D-01：POST kind=operate 落库、201 响应带 kind、列表接口带 kind。
+func TestScriptsKindCreateAndList(t *testing.T) {
+	ts, _ := uiSubServer(t)
+	code, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s-oper","kind":"operate","code":"node.port = 443","enabled":true}`)
+	if code != http.StatusCreated {
+		t.Fatalf("POST kind=operate 状态码 = %d，应为 201；body=%s", code, body)
+	}
+	var resp struct {
+		Script struct {
+			ID   int64  `json:"id"`
+			Kind string `json:"kind"`
+		} `json:"script"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("解析 POST 响应失败: %v; body=%s", err, body)
+	}
+	if resp.Script.Kind != "operate" {
+		t.Fatalf("POST 响应 script.kind = %q，期望 operate；body=%s", resp.Script.Kind, body)
+	}
+	if !strings.Contains(body, `"kind":"operate"`) {
+		t.Fatalf("POST 响应体缺少 kind 字段，body=%s", body)
+	}
+
+	// 列表接口必须回传 kind（前端 PipelinesPage 靠它做类型校验）。
+	code, _, lbody := uiGet(t, ts, "/api/scripts")
+	if code != http.StatusOK {
+		t.Fatalf("GET 列表状态码 = %d；body=%s", code, lbody)
+	}
+	if !strings.Contains(lbody, `"kind":"operate"`) {
+		t.Fatalf("列表响应缺少 kind，body=%s", lbody)
+	}
+	var lresp struct {
+		Scripts []struct {
+			ID   int64  `json:"id"`
+			Kind string `json:"kind"`
+		} `json:"scripts"`
+	}
+	if err := json.Unmarshal([]byte(lbody), &lresp); err != nil {
+		t.Fatalf("解析列表响应失败: %v; body=%s", err, lbody)
+	}
+	found := false
+	for _, s := range lresp.Scripts {
+		if s.ID == resp.Script.ID {
+			found = true
+			if s.Kind != "operate" {
+				t.Errorf("列表 kind = %q，期望 operate", s.Kind)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("列表未包含 id=%d，body=%s", resp.Script.ID, lbody)
+	}
+}
+
+// TestScriptsPostKindDefaultFilter 覆盖 kind 缺省时默认 filter（与 /api/scripts/test 同语义）。
+func TestScriptsPostKindDefaultFilter(t *testing.T) {
+	ts, _ := uiSubServer(t)
+	code, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s-default","code":"c"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("POST 缺省 kind 状态码 = %d，应为 201；body=%s", code, body)
+	}
+	if !strings.Contains(body, `"kind":"filter"`) {
+		t.Fatalf("缺省 kind 应默认 filter，body=%s", body)
+	}
+}
+
+// TestScriptsPostUnknownKind 覆盖非法 kind → 400 且文案与 /api/scripts/test 一致。
+func TestScriptsPostUnknownKind(t *testing.T) {
+	ts, _ := uiSubServer(t)
+	code, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s-bad","kind":"bogus","code":"c"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("POST kind=bogus 应 400，got=%d; body=%s", code, body)
+	}
+	if !strings.Contains(body, "未知的脚本类型") {
+		t.Fatalf("400 文案应含「未知的脚本类型」，body=%s", body)
+	}
+}
+
+// TestScriptPutKindChanges 覆盖 PUT 改 kind → 200 且回读为 filter。
+func TestScriptPutKindChanges(t *testing.T) {
+	ts, _ := uiSubServer(t)
+	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s-oper","kind":"operate","code":"node.port = 443"}`)
+	var resp struct {
+		Script struct {
+			ID int64 `json:"id"`
+		} `json:"script"`
+	}
+	_ = json.Unmarshal([]byte(body), &resp)
+	id := resp.Script.ID
+	code, _, pbody := uiDoJSON(t, ts, http.MethodPut, "/api/scripts/"+strconv.FormatInt(id, 10),
+		`{"name":"s-oper","kind":"filter","code":"node.type === 'ss'","enabled":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT 改 kind 应 200，got=%d; body=%s", code, pbody)
+	}
+	if !strings.Contains(pbody, `"kind":"filter"`) {
+		t.Fatalf("PUT 响应 kind 应为 filter，body=%s", pbody)
+	}
+}
+
+// TestScriptPutEmptyKindKeepsOld 覆盖 PUT 不带 kind 时保留库里的旧值（老脚本不被改成 filter）。
+func TestScriptPutEmptyKindKeepsOld(t *testing.T) {
+	ts, _ := uiSubServer(t)
+	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s-keep","kind":"operate","code":"node.port = 443"}`)
+	var resp struct {
+		Script struct {
+			ID int64 `json:"id"`
+		} `json:"script"`
+	}
+	_ = json.Unmarshal([]byte(body), &resp)
+	id := resp.Script.ID
+	code, _, pbody := uiDoJSON(t, ts, http.MethodPut, "/api/scripts/"+strconv.FormatInt(id, 10),
+		`{"name":"s-keep","code":"node.port = 8443","enabled":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT 缺省 kind 应 200，got=%d; body=%s", code, pbody)
+	}
+	if !strings.Contains(pbody, `"kind":"operate"`) {
+		t.Fatalf("PUT 缺省 kind 应保留 operate，body=%s", pbody)
+	}
+}
+
+// TestScriptPutUnknownKind 覆盖 PUT 非法 kind → 400。
+func TestScriptPutUnknownKind(t *testing.T) {
+	ts, _ := uiSubServer(t)
+	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s-bad2","code":"c"}`)
+	var resp struct {
+		Script struct {
+			ID int64 `json:"id"`
+		} `json:"script"`
+	}
+	_ = json.Unmarshal([]byte(body), &resp)
+	id := resp.Script.ID
+	code, _, pbody := uiDoJSON(t, ts, http.MethodPut, "/api/scripts/"+strconv.FormatInt(id, 10), `{"name":"s-bad2","kind":"bogus"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("PUT kind=bogus 应 400，got=%d; body=%s", code, pbody)
+	}
+	if !strings.Contains(pbody, "未知的脚本类型") {
+		t.Fatalf("400 文案应含「未知的脚本类型」，body=%s", pbody)
+	}
+}

@@ -174,6 +174,9 @@ async function importRules(row: AirportRow): Promise<void> {
   try {
     const r = await endpoints.importAirportRules(row.id)
     notify('已导入规则：新增 ' + r.rules_added + '，跳过 ' + r.rules_skipped, 'ok')
+    if (r.warnings && r.warnings.length > 0) {
+      notify(r.warnings[0], 'info')
+    }
     await load()
   } catch (err) {
     notify(errorMessage(err), 'error')

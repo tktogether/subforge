@@ -960,7 +960,7 @@ func TestWebUI_SubscribeLiveCompile(t *testing.T) {
 	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true); err != nil {
 		t.Fatalf("插入 airport: %v", err)
 	}
-	group, err := mgr.AddProxyGroup(ctx, "AutoSelect", "select", ".*", "", 0)
+	group, err := mgr.AddProxyGroup(ctx, "AutoSelect", "select", ".*", "", 0, 0)
 	if err != nil {
 		t.Fatalf("插入 group: %v", err)
 	}
