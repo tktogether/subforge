@@ -20,6 +20,7 @@
 | [v0.1.4-release-verification.md](v0.1.4-release-verification.md) | 发布产物验证 | 2026-10-20 | 镜像开箱即用：裸跑即可从宿主机访问控制台并启用订阅管理；双架构、自带版本号、HTTPS 上游可抓取 |
 | [v0.1.5-release-verification.md](v0.1.5-release-verification.md) | 发布产物验证 | 2026-10-20 | 控制台管线可参与转换、机场流量不再误报失败、规则源返回逐源结果、INI 内联规则集可展开；双架构与版本注入保持不变 |
 | [openwrt-packaging-verification.md](openwrt-packaging-verification.md) | 打包链路验证 | 2026-10-20 | 可打包；原配方缺 `Build/Prepare` 会失败，修复后两个架构均成功 |
+| [ux-e2e-full-flow-report.md](ux-e2e-full-flow-report.md) | Web 全流程操作核查（无头浏览器 E2E，三轮修复闭环） | 2026-10-21 | 86 个唯一用例 / 93 次执行全部 PASS；第一轮 24 项缺陷（P1 4 / P2 10 / P3 10）三轮全部闭环；对照矩阵 [ux-e2e-operation-matrix.md](ux-e2e-operation-matrix.md) |
 
 发布类报告（`vX.Y.Z-release-verification.md`）与里程碑报告的分工不同：里程碑报告回答
 "这一版整体是否可交付"，发布报告只回答"这一次发布的产物是否可用、边界在哪"。
