@@ -1,0 +1,65 @@
+name: 功能建议
+description: 提出新能力、行为调整或输出格式扩展建议
+title: "[建议] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提出建议。请先说明需求背景，再给出方案：背景决定了实现方式是否合理，只写结论的建议通常无法评估。
+
+        提交前请先在 Issue 列表中检索是否已有相同建议。安全相关问题请改用仓库 [SECURITY.md](https://github.com/tktogether/subforge/blob/main/SECURITY.md) 描述的私有渠道。
+  - type: textarea
+    id: background
+    attributes:
+      label: 需求背景
+      description: 说明你在什么场景下遇到限制、当前如何绕过、现有能力为什么不足。
+      placeholder: 例如：我在 OpenWrt 上运行 SubForge，需要把产物直接交给 sing-box，但当前缺少 ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望方案
+      description: 描述期望的行为、命令或接口形态，并给出期望的输入与输出示例。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 你考虑过的其他做法，以及没有采用它们的原因；没有可留空。
+    validations:
+      required: false
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 影响范围
+      description: 可多选；选择最接近的一项或多项。
+      multiple: true
+      options:
+        - CLI 命令与参数
+        - HTTP API
+        - 控制台页面
+        - 渲染器与输出格式
+        - 规则与规则集
+        - 构建、部署与配置
+        - 文档
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 相关链接、参考实现或兼容性要求；没有可留空。
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已检索现有 Issue，未发现相同建议。
+          required: true
+        - label: 我已说明需求背景，而不只是给出结论。
+          required: true

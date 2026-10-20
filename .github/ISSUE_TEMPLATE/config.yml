@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 报告安全漏洞（请勿在公开 Issue 中披露）
+    url: https://github.com/tktogether/subforge/security/advisories/new
+    about: 使用 GitHub 私有漏洞报告提交安全问题；报告方式与响应时限见仓库 SECURITY.md。
+  - name: 阅读贡献与维护规范
+    url: https://github.com/tktogether/subforge/blob/main/CONTRIBUTING.md
+    about: 提交代码或文档改动前，请先阅读开发环境、质量门禁、提交与 PR 流程。
+  - name: 行为准则问题
+    url: https://github.com/tktogether/subforge/blob/main/CODE_OF_CONDUCT.md
+    about: 需要私下沟通行为准则相关问题时，按该文档第 6 节描述的方式联系维护者。

@@ -1,0 +1,105 @@
+name: 缺陷报告
+description: 报告可复现的功能缺陷、报错或产物异常
+title: "[缺陷] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你报告问题。提交前请先在 Issue 列表中检索是否已有相同问题。
+
+        如果你要报告的是安全漏洞，请不要在此披露任何细节，改用 GitHub 私有漏洞报告，方式见仓库的 [SECURITY.md](https://github.com/tktogether/subforge/blob/main/SECURITY.md)。
+
+        缺少版本、部署方式或复现步骤的报告通常无法定位，请尽量填写完整。
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 用一两句话说明发生了什么，涉及哪个命令、接口或页面。
+      placeholder: 例如：执行 subforge convert -url https://example.com/sub -type clash.meta 时进程退出并打印错误。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按顺序写出最小复现步骤，包含完整命令或 HTTP 请求。真实订阅地址与令牌请用 example.com、<YOUR_TOKEN> 占位。
+      placeholder: |
+        1. 执行 ...
+        2. 观察到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 说明你期望看到的结果，必要时附上期望的产物片段。
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 说明实际发生的结果；如与期望产物存在差异，请指出具体位置。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SubForge 版本
+      description: 粘贴 subforge version 的完整输出；使用 Docker 部署时请填写镜像标签。
+      placeholder: 例如：subforge v0.1.0 (commit 7a2738b, built 2026-10-20T00:00:00Z)
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: 部署方式
+      description: 选择最接近的一种；多组件组合部署时选择主要方式并在补充信息中说明。
+      options:
+        - 源码构建的二进制
+        - 发布页下载的二进制
+        - Docker
+        - systemd
+        - OpenWrt
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: 操作系统与架构
+      description: 例如 Windows 11 amd64、Ubuntu 22.04 arm64、OpenWrt 23.05 mipsel。
+    validations:
+      required: false
+  - type: input
+    id: toolchain
+    attributes:
+      label: Go 与 Node 版本
+      description: 仅从源码构建时需要填写，例如 go1.26.0、node v22.11.0。
+    validations:
+      required: false
+  - type: textarea
+    id: config
+    attributes:
+      label: 相关配置片段
+      description: 相关的 INI 段落或覆盖层内容，请先脱敏；无相关配置可留空。
+      render: ini
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与错误信息
+      description: 完整的错误输出或服务端日志。请先确认其中不含真实订阅地址、访问令牌与订阅令牌。
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已确认这不是安全漏洞，且未在公开渠道披露漏洞细节。
+          required: true
+        - label: 我已检索现有 Issue，未发现相同问题。
+          required: true
