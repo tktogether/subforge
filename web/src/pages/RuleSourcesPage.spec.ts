@@ -688,3 +688,19 @@ describe('RuleSourcesPage', () => {
   })
 
 })
+
+
+// ---------------- 覆盖率补齐：MRS 更新中的并发守卫 ----------------
+
+describe('RuleSourcesPage 覆盖率补齐（MRS 更新中守卫）', () => {
+  it('doMrs 在 updating 时直接返回，不发请求', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const vm = w.vm as unknown as { updating: boolean; doMrs: () => Promise<void> }
+    vm.updating = true
+    await vm.doMrs()
+    expect(mrsMock).not.toHaveBeenCalled()
+    vm.updating = false
+    w.unmount()
+  })
+})

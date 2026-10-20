@@ -798,3 +798,18 @@ describe('PipelinesPage', () => {
   })
 
 })
+
+
+// ---------------- 覆盖率补齐：D-16 scriptRefKind 空引用守卫 ----------------
+
+describe('PipelinesPage 覆盖率补齐（D-16 守卫）', () => {
+  it('scriptRefKind：步骤无脚本引用 / 非脚本步骤都归一为空串', async () => {
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as { scriptRefKind: (s: { op: string; args: Record<string, string> }) => string }
+    expect(vm.scriptRefKind({ op: 'filter.script', args: {} })).toBe('')
+    expect(vm.scriptRefKind({ op: 'filter.script', args: { ref: '' } })).toBe('')
+    expect(vm.scriptRefKind({ op: 'op.rename', args: {} })).toBe('')
+    w.unmount()
+  })
+})

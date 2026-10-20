@@ -591,4 +591,151 @@ describe('RulesPage', () => {
     expect(w.text()).toMatch(/每页数目|Items per page/)
     w.unmount()
   })
+
+  // ---------------- 覆盖率补齐：搜索/筛选/刷新/保存失败/守卫/弹窗 setter ----------------
+
+  const COV_RULES = [
+    { id: 21, rule_type: 'DOMAIN-SUFFIX', rule_param: 'hk.example', rule_config: 3, resolve_dns: true, enabled: true, sort_order: 1, source: 'local', group_name: '#3 HK' },
+    { id: 22, rule_type: 'IP-CIDR', rule_param: '10.1.0.0/16', rule_config: 0, resolve_dns: false, enabled: false, sort_order: 2, source: null as unknown as string, group_name: undefined as unknown as string },
+  ]
+
+  function mountCov() {
+    const DialogStub = { name: 'VDialog', emits: ['update:modelValue'], template: '<div class="v-dialog-stub"><slot /></div>' }
+    return mount(RulesPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: DialogStub } } })
+  }
+
+  it('搜索框输入触发过滤（source 为 null、group_name 缺失也不炸）', async () => {
+    listRulesMock.mockResolvedValue(COV_RULES)
+    const w = mountCov()
+    await flushPromises()
+    const search = w.findComponent('[data-testid="rule-search"]')
+    expect(search.exists()).toBe(true)
+    const searchVm = (search as unknown as { vm: { $emit: (ev: string, v: unknown) => void } }).vm
+    searchVm.$emit('update:modelValue', 'HK')
+    await flushPromises()
+    expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 1 条')
+    searchVm.$emit('update:modelValue', 'no-such-rule')
+    await flushPromises()
+    expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 0 条')
+    w.unmount()
+  })
+
+  it('筛选按钮与刷新按钮走查（已启用 / 全部 / 重新加载）', async () => {
+    listRulesMock.mockResolvedValue(COV_RULES)
+    const w = mountCov()
+    await flushPromises()
+    const before = listRulesMock.mock.calls.length
+    await w.find('[data-testid="filter-enabled"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 1 条')
+    await w.find('[data-testid="filter-all"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 2 条')
+    await w.find('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect(listRulesMock.mock.calls.length).toBeGreaterThan(before)
+    w.unmount()
+  })
+
+  it('新增保存失败：错误提示弹出且对话框保持打开', async () => {
+    listRulesMock.mockResolvedValue(COV_RULES)
+    const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
+    createMock.mockRejectedValueOnce(new Error('create boom'))
+    notifyState.open = false
+    const w = mountCov()
+    await flushPromises()
+    await w.find('[data-testid="add"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="dialog-submit"]').trigger('click')
+    await flushPromises()
+    expect(notifyState.open).toBe(true)
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('create boom')
+    expect((w.vm as unknown as { ruleDialog: boolean }).ruleDialog).toBe(true)
+    w.unmount()
+  })
+
+  it('守卫分支：无待删目标 / 空选择批量 / 批量删除失败', async () => {
+    listRulesMock.mockResolvedValue(COV_RULES)
+    const w = mountCov()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      doRuleDelete: () => Promise<void>
+      bulkSetEnabled: (v: boolean) => Promise<void>
+      bulkDelete: () => Promise<void>
+      bulkDeleteOpen: boolean
+      selectedRuleIds: number[]
+    }
+    void vm.doRuleDelete()
+    await vm.bulkSetEnabled(true)
+    await vm.bulkDelete()
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    // 批量删除失败：错误提示、确认框保持打开（catch 分支提前结束）
+    bulkRulesMock.mockRejectedValueOnce(new Error('bulk delete boom'))
+    notifyState.open = false
+    vm.selectedRuleIds = [21]
+    await flushPromises()
+    await w.find('[data-testid="bulk-delete"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="bulk-confirm-delete"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledWith({ ids: [21], delete: true })
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('bulk delete boom')
+    expect(vm.bulkDeleteOpen).toBe(true)
+    w.unmount()
+  })
+
+  it('弹窗 v-model setter 与取消按钮', async () => {
+    listRulesMock.mockResolvedValue(COV_RULES)
+    const w = mountCov()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      ruleDialog: boolean
+      ruleConfirmOpen: boolean
+      bulkDeleteOpen: boolean
+      ruleDraft: Record<string, unknown>
+      pendingRuleDelete: unknown
+      selectedRuleIds: number[]
+    }
+    vm.ruleDialog = true
+    await flushPromises()
+    await w.find('[data-testid="dialog-cancel"]').trigger('click')
+    await flushPromises()
+    expect(vm.ruleDialog).toBe(false)
+    // 三个 v-dialog 的 v-model setter 都由 VDialog 的 update:modelValue 写回
+    for (const d of w.findAllComponents({ name: 'VDialog' })) {
+      d.vm.$emit('update:modelValue', false)
+    }
+    await flushPromises()
+    // 文本字段 / 开关的 v-model setter
+    for (const f of w.findAllComponents({ name: 'VTextField' })) {
+      f.vm.$emit('update:modelValue', 'x')
+    }
+    for (const s of w.findAllComponents({ name: 'VSwitch' })) {
+      s.vm.$emit('update:modelValue', true)
+    }
+    await flushPromises()
+    expect(vm.ruleDraft.rule_type).toBe('x')
+    expect(vm.ruleDraft.rule_param).toBe('x')
+    expect(vm.ruleDraft.resolve_dns).toBe(true)
+    expect(vm.ruleDraft.enabled).toBe(true)
+    // 单条删除确认：取消
+    vm.pendingRuleDelete = COV_RULES[0]
+    vm.ruleConfirmOpen = true
+    await flushPromises()
+    await w.find('[data-testid="confirm-cancel"]').trigger('click')
+    await flushPromises()
+    expect(vm.ruleConfirmOpen).toBe(false)
+    // 批量删除确认：打开再取消
+    vm.selectedRuleIds = [21]
+    await flushPromises()
+    await w.find('[data-testid="bulk-delete"]').trigger('click')
+    await flushPromises()
+    expect(vm.bulkDeleteOpen).toBe(true)
+    await w.find('[data-testid="bulk-confirm-cancel"]').trigger('click')
+    await flushPromises()
+    expect(vm.bulkDeleteOpen).toBe(false)
+    w.unmount()
+  })
 })

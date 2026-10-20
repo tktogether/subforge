@@ -249,3 +249,19 @@ describe('AppShell', () => {
     localStorage.removeItem('subforge.theme')
   })
 })
+
+
+// ---------------- 覆盖率补齐：登出确认框 v-model setter ----------------
+
+describe('AppShell 覆盖率补齐', () => {
+  it('logoutConfirmOpen 的 v-model setter：VDialog 关闭时置回 false', async () => {
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const dialogs = w.findAllComponents({ name: 'VDialog' })
+    expect(dialogs.length).toBeGreaterThan(0)
+    for (const d of dialogs) d.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect((w.vm as unknown as { logoutConfirmOpen: boolean }).logoutConfirmOpen).toBe(false)
+    w.unmount()
+  })
+})

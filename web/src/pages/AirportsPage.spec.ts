@@ -815,3 +815,24 @@ describe('AirportsPage', () => {
   })
 
 })
+
+
+// ---------------- 覆盖率补齐：D-06 保存设置失败分支 ----------------
+
+describe('AirportsPage 覆盖率补齐（D-06 保存失败）', () => {
+  it('开关保存失败：错误提示弹出，页面不炸', async () => {
+    listMock.mockResolvedValue([makeAirport()])
+    listSettingsMock.mockResolvedValue({ settings: [{ key: 'airport.with_rules', value: 'false', kind: 'bool', label: 'x' }] })
+    updateSettingsMock.mockRejectedValueOnce(new Error('settings boom'))
+    notifyState.open = false
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="with-rules"] input').setValue(true)
+    await flushPromises()
+    expect(updateSettingsMock).toHaveBeenCalledWith({ 'airport.with_rules': 'true' })
+    expect(notifyState.open).toBe(true)
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('settings boom')
+    w.unmount()
+  })
+})

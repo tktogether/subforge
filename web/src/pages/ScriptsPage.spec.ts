@@ -827,3 +827,44 @@ describe('ScriptsPage', () => {
 })
 
 
+
+
+// ---------------- 覆盖率补齐：对话框取消 / VDialog setter / 删除守卫 ----------------
+
+describe('ScriptsPage 覆盖率补齐', () => {
+  const DialogStub = { name: 'VDialog', emits: ['update:modelValue'], template: '<div class="v-dialog-stub"><slot /></div>' }
+
+  it('保存对话框点「取消」关闭，VDialog 的 v-model setter 可写回', async () => {
+    listScriptsMock.mockResolvedValue([{ id: 1, name: 'a', kind: 'filter', code: 'x', enabled: true }])
+    const w = mount(ScriptsPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: DialogStub } } })
+    await flushPromises()
+    const vm = w.vm as unknown as { dialog: boolean; testDialog: boolean }
+    vm.dialog = true
+    await flushPromises()
+    // 保存对话框的「取消」没有 data-testid；确认框的「取消」有 script-confirm-cancel
+    const cancels = w.findAll('button').filter((b) => b.text().trim() === '取消' && b.attributes('data-testid') === undefined)
+    expect(cancels.length).toBeGreaterThan(0)
+    await cancels[0].trigger('click')
+    await flushPromises()
+    expect(vm.dialog).toBe(false)
+    vm.testDialog = true
+    await flushPromises()
+    for (const d of w.findAllComponents({ name: 'VDialog' })) {
+      d.vm.$emit('update:modelValue', false)
+    }
+    await flushPromises()
+    expect(vm.testDialog).toBe(false)
+    w.unmount()
+  })
+
+  it('doDelete 无待删目标时直接返回，不发请求', async () => {
+    listScriptsMock.mockResolvedValue([])
+    const w = mount(ScriptsPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: DialogStub } } })
+    await flushPromises()
+    const vm = w.vm as unknown as { pendingDelete: unknown; doDelete: () => Promise<void> }
+    vm.pendingDelete = null
+    await vm.doDelete()
+    expect(deleteScriptMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+})
