@@ -292,4 +292,4 @@ if ($push.ExitCode -ne 0) { throw "git push 失败：$($push.Output)" }
 
 Write-Host ''
 Write-Host "发布完成：$Message"
-Write-Host "查看结果：$($Remote -replace '\.wiki\.git$', '')"
+Write-Host "查看结果：$($Remote -replace '\.wiki\.git$', '/wiki')"
