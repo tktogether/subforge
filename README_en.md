@@ -258,44 +258,99 @@ delivery matrix because `modernc.org/sqlite` has no build support for those plat
 
 ### 4.2 Docker and docker-compose
 
-| File | Base images | Notes |
-| --- | --- | --- |
-| [Dockerfile](Dockerfile) | build stage `golang:1.26-bookworm`, runtime stage `scratch` | Smallest image, holding only the static binary and the licence |
-| [Dockerfile.alpine](Dockerfile.alpine) | build stage `golang:1.26-bookworm`, runtime stage `alpine:3.20` | Additionally installs `ca-certificates` and `tzdata` |
+There are two usable paths to a container image: **pull the published image** (fastest, good for a first
+run) and **build it yourself** (recommended for real deployments, because you can bake in version
+information and choose a runtime layer that carries root certificates). They differ mainly in the runtime
+layer and in platform support:
+
+| Path | Runtime layer | Can fetch HTTPS upstreams | Platform |
+| --- | --- | --- | --- |
+| Pull the published image `ghcr.io/tktogether/subforge` | `scratch` | **No** (no root certificates in the image — see the measurement below) | `linux/amd64` only |
+| Build [Dockerfile.alpine](Dockerfile.alpine) yourself | `alpine:3.20` + `ca-certificates` + `tzdata` | Yes | The architecture of the build machine |
+| Build [Dockerfile](Dockerfile) yourself | `scratch` | **No** (upstreams must be `http://` or local files) | The architecture of the build machine |
+
+#### Path one: pull the published image
 
 ```sh
-docker build -t subforge:latest .
-docker run -d --name subforge -p 25500:25500 -v subforge-data:/data subforge:latest
-docker run --rm -v subforge-data:/data subforge:latest convert -file /data/nodes.txt -format sing-box -out /data/cfg.json
+docker pull ghcr.io/tktogether/subforge:latest
+docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+    ghcr.io/tktogether/subforge:latest serve -listen 0.0.0.0:25500 -token <YOUR_TOKEN>
+```
+
+- The registry is public, so **anonymous pulls work** (measured). The available tags are `v0.1.0` and
+  `latest`; the digest of `v0.1.0` is
+  `sha256:418f7ef051dae9d1323f3be52c099c09a4d7d0cc752f4d35ddf6aef3c942909c`.
+- **Only the `linux/amd64` platform is available**: the image manifest is an OCI image index that, apart
+  from the attestation, contains a single amd64 entry — the build-push step in `release.yml:113-121` sets
+  no `platforms:`.
+- **The image reports itself as `subforge dev (commit none, built unknown)`**: `release.yml:113-121`
+  passes no `build-args`, so `VERSION`, `COMMIT` and `DATE` stay at the Dockerfile defaults
+  (`Dockerfile:25-27`).
+- **The published image uses the `scratch` runtime layer and contains no root certificates at all, so
+  fetching an HTTPS subscription URL fails outright.** Measured with a scratch image isomorphic to the
+  runtime layer in `Dockerfile:47-61`, fetching an HTTPS upstream reported
+  `tls: failed to verify certificate: x509: certificate signed by unknown authority` (exit code 1);
+  an alpine runtime layer isomorphic to `Dockerfile.alpine:13-14` fetched the same URL successfully
+  (12 nodes). The published image is therefore only suitable for `http://` upstreams or local file input —
+  **to fetch HTTPS subscription URLs, build the alpine variant via path two**.
+
+#### Path two: build it yourself
+
+| File | Base images | Notes |
+| --- | --- | --- |
+| [Dockerfile.alpine](Dockerfile.alpine) | build stage `golang:1.26-bookworm`, runtime stage `alpine:3.20` | Additionally installs `ca-certificates` and `tzdata`; **recommended for real deployments** |
+| [Dockerfile](Dockerfile) | build stage `golang:1.26-bookworm`, runtime stage `scratch` | Smallest image, holding only the static binary and the licence; **no root certificates** |
+
+```sh
+# Recommended: alpine runtime layer with root certificates, version info baked into the binary
+docker build -f Dockerfile.alpine \
+    --build-arg VERSION=v0.1.0 \
+    --build-arg COMMIT=$(git rev-parse --short HEAD) \
+    --build-arg DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+    -t subforge:alpine .
+
+# Optional: smallest possible scratch runtime layer
+docker build -f Dockerfile -t subforge:latest .
+
+docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+    subforge:alpine serve -listen 0.0.0.0:25500 -token <YOUR_TOKEN>
+docker run --rm -v subforge-data:/data subforge:alpine convert -file /data/nodes.txt -format sing-box -out /data/cfg.json
 docker compose up -d
 ```
 
 The container's default command is `serve`; override it to run `convert`, `version`, `doctor` or any other
-subcommand. The compose file maps port `25500` to the host, mounts the `subforge-data` volume at `/data`
-and mounts `./config` read-only at `/config`.
+subcommand. `-listen 0.0.0.0:25500` is not optional: `serve` listens on `127.0.0.1:25500` by default,
+which inside a container is the container's own loopback interface, so publishing the port has no effect
+(see the measurement below).
+
+The compose file maps port `25500` to the host, mounts the `subforge-data` volume at `/data` and mounts
+`./config` read-only at `/config`. It also builds `Dockerfile.alpine` (`docker-compose.yml:6` — precisely
+because of the root certificates) and explicitly appends
+`command: [serve, -listen, 0.0.0.0:25500]` after `container_name` (`docker-compose.yml:9-16`) so that the
+published port is actually reachable. To expose the service to the LAN, append `-token <YOUR_TOKEN>` too.
 
 **Measured results** (2026-10-20, WSL2 Ubuntu 22.04, Docker 29.1.3, overlayfs storage driver,
 kernel 5.10.16.3-microsoft-standard-WSL2):
 
 | Check | Result |
 | --- | --- |
-| `docker build -f Dockerfile .` (scratch runtime layer) | Success, exit code 0, image 56.1 MB |
-| `docker build -f Dockerfile.alpine .` | Success, exit code 0, image 71.7 MB |
+| `docker build -f Dockerfile .` (scratch runtime layer) | Success, exit code 0, 40s, image 56.1 MB |
+| `docker build -f Dockerfile.alpine .` | Success, exit code 0, 60s, image 71.7 MB |
 | Binary inside both images | `ELF 64-bit LSB executable, x86-64, statically linked, stripped`, 40,091,810 bytes each; `ldd` reports `not a dynamic executable` |
 | `version` / `serve` / `convert` inside the container | All succeed; `convert` produced 12 nodes, and both the Clash YAML and the sing-box JSON were accepted by a parser |
-| Published image `ghcr.io/tktogether/subforge:v0.1.0` | Pulls (digest `sha256:418f7ef0…`, `linux/amd64`), starts, and answers probes |
+| Published image `ghcr.io/tktogether/subforge:v0.1.0` | Anonymous pull works (digest `sha256:418f7ef0…`, `linux/amd64`) and it starts; with a token configured, probes return 401, and with `X-Token` they return 200 |
+| Fetching an HTTPS upstream from the published image | **Fails**: `x509: certificate signed by unknown authority`; the same URL succeeds on the alpine runtime layer |
+| Published port after adding `command` | `curl http://127.0.0.1:25500/healthz` from the host → `HTTP=200`, `{"status":"ok"}` |
 
-**What to watch for**: the compose file does not override the container command, so `serve` still listens on
-`127.0.0.1:25500` inside the container. That default does **not** match the published port `25500:25500`:
-reaching the published port from the host returned `HTTP 000` (curl reported
-`Recv failure: Connection reset by peer`), while reaching `127.0.0.1:25500` from inside the container
-network returned `200`. The compose file therefore now sets
-`command: [serve, -listen, 0.0.0.0:25500]` so the published port is actually reachable; to expose the
-service to the LAN, append `-token <YOUR_TOKEN>` as well. The `SUBFORGE_DATA` and `SUBFORGE_CONFIG`
-variables in the compose file and Dockerfiles only declare paths — `serve` does not read them. Only three
-places in the whole program read an environment variable: `SUBFORGE_DATA_DIR` (`cmd/subforge/doctor.go`),
-`SUBFORGE_DEBUG` (`internal/api/pprof.go`) and `TELEGRAM_CHAT_ID` (`cmd/subforge/scheduler.go`). Listen
-address, token and similar parameters still come from the command line and the INI file.
+**What to watch for**: the `SUBFORGE_DATA` and `SUBFORGE_CONFIG` variables in the compose file and
+Dockerfiles only declare paths — `serve` does not read them. Only three places in the whole program read
+an environment variable: `SUBFORGE_DATA_DIR` (`cmd/subforge/doctor.go`), `SUBFORGE_DEBUG`
+(`internal/api/pprof.go`) and `TELEGRAM_CHAT_ID` (`cmd/subforge/scheduler.go`). Listen address, token and
+similar parameters still come from the command line and the INI file. If the compose file did not override
+the container command, `serve` would fall back to `127.0.0.1:25500` inside the container, which does
+**not** match `ports: 25500:25500`: reaching the published port from the host returned `HTTP 000` (curl
+reported `Recv failure: Connection reset by peer`), while reaching `127.0.0.1:25500` from inside the
+container network returned `200`. That is why the compose file has to set `command` explicitly.
 
 ### 4.3 systemd
 
@@ -694,8 +749,9 @@ embellishment.
 | `subscheck` health checks | Off by default | Must be invoked explicitly as `subforge subscheck` |
 | `-data-dir` subscription management | Not enabled by default | Without it neither the database nor the related endpoints are enabled, and management endpoints return `503` |
 | Docker images and mips | Partly constrained | Both Dockerfiles have now been built, started and exercised with `convert` on real Docker (see the measurement table in section 4.2); mips and mipsle left the delivery matrix because `modernc.org/sqlite` has no build support for them |
+| Runtime layer of the published image | Clear boundary | The published image uses the `scratch` runtime layer and carries no root certificates: fetching an HTTPS subscription URL reports `x509: certificate signed by unknown authority` (measured). Build `Dockerfile.alpine` yourself, or deploy the plain binary, when you need HTTPS upstreams |
 | Release pipeline image artifacts | Known defects | The build-push step in `release.yml` passes no `build-args`, so the published image reports `dev (commit none, built unknown)`; `file:` points only at `./Dockerfile`, so `Dockerfile.alpine` has never been built or pushed, and with no `platforms:` declared the image is `linux/amd64` only |
-| Image registry scope | GHCR only | Pushing uses the `GITHUB_TOKEN` that Actions injects automatically (`permissions: packages: write`), so the packaging pipeline needs no self-managed secret; Docker Hub is an optional extension that requires configuring `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` |
+| Image registry scope | GHCR only | Pushing uses the `GITHUB_TOKEN` that Actions injects automatically (`permissions: packages: write`), so the packaging pipeline needs no self-managed secret; measured against `hub.docker.com`, the `tktogether/subforge` repository does not exist (the API returns 404) and no workflow contains a Docker Hub step — it is an optional extension that requires configuring `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` |
 | OpenWrt packaging | Buildable, with a prerequisite | An official SDK 24.10.4 produced `.ipk` packages for both x86/64 and aarch64_cortex-a72, but a pre-compiled `bin/subforge` is required; the five options in the UCI configuration file are currently not read by the init script |
 | `condition-gate` tier | Not in the main flow | Runs only in the nightly job or on manual dispatch, never as part of `make verify` |
 | GitHub Wiki remote | Does not exist yet | As measured during this documentation effort, the remote Wiki repository has not been created; sources live in `docs/wiki/` and the publishing script is `scripts/publish-wiki.ps1` |

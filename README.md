@@ -226,41 +226,90 @@ darwin/arm64 35.4 MiB、freebsd/amd64 36.3 MiB；systemd 空载常驻内存约 2
 
 ### 4.2 Docker 与 docker-compose
 
-| 文件 | 基础镜像 | 说明 |
-| --- | --- | --- |
-| [Dockerfile](Dockerfile) | 构建阶段 `golang:1.26-bookworm`，运行阶段 `scratch` | 最小镜像，只含静态二进制与许可证 |
-| [Dockerfile.alpine](Dockerfile.alpine) | 构建阶段 `golang:1.26-bookworm`，运行阶段 `alpine:3.20` | 额外安装 `ca-certificates` 与 `tzdata` |
+容器镜像有两条可用路径：**直接拉取公开镜像**（最快，适合先跑起来）与**自行构建**（推荐用于实际
+部署：可以带上版本信息，也可以选择带根证书的运行层）。两者的差别集中在运行层与平台支持上：
+
+| 路径 | 运行层 | 能否抓 HTTPS 上游 | 平台 |
+| --- | --- | --- | --- |
+| 拉取公开镜像 `ghcr.io/tktogether/subforge` | `scratch` | **不能**（镜像内无根证书，见下文实测） | 仅 `linux/amd64` |
+| 自行构建 [Dockerfile.alpine](Dockerfile.alpine) | `alpine:3.20` + `ca-certificates` + `tzdata` | 能 | 随构建机架构 |
+| 自行构建 [Dockerfile](Dockerfile) | `scratch` | **不能**（上游必须是 `http://` 或本地文件） | 随构建机架构 |
+
+#### 路径一：拉取公开镜像
 
 ```sh
-docker build -t subforge:latest .
-docker run -d --name subforge -p 25500:25500 -v subforge-data:/data subforge:latest
-docker run --rm -v subforge-data:/data subforge:latest convert -file /data/nodes.txt -format sing-box -out /data/cfg.json
+docker pull ghcr.io/tktogether/subforge:latest
+docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+    ghcr.io/tktogether/subforge:latest serve -listen 0.0.0.0:25500 -token <YOUR_TOKEN>
+```
+
+- 镜像仓库是公开的，**匿名即可拉取**（实测）。可用 tag 为 `v0.1.0` 与 `latest`；`v0.1.0` 的
+  digest 是 `sha256:418f7ef051dae9d1323f3be52c099c09a4d7d0cc752f4d35ddf6aef3c942909c`。
+- **只有 `linux/amd64` 一个平台**：镜像 manifest 是 OCI image index，除 attestation 外只含
+  amd64 一个条目——`release.yml:113-121` 的 build-push 步骤没有写 `platforms:`。
+- **镜像自报版本为 `subforge dev (commit none, built unknown)`**：`release.yml:113-121` 没有传
+  `build-args`，`VERSION`、`COMMIT`、`DATE` 都停在 Dockerfile 的默认值（`Dockerfile:25-27`）。
+- **该镜像是 `scratch` 运行层，镜像内没有任何根证书，抓 HTTPS 订阅源会直接失败。** 实测用一个与
+  `Dockerfile:47-61` 运行层同构的 scratch 镜像抓 HTTPS 上游，报
+  `tls: failed to verify certificate: x509: certificate signed by unknown authority`（退出码 1）；
+  换成与 `Dockerfile.alpine:13-14` 同构的 alpine 运行层抓同一个 URL 则成功（12 个节点）。
+  因此公开镜像只适合 `http://` 上游或本地文件输入，**要抓 HTTPS 订阅源请走路径二构建 alpine 版**。
+
+#### 路径二：自行构建
+
+| 文件 | 基础镜像 | 说明 |
+| --- | --- | --- |
+| [Dockerfile.alpine](Dockerfile.alpine) | 构建阶段 `golang:1.26-bookworm`，运行阶段 `alpine:3.20` | 额外安装 `ca-certificates` 与 `tzdata`，**实际部署推荐** |
+| [Dockerfile](Dockerfile) | 构建阶段 `golang:1.26-bookworm`，运行阶段 `scratch` | 最小镜像，只含静态二进制与许可证；**无根证书** |
+
+```sh
+# 推荐：带根证书的 alpine 运行层，并把版本信息编进二进制
+docker build -f Dockerfile.alpine \
+    --build-arg VERSION=v0.1.0 \
+    --build-arg COMMIT=$(git rev-parse --short HEAD) \
+    --build-arg DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+    -t subforge:alpine .
+
+# 可选：最小体积的 scratch 运行层
+docker build -f Dockerfile -t subforge:latest .
+
+docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+    subforge:alpine serve -listen 0.0.0.0:25500 -token <YOUR_TOKEN>
+docker run --rm -v subforge-data:/data subforge:alpine convert -file /data/nodes.txt -format sing-box -out /data/cfg.json
 docker compose up -d
 ```
 
-容器默认命令是 `serve`；覆盖命令即可执行 `convert`、`version`、`doctor` 等其他子命令。compose 文件
-已把 `25500` 端口映射到宿主机，并把 `subforge-data` 卷挂到 `/data`、`./config` 只读挂到 `/config`。
+容器默认命令是 `serve`；覆盖命令即可执行 `convert`、`version`、`doctor` 等其他子命令。
+`-listen 0.0.0.0:25500` 不能省：`serve` 默认只监听 `127.0.0.1:25500`，在容器里就是容器自己的回环
+网卡，端口发布对它无效（见下文实测）。
+
+`docker-compose.yml` 把 `25500` 端口映射到宿主机、把 `subforge-data` 卷挂到 `/data`、
+`./config` 只读挂到 `/config`，并且：构建目标是 `Dockerfile.alpine`（`docker-compose.yml:6`，
+原因就是根证书），同时在 `container_name` 之后显式补了
+`command: [serve, -listen, 0.0.0.0:25500]`（`docker-compose.yml:9-16`），使端口发布真正可达。
+若要让局域网内的其他设备访问，还应追加 `-token <YOUR_TOKEN>`。
 
 **实测结果**（2026-10-20，WSL2 Ubuntu 22.04、Docker 29.1.3、overlayfs 存储驱动、内核
 5.10.16.3-microsoft-standard-WSL2）：
 
 | 验证项 | 实测结果 |
 | --- | --- |
-| `docker build -f Dockerfile .`（scratch 运行层） | 成功，退出码 0，镜像 56.1 MB |
-| `docker build -f Dockerfile.alpine .` | 成功，退出码 0，镜像 71.7 MB |
+| `docker build -f Dockerfile .`（scratch 运行层） | 成功，退出码 0，耗时 40s，镜像 56.1 MB |
+| `docker build -f Dockerfile.alpine .` | 成功，退出码 0，耗时 60s，镜像 71.7 MB |
 | 两个镜像内的二进制 | `ELF 64-bit LSB executable, x86-64, statically linked, stripped`，各 40,091,810 字节；`ldd` 报 `not a dynamic executable` |
 | 容器内 `version` / `serve` / `convert` | 全部成功；`convert` 产出 12 个节点，Clash YAML 与 sing-box JSON 均可被解析器接受 |
-| 已发布镜像 `ghcr.io/tktogether/subforge:v0.1.0` | 可拉取（digest `sha256:418f7ef0…`，`linux/amd64`）、可启动、探活通过 |
+| 已发布镜像 `ghcr.io/tktogether/subforge:v0.1.0` | 可匿名拉取（digest `sha256:418f7ef0…`，`linux/amd64`）、可启动；带令牌时探活返回 401，带 `X-Token` 返回 200 |
+| 公开镜像抓 HTTPS 上游 | **失败**：`x509: certificate signed by unknown authority`；同一 URL 在 alpine 运行层成功 |
+| compose 端口发布（补 `command` 之后） | 宿主机 `curl http://127.0.0.1:25500/healthz` → `HTTP=200`、`{"status":"ok"}` |
 
-**注意什么**：compose 没有覆盖容器命令，容器内的 `serve` 仍按默认值监听 `127.0.0.1:25500`。
-该默认值与 `ports: 25500:25500` 的端口发布**并不匹配**——实测从宿主机访问返回 `HTTP 000`
-（curl 报 `Recv failure: Connection reset by peer`），而在容器网络内部访问 `127.0.0.1:25500`
-返回 `200`。因此 `docker-compose.yml` 已显式补上 `command: [serve, -listen, 0.0.0.0:25500]`，
-使端口发布真正可达；若要让局域网内的其他设备访问，还应追加 `-token <YOUR_TOKEN>`。
-compose 与 Dockerfile 中的 `SUBFORGE_DATA`、`SUBFORGE_CONFIG` 只用于声明路径，`serve` 不读取
-这两个变量；全程序读取环境变量的位置只有三处：`SUBFORGE_DATA_DIR`（`cmd/subforge/doctor.go`）、
-`SUBFORGE_DEBUG`（`internal/api/pprof.go`）、`TELEGRAM_CHAT_ID`（`cmd/subforge/scheduler.go`）。
-监听地址、令牌等参数仍以命令行参数与 INI 配置文件为准。
+**注意什么**：`docker-compose.yml` 与两个 Dockerfile 中的 `SUBFORGE_DATA`、`SUBFORGE_CONFIG` 只用于
+声明路径，`serve` **不读取**这两个变量；全程序读取环境变量的位置只有三处：`SUBFORGE_DATA_DIR`
+（`cmd/subforge/doctor.go`）、`SUBFORGE_DEBUG`（`internal/api/pprof.go`）、`TELEGRAM_CHAT_ID`
+（`cmd/subforge/scheduler.go`）。监听地址、令牌等参数仍以命令行参数与 INI 配置文件为准。
+compose 若没有覆盖容器命令，容器内的 `serve` 会退回默认的 `127.0.0.1:25500`，与
+`ports: 25500:25500` **并不匹配**——实测宿主机访问返回 `HTTP 000`（curl 报
+`Recv failure: Connection reset by peer`），而在容器网络内部访问 `127.0.0.1:25500` 返回 `200`；
+这也是 compose 必须显式写 `command` 的原因。
 
 ### 4.3 systemd
 
@@ -624,8 +673,9 @@ Web 控制台、定时任务与流量策略等主题；`docs/design/` 与 `docs/
 | `subscheck` 订阅测活 | 默认关闭 | 需显式调用 `subforge subscheck` 开启 |
 | `-data-dir` 订阅管理 | 默认不启用 | 不指定时数据库与相关接口均不启用，管理类端点返回 `503` |
 | Docker 镜像与 mips | 部分受限 | 两个 Dockerfile 均已在真实 Docker 上完成构建、启动与 `convert` 实测（见 4.2 节实测表）；mips 与 mipsle 因 `modernc.org/sqlite` 无该平台构建而移出交付矩阵 |
+| 已发布镜像的运行层 | 有明确边界 | 公开镜像用的是 `scratch` 运行层，镜像内没有根证书：抓 HTTPS 订阅源会报 `x509: certificate signed by unknown authority`（实测）。需要抓 HTTPS 上游时请自行构建 `Dockerfile.alpine`，或改用二进制部署 |
 | 发布流水线的镜像产物 | 有已知缺陷 | `release.yml` 的 build-push 步骤未传 `build-args`，已发布镜像自报版本为 `dev (commit none, built unknown)`；`file:` 只指向 `./Dockerfile`，`Dockerfile.alpine` 从未被构建或推送，且未声明 `platforms:`，镜像只有 `linux/amd64` 一个架构 |
-| 镜像仓库范围 | 仅 GHCR | 推镜像使用 Actions 自动注入的 `GITHUB_TOKEN`（`permissions: packages: write`），打包流水线不依赖任何自建 Secret；Docker Hub 属可选扩展，需自行配置 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` |
+| 镜像仓库范围 | 仅 GHCR | 推镜像使用 Actions 自动注入的 `GITHUB_TOKEN`（`permissions: packages: write`），打包流水线不依赖任何自建 Secret；实测 `hub.docker.com` 上不存在 `tktogether/subforge` 仓库（接口返回 404），工作流中也没有任何 Docker Hub 步骤——它属于可选扩展，启用需自行配置 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` |
 | OpenWrt 打包 | 可打包，需前置步骤 | 官方 SDK 24.10.4 实测可产出 `.ipk`（x86/64 与 aarch64_cortex-a72 双目标），但需要预编译好的 `bin/subforge`；UCI 配置文件中的五个 option 当前不会被 init 脚本读取 |
 | `condition-gate` 条件覆盖准层 | 不进主流程 | 只跑夜间任务或手动触发，不进入 `make verify` |
 | GitHub Wiki 远端仓库 | 尚不存在 | 按本次文档工程的实测记录，远端 Wiki 仓库未创建；源文件在 `docs/wiki/`，发布脚本为 `scripts/publish-wiki.ps1` |

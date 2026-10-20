@@ -1,21 +1,68 @@
 # syntax=docker/dockerfile:1
-# SubForge Alpine version: includes ca-certificates and tzdata.
-FROM golang:1.26-bookworm AS builder
+#
+# SubForge Alpine 版：运行层为 alpine，额外安装 ca-certificates 与 tzdata，因此可以抓
+# HTTPS 订阅源。这是**推荐用于实际部署**的运行层，也是发布流水线默认推送的镜像。
+#
+# 构建：
+#   docker build -f Dockerfile.alpine -t subforge:alpine .
+#   docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.alpine -t subforge:alpine .
+# 运行：
+#   docker run -d --name subforge -p 25500:25500 -v subforge-data:/data subforge:alpine \
+#       serve -listen 0.0.0.0:25500
+#
+# 多架构：构建阶段固定在 BUILDPLATFORM 上原生执行，只把目标平台交给 Go 交叉编译
+# （GOOS/GOARCH 取自 buildx 注入的 TARGETOS/TARGETARCH），所以编译过程不需要指令级模拟；
+# 运行阶段只有 `apk add` 一条指令要在目标平台上执行，因此多架构构建仍需要 QEMU
+# （release.yml 已加 docker/setup-qemu-action）。
+#
+# 实测（2026-10-20，WSL2 Ubuntu 22.04 + Docker 29.1.3 + overlayfs）：构建成功，镜像
+# 71.7 MB；容器内 `version`、`serve`、`convert` 全部跑通；抓 HTTPS 订阅源成功（12 个节点）。
+
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
+
+# 目标平台由 buildx 注入；直接用 `docker build` 时回落到 linux/amd64。
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+# 版本信息，与 Makefile 的 LDFLAGS 保持同一套变量名。
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
+
 WORKDIR /src
+
+# 先拷模块清单与 vendor/，让这一层在源码变动时仍可复用缓存。vendor/ 已全量锁定依赖，
+# 构建过程不需要访问网络。
 COPY go.mod go.sum ./
 COPY vendor/ ./vendor/
 RUN go mod verify
+
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -mod=vendor -ldflags="-s -w -X github.com/tktogether/subforge/internal/buildinfo.Version=${VERSION} -X github.com/tktogether/subforge/internal/buildinfo.Commit=${COMMIT} -X github.com/tktogether/subforge/internal/buildinfo.Date=${DATE}" -o /out/subforge ./cmd/subforge
+
+# CGO_ENABLED=0：纯静态二进制。-mod=vendor 保证不联网解析。
+# GOOS/GOARCH 取自 TARGETOS/TARGETARCH：多架构构建时即为目标平台。
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -mod=vendor \
+        -ldflags="-s -w \
+        -X github.com/tktogether/subforge/internal/buildinfo.Version=${VERSION} \
+        -X github.com/tktogether/subforge/internal/buildinfo.Commit=${COMMIT} \
+        -X github.com/tktogether/subforge/internal/buildinfo.Date=${DATE}" \
+        -o /out/subforge ./cmd/subforge
+
 FROM alpine:3.20
+
+# ca-certificates 让容器能校验 HTTPS 上游的证书；tzdata 让日志与定时任务使用正确时区。
 RUN apk add --no-cache ca-certificates tzdata
+
 COPY --from=builder /out/subforge /usr/local/bin/subforge
 COPY LICENSE /LICENSE
+
+# 运行时数据目录（HTTP 缓存等），挂卷持久化。
 ENV SUBFORGE_DATA=/data
 VOLUME ["/data"]
+
+# subconverter 习惯端口，对齐默认配置。
 EXPOSE 25500
+
+# 默认起服务；覆盖 CMD 可执行 convert / version / doctor。
 ENTRYPOINT ["/usr/local/bin/subforge"]
 CMD ["serve"]

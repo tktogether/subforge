@@ -3,7 +3,17 @@ services:
   subforge:
     build:
       context: .
-      dockerfile: Dockerfile
+      # 默认用 alpine 运行层而不是 scratch：scratch 镜像内没有任何根证书，抓 HTTPS 订阅源会直接
+      # 失败（tls: failed to verify certificate: x509: certificate signed by unknown authority）。
+      # 只有在确定上游全部是 http:// 或本地文件、且追求最小体积时，才改成 Dockerfile。
+      dockerfile: Dockerfile.alpine
+      # 版本信息默认留空（与 Dockerfile 的默认值一致）。想让它出现在 `subforge version` 与产物
+      # 头部注释里，就设置下面三个环境变量后重新构建，例如：
+      #   $env:SUBFORGE_VERSION="v0.1.1"; $env:SUBFORGE_COMMIT=(git rev-parse --short HEAD); docker compose build
+      args:
+        VERSION: ${SUBFORGE_VERSION:-dev}
+        COMMIT: ${SUBFORGE_COMMIT:-none}
+        DATE: ${SUBFORGE_DATE:-unknown}
     image: subforge:latest
     container_name: subforge
     # 容器内 serve 的默认监听地址是 127.0.0.1:25500，只监听容器回环；而 ports 做的是端口

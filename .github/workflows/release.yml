@@ -75,11 +75,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # ---- 版本元数据（交叉编译与镜像构建共用同一套取值）----
+      - name: Compute build metadata
+        id: meta
+        shell: bash
+        run: |
+          echo "version=${{ github.ref_type == 'tag' && github.ref_name || 'snapshot' }}" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Cross compile release binaries
         run: |
-          VER=${{ github.ref_type == 'tag' && github.ref_name || 'snapshot' }}
-          SHORT=$(git rev-parse --short=8 HEAD)
-          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          VER=${{ steps.meta.outputs.version }}
+          SHORT=${{ steps.meta.outputs.short }}
+          DATE=${{ steps.meta.outputs.date }}
           mkdir -p dist
           for target in linux/amd64 linux/arm64 linux/arm windows/amd64 darwin/amd64 darwin/arm64 freebsd/amd64; do
             GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -mod=vendor \
@@ -101,7 +109,12 @@ jobs:
           sha256sum * > sha256sums.txt
           cat sha256sums.txt
 
-      # ---- Docker 镜像（scratch + alpine，推 GHCR）----
+      # ---- Docker 镜像（推 GHCR，linux/amd64 + linux/arm64）----
+      # 默认标签指向 Dockerfile.alpine：scratch 运行层不含任何根证书，抓 HTTPS 订阅源会直接
+      # 失败，不适合作为对外默认产物；需要最小体积的用户用 -scratch 后缀的标签。
+      # 两个镜像都显式传 build-args，使镜像自报版本与 Release 资产一致。
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to GHCR
@@ -110,15 +123,34 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build & push images
+      - name: Build & push default image (alpine runtime)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.alpine
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref_type == 'tag' }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ steps.meta.outputs.short }}
+            DATE=${{ steps.meta.outputs.date }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+      - name: Build & push minimal image (scratch runtime)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.ref_type == 'tag' }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ steps.meta.outputs.short }}
+            DATE=${{ steps.meta.outputs.date }}
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}-scratch
+            ghcr.io/${{ github.repository }}:latest-scratch
 
       # ---- GitHub Release（仅 tag 触发）----
       - name: Upload release
