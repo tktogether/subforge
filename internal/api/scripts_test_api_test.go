@@ -188,3 +188,29 @@ func TestAPIScriptsTestDefaultSampleNode(t *testing.T) {
 		t.Fatalf("缺省 node 应使用内置 ss 样例: ok=%v kept=%v err=%s", out.OK, out.Kept, out.Error)
 	}
 }
+
+// TestAPIScriptsTestTimeoutNoInternalName 覆盖 D-17：试运行文案不出现内部标识（script-test），
+// 保留中断原因与耗时。
+func TestAPIScriptsTestTimeoutNoInternalName(t *testing.T) {
+	srv, _ := scr3TestServer(t)
+	body := `{"code":"while (true) { }","kind":"operate","timeout":50}`
+	code, out, raw := runScriptTest(t, srv, body)
+	if code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", code, raw)
+	}
+	if out.OK {
+		t.Fatalf("死循环应失败: %s", raw)
+	}
+	if strings.Contains(out.Error, "script-test") {
+		t.Fatalf("试运行文案不应出现内部标识 script-test: %q", out.Error)
+	}
+	if !strings.Contains(out.Error, "试运行脚本") {
+		t.Fatalf("试运行文案应使用「试运行脚本」: %q", out.Error)
+	}
+	if !strings.Contains(out.Error, "被中断") {
+		t.Fatalf("试运行文案应保留中断原因: %q", out.Error)
+	}
+	if out.DurationMs <= 0 {
+		t.Fatalf("试运行应保留耗时 duration_ms=%d", out.DurationMs)
+	}
+}

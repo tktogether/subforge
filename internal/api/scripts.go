@@ -3,7 +3,11 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
+
+	"github.com/dop251/goja"
 
 	"github.com/tktogether/subforge/internal/store"
 )
@@ -15,6 +19,23 @@ import (
 func checkScriptKind(kind string) error {
 	if kind != "filter" && kind != "operate" {
 		return errors.New("未知的脚本类型: " + kind)
+	}
+	return nil
+}
+
+// scriptCompileName 是保存校验时传给 goja 的脚本名。
+// 与 internal/transform/script.go 执行时保持同一套包装方式（goja.Compile，不注入宿主对象），
+// 避免出现「保存时通过、执行时编译失败」或反过来的误报。
+const scriptCompileName = "script"
+
+// validateScriptCode 在脚本入库前编译一次，把语法错误拦在保存这一步。
+// 空代码与语法错误都返回可读文案（带 goja 给出的行号），由调用方映射成 400。
+func validateScriptCode(code string) error {
+	if strings.TrimSpace(code) == "" {
+		return errors.New("脚本代码语法错误：脚本代码不能为空")
+	}
+	if _, err := goja.Compile(scriptCompileName, code, false); err != nil {
+		return fmt.Errorf("脚本代码语法错误：%v", err)
 	}
 	return nil
 }
@@ -56,6 +77,11 @@ func (s *Server) handleAPIScripts(w http.ResponseWriter, r *http.Request) {
 			kind = "filter"
 		}
 		if err := checkScriptKind(kind); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		// 入库前先编译一次：语法错误的脚本不允许保存。
+		if err := validateScriptCode(req.Code); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
@@ -126,6 +152,11 @@ func (s *Server) handleAPIScript(w http.ResponseWriter, r *http.Request) {
 			}
 			kind = old.Kind
 		} else if err := checkScriptKind(kind); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		// 与 POST 同一套校验：语法错误不写库，库里保留旧代码。
+		if err := validateScriptCode(req.Code); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}

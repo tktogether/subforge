@@ -70,7 +70,7 @@ func TestScriptsPostInvalidMethod(t *testing.T) {
 
 func TestScriptsListNonEmpty(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	uiPostJSON(t, ts, "/api/scripts", `{"name":"s1"}`)
+	uiPostJSON(t, ts, "/api/scripts", `{"name":"s1","code":"true"}`)
 	code, _, body := uiGet(t, ts, "/api/scripts")
 	if code != http.StatusOK {
 		t.Fatalf("GET 状态码 = %d；body=%s", code, body)
@@ -144,7 +144,7 @@ func TestScriptPutNotFound(t *testing.T) {
 
 func TestScriptPutBlankName(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1"}`)
+	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1","code":"true"}`)
 	var resp struct {
 		Script struct {
 			ID int64 `json:"id"`
@@ -160,7 +160,7 @@ func TestScriptPutBlankName(t *testing.T) {
 
 func TestScriptPutBadJSON(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1"}`)
+	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1","code":"true"}`)
 	var resp struct {
 		Script struct {
 			ID int64 `json:"id"`
@@ -176,7 +176,7 @@ func TestScriptPutBadJSON(t *testing.T) {
 
 func TestScriptDeleteOK(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1"}`)
+	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1","code":"true"}`)
 	var resp struct {
 		Script struct {
 			ID int64 `json:"id"`
@@ -215,7 +215,7 @@ func TestScriptDeleteInvalidID(t *testing.T) {
 
 func TestScriptMethodNotAllowed(t *testing.T) {
 	ts, _ := uiSubServer(t)
-	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1"}`)
+	_, _, body := uiPostJSON(t, ts, "/api/scripts", `{"name":"s1","code":"true"}`)
 	var resp struct {
 		Script struct {
 			ID int64 `json:"id"`

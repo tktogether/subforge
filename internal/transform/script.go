@@ -46,8 +46,9 @@ func newScriptRunner(name, src string, timeout time.Duration) (*scriptRunner, er
 
 // run 在带超时与 panic 兜底的前提下执行脚本，返回完成值。
 func (r *scriptRunner) run(vm *goja.Runtime) (goja.Value, error) {
+	start := time.Now()
 	timer := time.AfterFunc(r.timeout, func() {
-		vm.Interrupt(fmt.Sprintf("脚本 %q 执行超时（%s）", r.name, r.timeout))
+		vm.Interrupt(fmt.Sprintf("执行超过 %s 上限", r.timeout))
 	})
 	defer timer.Stop()
 
@@ -63,10 +64,13 @@ func (r *scriptRunner) run(vm *goja.Runtime) (goja.Value, error) {
 		}()
 		v, err = vm.RunProgram(r.prog)
 	}()
+	elapsed := time.Since(start).Round(time.Millisecond)
 	if err != nil {
 		var ie *goja.InterruptedError
 		if ok := asInterrupted(err, &ie); ok {
-			return nil, fmt.Errorf("脚本 %q 被中断（超时或死循环）", r.name)
+			// 保留「脚本 %q 被中断（超时或死循环」前缀（internal/web/src/content/help.ts 索引该短语），
+			// 额外带上中断原因与已运行耗时，便于排查。显示名来自调用方（试运行脚本），不暴露内部标识。
+			return nil, fmt.Errorf("脚本 %q 被中断（超时或死循环）：%v（已运行 %s）", r.name, ie, elapsed)
 		}
 		return nil, fmt.Errorf("脚本 %q 执行失败: %w", r.name, err)
 	}

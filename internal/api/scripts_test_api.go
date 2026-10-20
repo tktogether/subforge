@@ -13,6 +13,10 @@ import (
 
 const scriptTestMaxTimeout = 30 * time.Second
 
+// scriptTestDisplayName 是试运行链路给脚本引擎的显示名。
+// 错误文案会原样回显给用户，因此不能用内部标识（如 script-test）：用「试运行脚本」。
+const scriptTestDisplayName = "试运行脚本"
+
 var defaultScriptSampleNodes = []map[string]any{
 	{"name": "ss-node", "type": "ss", "server": "1.2.3.4", "port": 8388},
 	{"name": "vmess-node", "type": "vmess", "server": "5.6.7.8", "port": 443},
@@ -74,7 +78,7 @@ func (s *Server) handleAPIScriptsTest(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	if kind == "filter" {
-		sf, err := transform.NewScriptFilter("script-test", req.Code, timeout)
+		sf, err := transform.NewScriptFilter(scriptTestDisplayName, req.Code, timeout)
 		if err != nil {
 			s.writeJSON(w, http.StatusOK, scriptTestResp{
 				OK: false, Kept: false, Before: map[string]any{}, After: map[string]any{},
@@ -98,7 +102,7 @@ func (s *Server) handleAPIScriptsTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := scriptTestBefore(nodeMap)
-	so, err := transform.NewScriptOperate("script-test", req.Code, timeout)
+	so, err := transform.NewScriptOperate(scriptTestDisplayName, req.Code, timeout)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, scriptTestResp{
 			OK: false, Kept: false, Before: before, After: map[string]any{},

@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -100,6 +101,31 @@ func TestScript_Timeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("超时未生效，耗时 %v", elapsed)
+	}
+}
+
+// 中断文案（D-17）：保留中断原因与已运行耗时，且不泄漏内部标识。
+func TestScript_TimeoutMessageKeepsReason(t *testing.T) {
+	o, err := NewScriptOperate("试运行脚本", `while (true) { }`, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = o.Apply(scriptNodes())
+	if err == nil {
+		t.Fatal("死循环应被超时打断")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "被中断") {
+		t.Fatalf("中断文案应说明被中断: %q", msg)
+	}
+	if !strings.Contains(msg, "已运行") {
+		t.Fatalf("中断文案应带已运行耗时: %q", msg)
+	}
+	if !strings.Contains(msg, "上限") {
+		t.Fatalf("中断文案应带原因（超时上限）: %q", msg)
+	}
+	if strings.Contains(msg, "script-test") {
+		t.Fatalf("中断文案不应出现内部标识 script-test: %q", msg)
 	}
 }
 
