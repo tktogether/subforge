@@ -322,6 +322,7 @@ func TestImportRulesResolveDNSRoundTrip(t *testing.T) {
 		t.Errorf("往返渲染 = %q, want %q", got, "DOMAIN-SUFFIX,example.com,DIRECT")
 	}
 }
+
 // countImportRules 返回 rules 表总行数。
 func countImportRules(t *testing.T, m *Manager) int {
 	t.Helper()
@@ -449,4 +450,3 @@ func TestImportRulesBatchDuplicateWithinOneImport(t *testing.T) {
 		t.Fatalf("rules 行数 = %d, want 2", got)
 	}
 }
-

@@ -491,8 +491,8 @@ func TestHandleAPIRuleSourcesGetUsesCurrentVersion(t *testing.T) {
 	}
 	var body struct {
 		Sources []struct {
-			Name   string   `json:"name"`
-			Latest string   `json:"latest"`
+			Name     string   `json:"name"`
+			Latest   string   `json:"latest"`
 			Versions []string `json:"versions"`
 		} `json:"sources"`
 	}

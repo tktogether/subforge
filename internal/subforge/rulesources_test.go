@@ -930,4 +930,3 @@ func TestUpdateRuleSourceOneResetsCurrentVersion(t *testing.T) {
 		t.Fatalf("单源更新后 Latest = %q, want 新版本 %q", got, want)
 	}
 }
-

@@ -372,3 +372,28 @@ func TestRender_MihomoValid(t *testing.T) {
 		})
 	}
 }
+
+// TestWarnings_RewrittenRuleTargets 覆盖 Warnings() 读取路径：规则目标指向产物里
+// 不存在的分组时，渲染期会校正并记入 Warnings（降级不能静默）。
+func TestWarnings_RewrittenRuleTargets(t *testing.T) {
+	r := New(DefaultOptions())
+	if got := r.Warnings(); len(got) != 0 {
+		t.Fatalf("未渲染前 Warnings 应为空，实际 %v", got)
+	}
+
+	_, err := r.Render(render.Request{
+		Nodes:  testNodes(),
+		Groups: []render.Group{{Name: "pick-1", Type: "select", Proxies: []string{"HK-香港-01"}}},
+		Rules:  []string{"DOMAIN-SUFFIX,no-such-target.test,不存在的组", "MATCH,pick-1"},
+	})
+	if err != nil {
+		t.Fatalf("Render 失败: %v", err)
+	}
+	got := r.Warnings()
+	if len(got) == 0 {
+		t.Fatal("规则目标被校正后 Warnings 不应为空")
+	}
+	if joined := strings.Join(got, "\n"); !strings.Contains(joined, "兜底分组") {
+		t.Errorf("Warnings 应说明落到了兜底分组，实际: %v", got)
+	}
+}

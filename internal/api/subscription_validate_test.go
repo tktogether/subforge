@@ -277,8 +277,8 @@ func TestSelfNodePostValidation(t *testing.T) {
 		body string
 		want string
 	}{
-		{"空名字", `{"name":"","link":"`+probeSS+`"}`, "名称不能为空"},
-		{"空白名字", `{"name":"  ","link":"`+probeSS+`"}`, "名称不能为空"},
+		{"空名字", `{"name":"","link":"` + probeSS + `"}`, "名称不能为空"},
+		{"空白名字", `{"name":"  ","link":"` + probeSS + `"}`, "名称不能为空"},
 		{"空链接", `{"name":"n","link":""}`, "分享链接不能为空"},
 		{"空白链接", `{"name":"n","link":"   "}`, "分享链接不能为空"},
 		{"不是链接", `{"name":"n","link":"not-a-valid-link"}`, "分享链接格式不正确："},
@@ -326,7 +326,7 @@ func TestSelfNodePutValidation(t *testing.T) {
 		body string
 		want string
 	}{
-		{"空名字", `{"name":"","link":"`+probeSS+`"}`, "名称不能为空"},
+		{"空名字", `{"name":"","link":"` + probeSS + `"}`, "名称不能为空"},
 		{"空链接", `{"name":"n","link":""}`, "分享链接不能为空"},
 		{"不是链接", `{"name":"n","link":"not-a-valid-link"}`, "分享链接格式不正确："},
 	}
@@ -422,7 +422,6 @@ func TestGroupSortOrderPersisted(t *testing.T) {
 		}
 	}
 }
-
 
 func TestSelfNodeSortOrderPersisted(t *testing.T) {
 	ts, _ := uiSubServer(t)
