@@ -19,10 +19,55 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, resolve, relative, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const quiet = process.argv.includes('--quiet');
+
+/**
+ * 版本库已跟踪文件的绝对路径集合。
+ *
+ * 用途：链接目标在本机存在、却没进版本库（典型情况是被 .gitignore 忽略的本地文件）
+ * 时，别人克隆下来点这个链接就是 404——本机自检却会通过。这类"本机能跑、CI 就红"
+ * 的差异必须在这里挡住。
+ *
+ * 非 git 环境（例如解压出来的源码包）返回 null，此时跳过该项校验。
+ */
+const trackedFiles = (() => {
+  try {
+    const out = execFileSync('git', ['ls-files', '-z'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return new Set(out.split('\0').filter(Boolean).map((p) => resolve(repoRoot, p)));
+  } catch {
+    return null;
+  }
+})();
+
+/**
+ * 至少包含一个已跟踪文件的目录集合。
+ *
+ * `git ls-files` 只列文件，而文档里的链接经常指向目录（例如 `deploy/openwrt/`）：
+ * 判断"克隆后这个目录链接还在不在"，要看它下面有没有已跟踪的文件。
+ */
+const trackedDirs = (() => {
+  if (trackedFiles === null) return null;
+  const dirs = new Set();
+  for (const p of trackedFiles) {
+    let d = dirname(p);
+    while (d.startsWith(repoRoot) && !dirs.has(d)) {
+      dirs.add(d);
+      const parent = dirname(d);
+      if (parent === d) break;
+      d = parent;
+    }
+  }
+  return dirs;
+})();
 
 const errors = [];
 const warnings = [];
@@ -212,6 +257,14 @@ function checkLinks(lines, file) {
       const absolute = resolve(dirname(file), decoded);
       if (!existsSync(absolute)) {
         errors.push(`${rel(file)}:${lineNo} 链接指向不存在的路径：${target}`);
+      } else if (trackedFiles !== null && trackedDirs !== null) {
+        const isDir = statSync(absolute).isDirectory();
+        const tracked = isDir ? trackedDirs.has(absolute) : trackedFiles.has(absolute);
+        if (!tracked) {
+          errors.push(
+            `${rel(file)}:${lineNo} 链接指向未被版本库跟踪的${isDir ? '目录' : '文件'}（克隆后即 404）：${target}`,
+          );
+        }
       }
     }
   });
@@ -259,7 +312,10 @@ const perFile = [];
 
 for (const file of files) {
   const raw = readFileSync(file, 'utf8');
-  const lines = raw.split(/\r?\n/).map((text, index) => ({ text, lineNo: index + 1 }));
+  const rawLines = raw.split(/\r?\n/);
+  // 以换行结尾的文件，split 会多出一个空元素；去掉它，行数才等于编辑器里的行数。
+  if (rawLines.length > 0 && rawLines[rawLines.length - 1] === '') rawLines.pop();
+  const lines = rawLines.map((text, index) => ({ text, lineNo: index + 1 }));
   lineTotal += lines.length;
 
   const { body, mermaidBlocks } = splitFences(lines, file);

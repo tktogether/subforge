@@ -187,7 +187,7 @@ URL 参数 > 用户 override > 远程模板 > 内置默认
 └── 导出（JSON/文本）
 ```
 
-**设计 Context**（来自 [.impeccable.md](../../.impeccable.md)）：
+**设计 Context**（来自仓库根的本地设计上下文文件 `.impeccable.md`；该文件不入版本库，克隆后不存在，此处仅作来源说明）：
 
 - **Typography**: `Bricolage Grotesque`（display）+ `Geist`（body）+ `Geist Mono`（mono）
 - **Color**: OKLCH 变量，light/dark 双主题，accent = `oklch(0.55 0.16 45)`（warm amber）
