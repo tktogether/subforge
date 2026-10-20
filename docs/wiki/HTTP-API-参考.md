@@ -16,7 +16,7 @@ HTTP 服务由 `subforge serve` 命令启动（`cmd/subforge/serve.go:96-109`）
 flowchart LR
   A[客户端请求] --> B[请求 ID 与访问日志]
   B --> C[panic 恢复]
-  C --> D[令牌鉴权，仅 subscribe 豁免]
+  C --> D[令牌鉴权，豁免 subscribe 与控制台外壳]
   D --> E[请求超时控制]
   E --> F[注入响应头]
   F --> G{路由判定}
@@ -60,9 +60,14 @@ curl -H "X-Token: <YOUR_TOKEN>" "http://127.0.0.1:25500/api/stats"
 
 令牌比较使用 `crypto/subtle.ConstantTimeCompare`，避免比较耗时泄露信息（`internal/api/middleware.go:114-116`）。校验失败时响应同时带有 `WWW-Authenticate: Bearer realm="subforge"` 与 401 状态码。
 
-### 2.2 订阅生成端点的例外
+### 2.2 豁免路径
 
-`GET /subscribe` 使用订阅令牌（sub_token）自鉴权，因此被全局鉴权中间件精确豁免（`internal/api/server.go:291-303`）。豁免只对路径 `/subscribe` 生效；如果该端点也被全局令牌拦住，请求里的 `token` 会被拿去与服务端令牌比较，订阅令牌将永远无法通过校验。
+全局鉴权中间件按路径豁免两类请求（`internal/api/server.go:295-328`）：
+
+- `GET /subscribe`：使用订阅令牌（sub_token）自鉴权。如果该端点也被全局令牌拦住，请求里的 `token` 会被拿去与服务端令牌比较，订阅令牌将永远无法通过校验。
+- 控制台静态外壳：`/`、`/assets/*`、`/favicon.ico`，以及会回退到 `index.html` 的前端路由深层链接（如 `/subscriptions`）。这些是构建产物、不含用户数据；不豁免的话，设置了令牌的部署连控制台页面都打不开。判定复用 SPA 回退的同一套前缀规则，因此凡是交给真实处理器的路径都不会被豁免。
+
+`/api/*`、`/sub`、`/profile`、`/render`、`/getruleset`、`/inspect`、`/version`、`/healthz`、`/metrics`、`/debug/pprof/*` 以及任何非 GET/HEAD 请求，一律照常校验令牌。
 
 ## 3. 端点总表
 

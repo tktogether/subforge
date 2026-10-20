@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import AppTopBar from './AppTopBar.vue'
+import { tokenState } from '../api/token'
 
 const vuetify = createVuetify({ components, directives })
 
@@ -16,6 +17,10 @@ function mountTopBar(props: { title: string }) {
 }
 
 describe('AppTopBar', () => {
+  beforeEach(() => {
+    tokenState.value = ''
+  })
+
   it('渲染 title 与 SubForge wordmark', () => {
     const w = mountTopBar({ title: '机场' })
     const topbar = w.find('[data-testid="topbar"]')
@@ -31,6 +36,25 @@ describe('AppTopBar', () => {
     const emitted = cmp.emitted('toggle-drawer')
     expect(emitted).toBeTruthy()
     expect(emitted!.length).toBe(1)
+  })
+
+  it('点击令牌按钮触发 open-token 事件', async () => {
+    const w = mountTopBar({ title: '机场' })
+    const cmp = w.findComponent(AppTopBar)
+    await w.find('[data-testid="token-button"]').trigger('click')
+    expect(cmp.emitted('open-token')).toBeTruthy()
+  })
+
+  it('未设置令牌时按钮提示「设置访问令牌」', () => {
+    tokenState.value = ''
+    const w = mountTopBar({ title: '机场' })
+    expect(w.find('[data-testid="token-button"]').attributes('title')).toBe('设置访问令牌')
+  })
+
+  it('已设置令牌时按钮提示「已设置访问令牌，点击修改」', () => {
+    tokenState.value = 'tok'
+    const w = mountTopBar({ title: '机场' })
+    expect(w.find('[data-testid="token-button"]').attributes('title')).toBe('已设置访问令牌，点击修改')
   })
 
   it('title 为空串也能渲染', () => {

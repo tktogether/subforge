@@ -282,24 +282,49 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
-// authExceptSubscribe 包装全局 auth，只对 /subscribe 例外。
+// authExceptSubscribe 包装全局 auth，对两类请求例外。
 //
-// /subscribe 用订阅令牌（sub_token）鉴权，而 auth 校验的是服务端访问令牌；
+// 一是 /subscribe：它用订阅令牌（sub_token）鉴权，而 auth 校验的是服务端访问令牌；
 // middleware.go 的 presented() 优先级为 Authorization > X-Token > query token，
 // 所以 /subscribe?token=<sub_token> 会被拿去和服务端令牌比对，永远 401。
-// 这里按精确路径豁免，其余路由鉴权强度不变。
+//
+// 二是控制台的静态外壳：index.html 与 /assets/* 是构建产物，不含任何用户数据，
+// 但浏览器必须先把它们加载起来，控制台才有机会弹出输入框让用户填访问令牌。
+// 不豁免时，设了 -token 的部署打开控制台只会看到一行 401 纯文本。
+// 数据接口（/api/*、/sub、/getruleset 等）鉴权强度完全不变。
 func authExceptSubscribe(tokenFor func() string) func(http.Handler) http.Handler {
 	guarded := auth(tokenFor)
 	return func(next http.Handler) http.Handler {
 		inner := guarded(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/subscribe" {
+			if authExemptPath(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
 			inner.ServeHTTP(w, r)
 		})
 	}
+}
+
+// authExemptPath 判断请求是否可以跳过服务端访问令牌校验。
+//
+// 豁免范围刻意收得很窄：/subscribe、控制台外壳（index.html、favicon、静态资源）
+// 与前端路由的深层链接（如 /subscriptions，刷新页面或直接访问子页面时要能打开）。
+// 深层链接判定复用 spa.go 的 spaExcluded 与 lastSegment，与 SPA 回退逻辑同源，
+// 因此凡是会返回 index.html 的路径都豁免，凡是交给真实处理器或 /api/* 的都不豁免。
+func authExemptPath(r *http.Request) bool {
+	p := r.URL.Path
+	if p == "/subscribe" || p == "/favicon.ico" || strings.HasPrefix(p, "/assets/") {
+		return true
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if spaExcluded(p) {
+		return false
+	}
+	name := strings.TrimPrefix(p, "/")
+	return name == "" || !strings.Contains(lastSegment(name), ".")
 }
 
 // handleVersion 返回 subconverter 形态的纯文本版本串。

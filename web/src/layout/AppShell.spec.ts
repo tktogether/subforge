@@ -5,6 +5,8 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import AppShell from './AppShell.vue'
+import TokenDialog from '../components/TokenDialog.vue'
+import { tokenDialogOpen, tokenRejected, tokenState } from '../api/token'
 import { useThemeMode } from '../composables/useThemeMode'
 
 const { routeRef } = vi.hoisted(() => ({ routeRef: { value: { meta: {}, path: '/' } } }))
@@ -28,7 +30,7 @@ vi.mock('./AppTopBar.vue', () => ({
   default: {
     name: 'AppTopBar',
     props: ['title'],
-    emits: ['toggle-drawer'],
+    emits: ['toggle-drawer', 'open-token'],
     template: '<div class="apptopbar-stub">{{ title }}</div>',
   },
 }))
@@ -63,12 +65,45 @@ describe('AppShell', () => {
     state.open = false
     state.text = ''
     state.kind = 'ok'
+    tokenDialogOpen.value = false
+    tokenRejected.value = false
+    tokenState.value = ''
+    window.localStorage.clear()
     ;(globalThis as any).visualViewport ??= {
       addEventListener: () => {},
       removeEventListener: () => {},
       width: 1024,
       height: 768,
     }
+  })
+
+  it('顶栏 open-token 事件：打开令牌输入框', async () => {
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.findComponent({ name: 'AppTopBar' }).vm.$emit('open-token')
+    await flushPromises()
+    expect(tokenDialogOpen.value).toBe(true)
+    w.unmount()
+  })
+
+  it('令牌保存后重建 RouterView（reloadKey 自增，页面用新令牌重新取数）', async () => {
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect((w.vm as any).reloadKey).toBe(0)
+    await w.findComponent(TokenDialog).vm.$emit('saved')
+    await flushPromises()
+    expect((w.vm as any).reloadKey).toBe(1)
+    w.unmount()
+  })
+
+  it('令牌输入框 v-model：关闭时把 tokenDialogOpen 置回 false', async () => {
+    tokenDialogOpen.value = true
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.findComponent(TokenDialog).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(tokenDialogOpen.value).toBe(false)
+    w.unmount()
   })
 
   it('pageTitle：route.meta.title 为 undefined 时回退 "SubForge"', async () => {

@@ -21,10 +21,21 @@ export interface RequestOptions {
 
 export type TokenProvider = () => string
 
+export type UnauthorizedHandler = () => void
+
 let tokenProvider: TokenProvider = () => ''
+
+// 服务端设了访问令牌时，未授权请求会拿到 401。请求层不认识界面，只把这件事
+// 通知出去，由 api/token.ts 决定怎么提示用户（当前是弹出令牌输入框）。
+// 没有注册处理器时静默跳过，纯请求层（含单元测试）不被迫关心界面。
+let unauthorizedHandler: UnauthorizedHandler | null = null
 
 export function setTokenProvider(provider: TokenProvider): void {
   tokenProvider = provider
+}
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler): void {
+  unauthorizedHandler = handler
 }
 
 export function buildQuery(query?: Record<string, QueryValue>): string {
@@ -61,6 +72,9 @@ export async function request<T>(method: string, path: string, options: RequestO
     signal: options.signal,
   })
   if (!response.ok) {
+    if (response.status === 401 && unauthorizedHandler !== null) {
+      unauthorizedHandler()
+    }
     throw new HttpError(response.status, await response.text())
   }
   if (response.status === 204) {

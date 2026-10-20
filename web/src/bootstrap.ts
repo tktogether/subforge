@@ -1,8 +1,9 @@
-﻿import { createApp, type App as VueApp } from 'vue'
+import { createApp, type App as VueApp } from 'vue'
 import App from './App.vue'
 import { vuetify } from './plugins/vuetify'
 import { createAppRouter } from './router'
 import { applyTheme, readStoredMode, resolveDark } from './composables/useThemeMode'
+import { initToken } from './api/token'
 
 // 首帧主题（W6A）：此前 defaultTheme 写死 subforgeLight，主题切换发生在 AppShell 挂载后的
 // watcher 里，深色用户的第一帧是浅色（FOUC 闪白）。这里抢在 app.use(vuetify) 之前把主题名与
@@ -17,5 +18,7 @@ export function createSubforgeApp(): VueApp<Element> {
   app.use(createAppRouter())
   applyFirstPaintTheme()
   app.use(vuetify)
+  // 令牌接线必须在挂载前完成：首屏页面一挂载就会发请求，晚一步就会先吃一个 401。
+  initToken()
   return app
 }

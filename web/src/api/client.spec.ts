@@ -5,6 +5,7 @@ import {
   request,
   api,
   setTokenProvider,
+  setUnauthorizedHandler,
 } from './client'
 
 function mockResponse(init: {
@@ -70,10 +71,41 @@ describe('buildQuery', () => {
 describe('request', () => {
   beforeEach(() => {
     setTokenProvider(() => '')
+    setUnauthorizedHandler(() => {})
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('401 时调用未授权处理器（供界面弹出令牌输入框）', async () => {
+    const onUnauthorized = vi.fn()
+    setUnauthorizedHandler(onUnauthorized)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(mockResponse({ ok: false, status: 401, text: '401: 缺少或错误的访问令牌' })),
+    )
+    await expect(request('GET', '/api/version')).rejects.toThrow('HTTP 401')
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('其它错误状态不触发未授权处理器', async () => {
+    const onUnauthorized = vi.fn()
+    setUnauthorizedHandler(onUnauthorized)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse({ ok: false, status: 500, text: 'boom' })))
+    await expect(request('GET', '/api/version')).rejects.toThrow('HTTP 500')
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('401 的响应体进入 HttpError.body，便于界面显示服务端提示', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(mockResponse({ ok: false, status: 401, text: '401: 缺少或错误的访问令牌' })),
+    )
+    await expect(request('GET', '/api/version')).rejects.toMatchObject({
+      status: 401,
+      body: '401: 缺少或错误的访问令牌',
+    })
   })
 
   it('token 为空 → 请求头没有 X-Token', async () => {
