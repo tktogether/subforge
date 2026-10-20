@@ -409,8 +409,11 @@ export const endpoints = {
     api.get<{ rule_providers: RuleProvider[] }>('/api/rule-providers', { query: { source, enabled } }).then((r) => r.rule_providers),
   updateRuleProvider: (id: number, enabled: boolean): Promise<OkResponse> =>
     api.put<OkResponse>('/api/rule-providers/' + id + '/enabled', { enabled }),
-  bulkRules: (body: { ids?: number[]; source?: string; enabled: boolean }): Promise<{ updated: number }> =>
-    api.post<{ updated: number }>('/api/rules/bulk', body),
+  // POST /api/rules/bulk（后端 internal/api/rules_bulk.go）：
+  // 批量启停 body { ids: number[], enabled: boolean }（或 { source }）→ 200 { updated: number }
+  // 批量删除 body { ids: number[], delete: true } → 200 { deleted: number, updated: number }
+  bulkRules: (body: { ids?: number[]; source?: string; enabled?: boolean; delete?: boolean }): Promise<{ updated?: number; deleted?: number }> =>
+    api.post<{ updated?: number; deleted?: number }>('/api/rules/bulk', body),
   listSuggestions: (): Promise<Suggestion[]> => api.get<{ suggestions: Suggestion[] }>('/api/suggestions').then((r) => r.suggestions),
   confirmSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/confirm', {}),
   rejectSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/reject', {}),

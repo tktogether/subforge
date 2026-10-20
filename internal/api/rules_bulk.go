@@ -12,6 +12,7 @@ type bulkRulesBody struct {
 	IDs     []int64 `json:"ids"`
 	Source  string  `json:"source"`
 	Enabled bool    `json:"enabled"`
+	Delete  bool    `json:"delete"`
 }
 
 func (s *Server) handleAPIRulesBulk(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +30,27 @@ func (s *Server) handleAPIRulesBulk(w http.ResponseWriter, r *http.Request) {
 	}
 	hasIDs := len(body.IDs) > 0
 	hasSource := strings.TrimSpace(body.Source) != ""
+
+	// 批量删除只接受显式列出的 ids：source 的语义是「按来源整批」，放开等于给
+	// 全表一个一键清空入口。删除与启用/禁用互斥，走各自独立的响应体。
+	if body.Delete {
+		if hasSource {
+			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("批量删除仅支持 ids"))
+			return
+		}
+		if !hasIDs {
+			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("批量删除必须给出 ids"))
+			return
+		}
+		deleted, err := m.DB().BatchDeleteRules(r.Context(), body.IDs)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted, "updated": 0})
+		return
+	}
+
 	if !hasIDs && !hasSource {
 		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("必须给出 ids 或 source"))
 		return

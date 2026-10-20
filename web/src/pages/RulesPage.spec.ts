@@ -6,6 +6,7 @@ import * as directives from 'vuetify/directives'
 import RulesPage from './RulesPage.vue'
 import { endpoints } from '../api/endpoints'
 import { VSwitch } from 'vuetify/components'
+import { notifyState } from '../composables/useNotify'
 
 vi.mock('../api/endpoints', () => ({
   endpoints: {
@@ -453,6 +454,141 @@ describe('RulesPage', () => {
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect((w.vm as unknown as { groups: unknown[] }).groups).toEqual([])
+    w.unmount()
+  })
+
+
+  // ---------------- D-09：规则行多选 + 批量操作 ----------------
+
+  const D09_RULES = [
+    { id: 1, rule_type: 'DOMAIN-SUFFIX', rule_param: 'example.com', rule_config: 3, resolve_dns: true, enabled: true, sort_order: 1, source: 'local', group_name: '#3 HK' },
+    { id: 2, rule_type: 'IP-CIDR', rule_param: '10.0.0.0/8', rule_config: 0, resolve_dns: false, enabled: false, sort_order: 2, source: 'airport:PEK', group_name: '' },
+    { id: 3, rule_type: 'DOMAIN-KEYWORD', rule_param: 'ads', rule_config: 3, resolve_dns: true, enabled: true, sort_order: 3, source: 'local', group_name: '#3 HK' },
+  ]
+
+  function mountRules() {
+    return mount(RulesPage, {
+      global: {
+        plugins: [vuetify],
+        stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } },
+      },
+    })
+  }
+
+  it('D-09 表头全选命中当前筛选的全部行，批量禁用只调用一次且 ids 正确', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    const w = mountRules()
+    await flushPromises()
+    const table = w.find('[data-testid="table"]')
+    expect(table.exists()).toBe(true)
+    const headerBox = table.find('thead input[type="checkbox"]')
+    expect(headerBox.exists()).toBe(true)
+    await headerBox.setValue(true)
+    await flushPromises()
+    // 选中后批量条出现，并显示选中数量
+    expect(w.find('[data-testid="bulk-bar"]').exists()).toBe(true)
+    expect(w.find('[data-testid="bulk-selected-count"]').text()).toContain('3')
+    await w.find('[data-testid="bulk-disable"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledTimes(1)
+    expect(bulkRulesMock).toHaveBeenCalledWith({ ids: [1, 2, 3], enabled: false })
+    w.unmount()
+  })
+
+  it('D-09 筛选后表头全选只选中筛选命中的行', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    const w = mountRules()
+    await flushPromises()
+    await w.find('[data-testid="filter-disabled"]').trigger('click')
+    await flushPromises()
+    const headerBox = w.find('[data-testid="table"] thead input[type="checkbox"]')
+    expect(headerBox.exists()).toBe(true)
+    await headerBox.setValue(true)
+    await flushPromises()
+    await w.find('[data-testid="bulk-enable"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledTimes(1)
+    expect(bulkRulesMock).toHaveBeenCalledWith({ ids: [2], enabled: true })
+    w.unmount()
+  })
+
+  it('D-09 批量删除必须二次确认：取消不发请求，确认后才发送 delete payload', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    bulkRulesMock.mockResolvedValue({ deleted: 2 })
+    const w = mountRules()
+    await flushPromises()
+    const rowBoxes = w.findAll('[data-testid="table"] tbody input[type="checkbox"]')
+    expect(rowBoxes.length).toBe(3)
+    await rowBoxes[0].trigger('click')
+    await rowBoxes[1].trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="bulk-selected-count"]').text()).toContain('2')
+    await w.find('[data-testid="bulk-delete"]').trigger('click')
+    await flushPromises()
+    // 还没点确认：不能发请求
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    const confirmText = w.find('[data-testid="bulk-confirm-text"]')
+    expect(confirmText.exists()).toBe(true)
+    expect(confirmText.text()).toContain('删除')
+    expect(confirmText.text()).toContain('2')
+    // 取消：仍然不发请求
+    await w.find('[data-testid="bulk-confirm-cancel"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    // 再次打开并确认
+    await w.find('[data-testid="bulk-delete"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="bulk-confirm-delete"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledTimes(1)
+    expect(bulkRulesMock).toHaveBeenCalledWith({ ids: [1, 2], delete: true })
+    w.unmount()
+  })
+
+  it('D-09 批量失败：错误提示出来且不清空选择', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    bulkRulesMock.mockRejectedValueOnce(new Error('bulk boom'))
+    notifyState.open = false
+    const w = mountRules()
+    await flushPromises()
+    const headerBox = w.find('[data-testid="table"] thead input[type="checkbox"]')
+    await headerBox.setValue(true)
+    await flushPromises()
+    await w.find('[data-testid="bulk-disable"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledTimes(1)
+    expect(notifyState.open).toBe(true)
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('bulk boom')
+    // 失败不清空选择，允许重试
+    expect(w.find('[data-testid="bulk-bar"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('D-09 批量成功后：清空选择并刷新列表', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    bulkRulesMock.mockResolvedValue({ updated: 3 })
+    const w = mountRules()
+    await flushPromises()
+    const before = listRulesMock.mock.calls.length
+    const headerBox = w.find('[data-testid="table"] thead input[type="checkbox"]')
+    await headerBox.setValue(true)
+    await flushPromises()
+    await w.find('[data-testid="bulk-enable"]').trigger('click')
+    await flushPromises()
+    expect(listRulesMock.mock.calls.length).toBeGreaterThan(before)
+    expect(w.find('[data-testid="bulk-bar"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('D-09 规则行分页 footer 保留（每页数目 / 分页器）', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    const w = mountRules()
+    await flushPromises()
+    expect(w.find('[data-testid="table"]').exists()).toBe(true)
+    expect(w.find('.v-data-table-footer__items-per-page').exists()).toBe(true)
+    expect(w.find('.v-pagination').exists()).toBe(true)
+    expect(w.text()).toMatch(/每页数目|Items per page/)
     w.unmount()
   })
 })
