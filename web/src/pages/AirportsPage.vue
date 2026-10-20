@@ -65,6 +65,29 @@ const pendingDelete = ref<AirportRow | null>(null)
 
 const withRules = ref(false)
 
+// D-06：该开关状态存在服务端（airport.with_rules），挂载时读一次回填，
+// 刷新页面 / 换标签页后仍保持；切换时写回服务端。
+async function loadSettings(): Promise<void> {
+  try {
+    const r = await endpoints.listSettings()
+    const item = r.settings.find((s) => s.key === 'airport.with_rules')
+    if (item) {
+      withRules.value = item.value === 'true'
+    }
+  } catch {
+    // 读设置失败（离线/权限受限）保持本地默认值，不阻塞页面
+  }
+}
+
+async function saveWithRules(value: boolean | null): Promise<void> {
+  const on = value === true
+  try {
+    await endpoints.updateSettings({ 'airport.with_rules': on ? 'true' : 'false' })
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  }
+}
+
 const toggling = ref<number | null>(null)
 
 async function toggleEnabled(row: AirportRow, value: boolean): Promise<void> {
@@ -94,6 +117,7 @@ const refreshResults = ref<import('../api/endpoints').TrafficRefreshResult[]>([]
 const checking = ref(false)
 const checkResults = ref<SubscheckResult[]>([])
 const checkError = ref('')
+const checkSummary = ref<{ ok: number; fail: number; total: number } | null>(null)
 
 async function load(): Promise<void> {
   loading.value = true
@@ -194,9 +218,13 @@ async function checkAll(): Promise<void> {
 async function runCheck(ids?: number[]): Promise<void> {
   checking.value = true
   checkError.value = ''
+  checkSummary.value = null
   try {
     const r = await endpoints.checkAirports(ids)
     checkResults.value = r.results
+    // D-24：测活结束后给出结论（全部测活与单机场测活都显示）。
+    const ok = r.results.filter((x) => x.ok).length
+    checkSummary.value = { ok, fail: r.results.length - ok, total: r.results.length }
   } catch (err) {
     checkError.value = errorMessage(err)
   } finally {
@@ -248,6 +276,7 @@ function relativeTime(ts: number): string {
 
 onMounted(() => {
   void load()
+  void loadSettings()
   void restoreLastCheck()
 })
 
@@ -274,7 +303,8 @@ async function restoreLastCheck(): Promise<void> {
 
     <div class="airports-page__toolbar">
         <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact"
-          :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="mb-2"></v-switch>
+          :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="mb-2"
+          @update:model-value="saveWithRules"></v-switch>
     </div>
 
     <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
@@ -354,6 +384,9 @@ async function restoreLastCheck(): Promise<void> {
       </div>
 
       <div v-if="checkError !== ''" data-testid="check-error" class="text-error">{{ checkError }}</div>
+      <div v-if="checkSummary !== null" data-testid="check-summary" class="airports-page__summary">
+        测活完成：{{ checkSummary.ok }} 个可用 / {{ checkSummary.fail }} 个失败（共 {{ checkSummary.total }} 个）
+      </div>
       <div v-if="checkResults.length > 0" data-testid="check-results" class="airports-page__checks">
         <div v-for="res in checkResults" :key="res.url" data-testid="check-result-row" class="airports-page__check">
           <span>{{ res.url }}</span>

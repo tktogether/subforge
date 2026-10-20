@@ -18,6 +18,8 @@ vi.mock('../api/endpoints', () => ({
     refreshAllAirports: vi.fn(),
     checkAirports: vi.fn(),
     lastAirportCheck: vi.fn(),
+    listSettings: vi.fn(),
+    updateSettings: vi.fn(),
   },
 }))
 
@@ -32,6 +34,8 @@ const importMock = endpoints.importAirportRules as unknown as ReturnType<typeof 
 const refreshAllMock = endpoints.refreshAllAirports as unknown as ReturnType<typeof vi.fn>
 const checkMock = endpoints.checkAirports as unknown as ReturnType<typeof vi.fn>
 const lastCheckMock = endpoints.lastAirportCheck as unknown as ReturnType<typeof vi.fn>
+const listSettingsMock = endpoints.listSettings as unknown as ReturnType<typeof vi.fn>
+const updateSettingsMock = endpoints.updateSettings as unknown as ReturnType<typeof vi.fn>
 
 function makeAirport(overrides: Record<string, unknown> = {}) {
   return {
@@ -76,6 +80,8 @@ beforeEach(() => {
   refreshAllMock.mockResolvedValue({ ok: 1, fail: 0, imports: [{ airport_id: 1, name: 'HK', rules_added: 1, rules_skipped: 0, providers_added: 1, warnings: [], err: '' }] })
   checkMock.mockResolvedValue({ results: [makeCheckResult()] })
   lastCheckMock.mockResolvedValue({ results: [makeCheckResult()] })
+  listSettingsMock.mockResolvedValue({ settings: [] })
+  updateSettingsMock.mockResolvedValue({ settings: [] })
 })
 
 describe('AirportsPage', () => {
@@ -722,6 +728,89 @@ describe('AirportsPage', () => {
     await flushPromises()
     expect(updateMock).toHaveBeenCalledWith(row.id, expect.objectContaining({ enabled: false }))
     expect((w.vm as unknown as { toggling: number | null }).toggling).toBeNull()
+    w.unmount()
+  })
+
+
+  it('D-06 挂载时 listSettings 回填 airport.with_rules', async () => {
+    listSettingsMock.mockResolvedValueOnce({
+      settings: [
+        { key: 'airport.with_rules', value: 'true', kind: 'bool', label: '刷新时同时导入规则', description: '' },
+      ],
+    })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(listSettingsMock).toHaveBeenCalledTimes(1)
+    expect((w.vm as any).withRules).toBe(true)
+    w.unmount()
+  })
+
+  it('D-06 服务端没有该项时保持默认关闭', async () => {
+    listSettingsMock.mockResolvedValueOnce({ settings: [] })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect((w.vm as any).withRules).toBe(false)
+    w.unmount()
+  })
+
+  it('D-06 切换 with-rules 写回 updateSettings', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="with-rules"] input').setValue(true)
+    await flushPromises()
+    expect(updateSettingsMock).toHaveBeenCalledWith({ 'airport.with_rules': 'true' })
+    w.unmount()
+  })
+
+  it('D-06 listSettings 失败时静默保持默认，不阻塞页面', async () => {
+    listSettingsMock.mockRejectedValueOnce(new Error('settings boom'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect((w.vm as any).withRules).toBe(false)
+    expect(w.find('[data-testid="table"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('D-24 测活全部后显示「测活完成」汇总', async () => {
+    checkMock.mockResolvedValueOnce({
+      results: [
+        makeCheckResult({ ok: true }),
+        makeCheckResult({ url: 'https://y.com/sub', ok: false, err: 'timeout', latency: 0 }),
+      ],
+    })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="check-all"]').trigger('click')
+    await flushPromises()
+    const el = w.find('[data-testid="check-summary"]')
+    expect(el.exists()).toBe(true)
+    expect(el.text()).toContain('测活完成')
+    expect(el.text()).toContain('1 个可用')
+    expect(el.text()).toContain('1 个失败')
+    expect(el.text()).toContain('共 2 个')
+    w.unmount()
+  })
+
+  it('D-24 单机场测活同样显示汇总', async () => {
+    checkMock.mockResolvedValueOnce({
+      results: [makeCheckResult({ ok: false, err: 'boom', latency: 0 })],
+    })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="check-one"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="check-summary"]').text()).toContain('测活完成：0 个可用 / 1 个失败（共 1 个）')
+    w.unmount()
+  })
+
+  it('D-24 测活请求失败时只显示错误，不显示汇总', async () => {
+    checkMock.mockRejectedValueOnce(new Error('check boom'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="check-all"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="check-summary"]').exists()).toBe(false)
+    expect(w.find('[data-testid="check-error"]').text()).toContain('check boom')
     w.unmount()
   })
 

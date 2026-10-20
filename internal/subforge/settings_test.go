@@ -25,10 +25,10 @@ func TestListSettingsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSettings: %v", err)
 	}
-	if len(items) != 4 {
-		t.Fatalf("len = %d, want 4", len(items))
+	if len(items) != 5 {
+		t.Fatalf("len = %d, want 5", len(items))
 	}
-	wantKeys := []string{"script.enabled", "subscheck.enabled", "rules.manifest_path", "rules.output_dir"}
+	wantKeys := []string{"script.enabled", "subscheck.enabled", "rules.manifest_path", "rules.output_dir", "airport.with_rules"}
 	for i, k := range wantKeys {
 		if items[i].Key != k {
 			t.Fatalf("items[%d].Key = %q, want %q", i, items[i].Key, k)
@@ -45,6 +45,12 @@ func TestListSettingsDefaults(t *testing.T) {
 	}
 	if items[2].Kind != SettingKindPath || items[3].Kind != SettingKindPath {
 		t.Errorf("path kind: %q %q", items[2].Kind, items[3].Kind)
+	}
+	if items[4].Kind != SettingKindBool {
+		t.Errorf("airport.with_rules kind = %q, want bool", items[4].Kind)
+	}
+	if items[4].Value != "false" {
+		t.Errorf("airport.with_rules 默认值应 false, got %q", items[4].Value)
 	}
 }
 
@@ -93,8 +99,8 @@ func TestSetSettingsUnknownKey(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("ListSettings: %v", lerr)
 	}
-	if len(items) != 4 {
-		t.Fatalf("ListSettings 应 4 项, got %d", len(items))
+	if len(items) != 5 {
+		t.Fatalf("ListSettings 应 5 项, got %d", len(items))
 	}
 }
 
@@ -137,19 +143,46 @@ func TestListSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSettings: %v", err)
 	}
-	if len(items) != 4 {
-		t.Fatalf("len = %d", len(items))
+	if len(items) != 5 {
+		t.Fatalf("len = %d, want 5", len(items))
 	}
 	want := map[string]string{
 		"script.enabled":      "true",
 		"subscheck.enabled":   "false",
 		"rules.manifest_path": "/tmp/manifest.yaml",
 		"rules.output_dir":    "/tmp/out",
+		"airport.with_rules":  "false",
 	}
 	for _, it := range items {
 		if it.Value != want[it.Key] {
 			t.Fatalf("%s = %q, want %q", it.Key, it.Value, want[it.Key])
 		}
+	}
+}
+
+// TestSetSettingsAirportWithRules 覆盖 D-06：airport.with_rules 可写入并做 bool 归一化。
+func TestSetSettingsAirportWithRules(t *testing.T) {
+	ctx := context.Background()
+	m := newSettingsManager(t)
+	if err := m.SetSettings(ctx, map[string]string{"airport.with_rules": "on"}); err != nil {
+		t.Fatalf("SetSettings on: %v", err)
+	}
+	v, err := m.GetConfig(ctx, "airport.with_rules")
+	if err != nil || v != "true" {
+		t.Fatalf("airport.with_rules 应归一化为 true, got %q err=%v", v, err)
+	}
+	items, err := m.ListSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListSettings: %v", err)
+	}
+	if len(items) != 5 {
+		t.Fatalf("len = %d, want 5", len(items))
+	}
+	if items[4].Key != "airport.with_rules" || items[4].Value != "true" {
+		t.Fatalf("items[4] = %q %q, want airport.with_rules true", items[4].Key, items[4].Value)
+	}
+	if err := m.SetSettings(ctx, map[string]string{"airport.with_rules": "maybe"}); err == nil {
+		t.Fatal("非法 bool 应报错")
 	}
 }
 
