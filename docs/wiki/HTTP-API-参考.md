@@ -6,7 +6,7 @@
 
 ## 1. 服务概览
 
-HTTP 服务由 `subforge serve` 命令启动（`cmd/subforge/serve.go:96-109`），默认监听 `127.0.0.1:25500`。三个参数决定了接口的行为边界：`-token` 为空时不鉴权；`-data-dir` 为空时不启用 SQLite 订阅管理，相关接口统一返回 503；`-timeout` 默认为 30 秒，同时约束上游拉取与单请求。完整启动参数见[安装与部署](安装与部署)。
+HTTP 服务由 `subforge serve` 命令启动（`cmd/subforge/serve.go:108-113`），默认监听 `127.0.0.1:25500`。启动选项可以用环境变量提供默认值：`SUBFORGE_LISTEN`、`SUBFORGE_TOKEN`、`SUBFORGE_CONFIG`、`SUBFORGE_DATA_DIR` 分别对应 `-listen`、`-token`、`-config`、`-data-dir`，优先级为「环境变量 < 命令行参数 < INI 配置文件同名项」（`cmd/subforge/serve.go:123`）。三个参数决定了接口的行为边界：`-token` 为空时不鉴权；`-data-dir` 为空时不启用 SQLite 订阅管理，相关接口统一返回 503，而数据目录本身不要求预先存在，缺失时会自动创建（`cmd/subforge/serve.go:361`）；`-timeout` 默认为 30 秒，同时约束上游拉取与单请求。官方容器镜像（v0.1.4 起）预设了 `SUBFORGE_DATA_DIR=/data` 与 `SUBFORGE_LISTEN=0.0.0.0:25500`，容器裸跑即可使用；当前已发布的镜像（v0.1.3 及更早）仍是旧行为。完整启动参数见[安装与部署](安装与部署)。
 
 ### 1.1 请求处理链
 
@@ -34,7 +34,7 @@ flowchart LR
 
 绝大多数 `/api` 端点的错误响应是 JSON 对象 `{"error":"..."}`（`internal/api/subscription.go:37-39`）。例外是三个纯文本端点：
 
-- 未匹配到任何路由时返回 `404: 路径不存在`，`Content-Type: text/plain; charset=utf-8`（`internal/api/server.go:345-347`）。
+- 未匹配到任何路由时返回 `404: 路径不存在`，`Content-Type: text/plain; charset=utf-8`（`internal/api/server.go:369-372`）。
 - 令牌校验失败时返回 `401: 缺少或错误的访问令牌`（`internal/api/middleware.go:80-96`）。
 - 调试模式未开启时访问 `/debug/pprof/*` 由标准库返回 `404 page not found`（`internal/api/pprof.go:29-125`）。
 
@@ -67,11 +67,11 @@ curl -H "X-Token: <YOUR_TOKEN>" "http://127.0.0.1:25500/api/stats"
 - `GET /subscribe`：使用订阅令牌（sub_token）自鉴权。如果该端点也被全局令牌拦住，请求里的 `token` 会被拿去与服务端令牌比较，订阅令牌将永远无法通过校验。
 - 控制台静态外壳：`/`、`/assets/*`、`/favicon.ico`，以及会回退到 `index.html` 的前端路由深层链接（如 `/subscriptions`）。这些是构建产物、不含用户数据；不豁免的话，设置了令牌的部署连控制台页面都打不开。判定复用 SPA 回退的同一套前缀规则，因此凡是交给真实处理器的路径都不会被豁免。
 
-`/api/*`、`/sub`、`/profile`、`/render`、`/getruleset`、`/inspect`、`/version`、`/healthz`、`/metrics`、`/debug/pprof/*` 以及任何非 GET/HEAD 请求，一律照常校验令牌。
+`/api/*`、`/sub`、`/profile`、`/render`、`/getruleset`、`/inspect`、`/version`、`/healthz`、`/api/metrics`、`/debug/pprof/*` 以及任何非 GET/HEAD 请求，一律照常校验令牌。
 
 ## 3. 端点总表
 
-下表列出全部已注册路由。「数据目录」列标注该端点是否依赖 `-data-dir`：标注为「需要」的端点在没有数据目录时返回 503 `{"error":"订阅管理未启用"}`。
+下表列出全部已注册路由。「数据目录」列标注该端点是否依赖数据目录（`-data-dir` 或 `SUBFORGE_DATA_DIR`）：标注为「需要」的端点在没有数据目录时返回 503 `{"error":"订阅管理未启用"}`。
 
 | 方法 | 路径 | 用途 | 数据目录 |
 | --- | --- | --- | --- |
@@ -218,11 +218,9 @@ curl -o config.yaml \
 
 | 端点 | 响应 | 说明 |
 | --- | --- | --- |
-| `GET /version` | `subforge <版本> backend` 纯文本 | subconverter 兼容契约，不能返回 JSON（`internal/api/server.go:315-325`） |
-| `GET /api/version` | `name`、`version`、`startedAt`、`uptime`、`time` | 结构化版本信息（`internal/api/server.go:329-337`） |
-| `GET /healthz` | `{"status":"ok"}` | 存活探针，不做重活（`internal/api/server.go:340-342`） |
-
-版本为空时 `/version` 输出 `dev`（`internal/api/server.go:321-323`）。
+| `GET /version` | `subforge <版本> backend` 纯文本 | subconverter 兼容契约，不能返回 JSON，版本为空时输出 `dev`（`internal/api/server.go:340-350`） |
+| `GET /api/version` | `name`、`version`、`startedAt`、`uptime`、`time` | 结构化版本信息（`internal/api/server.go:354-362`） |
+| `GET /healthz` | `{"status":"ok"}` | 存活探针，不做重活（`internal/api/server.go:365-367`） |
 
 ### 4.5 POST /api/convert 与 POST /api/diff
 
@@ -253,7 +251,7 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 
 ## 5. 订阅管理端点
 
-本节所有端点都依赖 `-data-dir`。未指定数据目录时统一返回 503 `{"error":"订阅管理未启用"}`（`internal/api/subscription.go:42-48`）。
+本节所有端点都依赖数据目录。未提供 `-data-dir` 或 `SUBFORGE_DATA_DIR` 时统一返回 503 `{"error":"订阅管理未启用"}`（`internal/api/subscription.go:42-48`）；官方容器镜像（v0.1.4 起）已预设数据目录，容器内默认启用。
 
 ### 5.1 机场
 
@@ -319,9 +317,7 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 | POST | `/api/tokens` | `token`、`name`、`target`、`pipeline`、`config`、`include`、`exclude` | 201 `{"token":{...}}` |
 | GET、PUT、DELETE | `/api/tokens/{token}` | PUT 为部分更新 | `{"token":{...}}` 或 `{"ok":true}` |
 
-`token` 留空时由服务端生成：取 16 字节 `crypto/rand` 并编码为 32 位十六进制字符串（`internal/api/subscription.go:376-384`）。令牌对象字段为 `token`、`name`、`target`、`pipeline`、`config`、`include`、`exclude`、`created_at`。
-
-`PUT /api/tokens/{token}` 是部分更新：请求体中省略的字段保持原值，显式给出空串则清空该字段，空对象 `{}` 为幂等操作（`internal/api/subscription.go:415-451`）。令牌不存在时返回 404，错误信息形如 `令牌 xxx 不存在`。
+`token` 留空时由服务端生成：取 16 字节 `crypto/rand` 并编码为 32 位十六进制字符串（`internal/api/subscription.go:376-384`）。令牌对象字段为 `token`、`name`、`target`、`pipeline`、`config`、`include`、`exclude`、`created_at`。`PUT /api/tokens/{token}` 是部分更新：请求体中省略的字段保持原值，显式给出空串则清空该字段，空对象 `{}` 为幂等操作（`internal/api/subscription.go:415-451`）。令牌不存在时返回 404，错误信息形如 `令牌 xxx 不存在`。
 
 ### 5.6 流量
 
@@ -393,7 +389,7 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 
 Rule-Bot 建议队列未启用时，确认与拒绝接口返回 501 `Rule-Bot 建议队列未启用`（`internal/api/suggestions.go:20-114`）。`/api/logs` 的 `since` 为上一批最后一条的 `id`，用于增量拉取（`internal/api/web.go:130-137`）。
 
-`/api/targets` 返回 `registry.Available()` 的结果（`internal/api/web.go:109-111`），共 36 项：`clash.meta`、`surge`、`quan`、`quanx`、`loon`、`surfboard`、`mellow`、`list`、`mixed`、`ss`、`ssd`、`shadowsocks`、`ssr`、`shadowsocksr`、`trojan`、`v2ray`、`sing-box`、`singbox`、`ss-sub`、`ss-sub-json`、`ss-sub-b64`、`ssjson`、`quantumult`、`quantumultx`、`surge2`、`surge3`、`surge4`、`suri`、`clash-json`、`clash.json`、`clash.meta.json`、`clashmeta-json`、`clashmeta.json`、`mihomo.json`、`mellow-ios`、`sssub`（`internal/render/registry/registry.go:106-150`）。
+`/api/targets` 返回 `registry.Available()` 的结果（`internal/api/web.go:109-111`），共 36 项：`clash.meta`、`surge`、`quan`、`quanx`、`loon`、`surfboard`、`mellow`、`list`、`mixed`、`ss`、`ssd`、`shadowsocks`、`ssr`、`shadowsocksr`、`trojan`、`v2ray`、`sing-box`、`singbox`、`ss-sub`、`ss-sub-json`、`ss-sub-b64`、`ssjson`、`quantumult`、`quantumultx`、`surge2`、`surge3`、`surge4`、`suri`、`clash-json`、`clashmeta-json`、`mellow-ios`、`sssub`，以及 `clash`、`clash.meta`、`clashmeta`、`mihomo` 四个名字各加一个 `.json` 后缀构成的别名（`internal/render/registry/registry.go:106-150`）。
 
 除清单之外，解析器还接受若干未列入清单的写法：Clash YAML 别名 `clash`、`clashmeta`、`mihomo`、`yaml`、`clashr`，以及 `sub`、`subscription`（`internal/render/registry/registry.go:31-43`、`:117-120`）。这些写法在实测中都能正常转换，但不会出现在 `/api/targets` 的响应里。
 
@@ -408,7 +404,7 @@ Rule-Bot 建议队列未启用时，确认与拒绝接口返回 501 `Rule-Bot �
 | GET、PUT、DELETE | `/api/scripts/{id}` | PUT 要求 `name` 非空 | `{"script":{...}}` 或 `{"ok":true}` |
 | POST | `/api/scripts/test` | `code`、`kind`、`node`、`timeout` | `{"ok","kept","before","after","duration_ms","error"}` |
 
-`GET /api/pipelines` 合并两条来源：数据库中的管线在前，模板 `[pipeline:*]` 段落产生的只读管线在后，同名时数据库定义优先（`internal/api/pipelines.go:33-82`）。未指定 `-data-dir` 时只返回模板来源，不报错。新建重名管线返回 409 `流水线名称已存在`（`internal/api/pipelines.go:149-185`）。
+`GET /api/pipelines` 合并两条来源：数据库中的管线在前，模板 `[pipeline:*]` 段落产生的只读管线在后，同名时数据库定义优先（`internal/api/pipelines.go:33-82`）。未提供数据目录时只返回模板来源，不报错。新建重名管线返回 409 `流水线名称已存在`（`internal/api/pipelines.go:149-185`）。
 
 `POST /api/scripts/test` 的 `kind` 默认 `filter`，可取 `filter` 或 `operate`；`timeout` 单位为毫秒且上限为 30000；脚本执行失败时接口仍返回 HTTP 200，需要在响应体中读取 `ok` 与 `error`（`internal/api/scripts_test_api.go:22-80`）。
 
@@ -452,9 +448,7 @@ flowchart TD
 
 ### 7.2 生成过程与响应
 
-生成时读取「已启用且配置了订阅地址」的机场与「已启用」的自建节点；两者都为空时返回 400 `没有启用的订阅或自建节点`（`internal/api/subscription.go:609-647`）。自建节点会逐条写入临时文件，文件名形如 `self-<id>.txt`，权限 0600，请求结束后删除（`internal/api/subscription.go:622-647`）。
-
-代理分组会映射为目标格式的策略组：`regex` 非空时作为成员模式，`url` 作为测活地址，`interval` 作为测活间隔（`internal/api/subscription.go:654-674`）。规则行按 `rule_type,rule_param,policy` 拼装，`policy` 取 `rule_config` 对应的分组名，`resolve_dns` 为真时追加 `,no-resolve`（`internal/api/subscription.go:676-698`）。
+生成时读取「已启用且配置了订阅地址」的机场与「已启用」的自建节点；两者都为空时返回 400 `没有启用的订阅或自建节点`（`internal/api/subscription.go:609-647`）。自建节点会逐条写入临时文件，文件名形如 `self-<id>.txt`，权限 0600，请求结束后删除（`internal/api/subscription.go:622-647`）。代理分组会映射为目标格式的策略组：`regex` 非空时作为成员模式，`url` 作为测活地址，`interval` 作为测活间隔（`internal/api/subscription.go:654-674`）。规则行按 `rule_type,rule_param,policy` 拼装，`policy` 取 `rule_config` 对应的分组名，`resolve_dns` 为真时追加 `,no-resolve`（`internal/api/subscription.go:676-698`）。
 
 响应为 `text/plain; charset=utf-8` 纯文本，且不写 `Content-Disposition`（`internal/api/subscription.go:747`）。当流量策略可用时，响应会带上 `Subscription-Userinfo` 头，格式为 `upload=<字节>; download=<字节>; total=<字节>; expire=<Unix 秒>`（`internal/traffic/traffic.go:69-71`）。参与聚合的只有「启用、订阅地址非空且流量刷新时间大于 0」的机场（`internal/api/subscription.go:722-746`）。
 
@@ -493,7 +487,7 @@ flowchart TD
 - MCP 服务已实现但未接入：`internal/mcp/mcp.go` 提供了 JSON-RPC 的 `initialize`、`tools/list`、`tools/call`，工具为 `convert` 与 `list_targets`，但 `cmd/` 与 `internal/api/` 中没有任何入口暴露它，且 `list_targets` 返回的是硬编码的简化清单。
 - `pkg/subforge` 库入口在仓库内没有任何调用方。
 - SMTP 告警通道尚未实现，`Send` 恒定返回 `SMTP 通道尚未实现，请使用 Telegram 或 DingTalk`（`internal/scheduler/alert_channels.go:99-101`）。
-- 未指定 `-data-dir` 时，SQLite 订阅管理整体不启用，上表中标注「需要」的端点全部返回 503。
+- 未提供数据目录（裸二进制下的 `-data-dir` 或 `SUBFORGE_DATA_DIR`）时，SQLite 订阅管理整体不启用，上表中标注「需要」的端点全部返回 503；官方容器镜像（v0.1.4 起）已预设数据目录，默认不存在这个问题。
 
 ## 11. 相关页面
 

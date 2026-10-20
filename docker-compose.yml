@@ -1,4 +1,8 @@
 # SubForge Docker Compose
+#
+# 开箱即用：镜像已把 SUBFORGE_LISTEN 设为 0.0.0.0:25500、SUBFORGE_DATA_DIR 设为 /data，
+# 因此 `docker compose up -d` 之后直接访问 http://127.0.0.1:25500 就能看到控制台，
+# 订阅管理（SQLite）默认启用，数据落在具名卷里，容器重建不丢。
 services:
   subforge:
     build:
@@ -16,22 +20,24 @@ services:
         DATE: ${SUBFORGE_DATE:-unknown}
     image: subforge:latest
     container_name: subforge
-    # 容器内 serve 的默认监听地址是 127.0.0.1:25500，只监听容器回环；而 ports 做的是端口
-    # 发布（转发到容器网卡地址），两者不匹配时从宿主机访问会得到 Connection reset by peer。
-    # 因此这里显式绑定所有网卡。若要暴露到局域网，请再追加一行 -token 与你的访问令牌，
-    # 否则服务会对整个容器网络开放。
-    command:
-      - serve
-      - -listen
-      - 0.0.0.0:25500
     ports:
       - "25500:25500"
     volumes:
+      # 具名卷挂到数据目录：subforge.db 与规则源缓存都在这里，容器重建后数据仍在。
       - subforge-data:/data
+      # 只读挂载配置目录，供下面可选的 SUBFORGE_CONFIG 使用。
       - ./config:/config:ro
     environment:
-      - SUBFORGE_DATA=/data
-      - SUBFORGE_CONFIG=/config
+      # 订阅管理数据目录。serve 只认 SUBFORGE_DATA_DIR 这个名字。
+      - SUBFORGE_DATA_DIR=/data
+      # 容器内必须监听所有网卡：只绑 127.0.0.1 时，端口映射到宿主机后连接会被重置。
+      # 镜像默认已是该值，这里显式写出便于修改。
+      - SUBFORGE_LISTEN=0.0.0.0:25500
+      # 下面两项按需取消注释。注意 SUBFORGE_CONFIG 指向的是**文件**而不是目录，
+      # 且文件必须已存在，否则 serve 会以「读取配置 ... no such file or directory」退出。
+      # 设置 SUBFORGE_TOKEN 后，控制台首次打开会弹出令牌输入框，填入同一个值即可。
+      # - SUBFORGE_TOKEN=<YOUR_TOKEN>
+      # - SUBFORGE_CONFIG=/config/subforge.ini
     restart: unless-stopped
 volumes:
   subforge-data:

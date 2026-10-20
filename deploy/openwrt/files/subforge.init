@@ -1,5 +1,16 @@
 #!/bin/sh /etc/rc.common
 # SubForge init script for OpenWrt
+#
+# procd 只是把下面这些变量注入进程环境，serve 会照常读取它们，因此变量名与取值
+# 必须与 serve 的选项语义一致：
+#   SUBFORGE_DATA_DIR  等价于 -data-dir，目录不存在时由 serve 自动创建
+#   SUBFORGE_CONFIG    等价于 -config，取值必须是**文件**路径；指向目录会让 serve
+#                      以「读取配置 <路径>: is a directory」直接退出
+#   SUBFORGE_LISTEN    等价于 -listen
+#   SUBFORGE_TOKEN     等价于 -token
+#
+# 本脚本只设置数据目录。注意 OpenWrt 上 /var 是 tmpfs，重启即清空，所以数据目录
+# 落在 /etc/subforge/data 这类持久分区上；若改用外置存储，把下面的路径换掉即可。
 
 START=99
 USE_PROCD=1
@@ -7,8 +18,7 @@ USE_PROCD=1
 start_service() {
 	procd_open_instance
 	procd_set_param command /usr/bin/subforge serve
-	procd_set_param env SUBFORGE_DATA=/var/lib/subforge
-	procd_set_param env SUBFORGE_CONFIG=/etc/subforge
+	procd_set_param env SUBFORGE_DATA_DIR=/etc/subforge/data
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_set_param respawn

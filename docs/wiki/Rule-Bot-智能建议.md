@@ -187,11 +187,11 @@ subforge rulebot analyze ./subforge.log
 
 ## 8. 装配与启用条件
 
-Rule-Bot 只在指定了数据目录时启用，装配点在 `cmd/subforge/serve.go:159-172`：
+Rule-Bot 只在指定了数据目录时启用，装配点在 `cmd/subforge/serve.go:167-185`：
 
 ```mermaid
 flowchart LR
-    A[启动时指定 data-dir] --> B[创建空建议队列]
+    A[启动时提供数据目录] --> B[创建空建议队列]
     B --> C[注入 API 层]
     C --> D[创建闭环 Loop]
     D --> E[注入 API 层]
@@ -203,9 +203,9 @@ flowchart LR
 
 关键点有三条：
 
-- 没有 `-data-dir` 时不创建队列与闭环，相关接口返回 501（`cmd/subforge/serve.go:159`、`cmd/subforge/serve.go:168-172`）；
-- 启动时队列是**空的**，没有历史建议可读，必须先有日志被摄入（`cmd/subforge/serve.go:168` 的注释）；
-- 仓库内唯一的生产摄入点是调度器的失败回调：任务失败且错误非空时，以 `scheduler` 为来源、把 `任务名: 错误` 作为一行日志摄入（`cmd/subforge/serve.go:176-180`）。
+- 没有数据目录（`-data-dir` 与 `SUBFORGE_DATA_DIR` 都为空）时不创建队列与闭环，相关接口返回 501（`cmd/subforge/serve.go:167`、`cmd/subforge/serve.go:181-185`）；
+- 启动时队列是**空的**，没有历史建议可读，必须先有日志被摄入（`cmd/subforge/serve.go:181` 的注释）；
+- 仓库内唯一的生产摄入点是调度器的失败回调：任务失败且错误非空时，以 `scheduler` 为来源、把 `任务名: 错误` 作为一行日志摄入（`cmd/subforge/serve.go:189-193`）。
 
 ## 9. 当前实现边界
 
@@ -222,7 +222,7 @@ flowchart LR
 
 | 现象 | 可能原因 | 处理方式 |
 | --- | --- | --- |
-| 接口返回 501 与"建议队列未启用" | 启动时没有指定 `-data-dir` | 指定数据目录后重启服务 |
+| 接口返回 501 与"建议队列未启用" | 没有提供数据目录（`-data-dir` 与 `SUBFORGE_DATA_DIR` 都为空） | 用其中任一方式指定数据目录后重启服务 |
 | `GET /api/suggestions` 一直返回空数组 | 队列是空的，没有日志被摄入 | 确认调度器任务是否有失败记录 |
 | 确认了建议但 `applied` 为 0 | 内置模式的 `Rule` 为空串 | 属当前实现边界，见第 9 节 |
 | `rulebot pending` 报未知子命令 | 该子命令未实现 | 用 `GET /api/suggestions` 查看待确认建议 |

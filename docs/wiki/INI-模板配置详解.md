@@ -181,7 +181,7 @@ flowchart LR
 - 命令行 `convert` 的端口来自 `-mixed-port` 标志，默认 7890，不读 `[common]`
   （`cmd/subforge/convert.go:97`、`cmd/subforge/convert.go:166`）。
 - 服务端 `serve` 的端口来自 `[subforge] mixed_port` 或 `-mixed-port`
-  （`cmd/subforge/serve.go:116`、`cmd/subforge/serve.go:136-138`）。
+  （`cmd/subforge/serve.go:114`、`cmd/subforge/serve.go:124`、`cmd/subforge/serve.go:160`）。
 
 因此产物的端口请写在 `[subforge] mixed_port`（服务端）或用 `-mixed-port` 指定。
 
@@ -448,7 +448,7 @@ subforge convert -file sub.b64 -config demo.ini -pipeline lite
 
 这三个值都是"部署相关"而非"单次转换相关"：令牌属于部署凭证，混合端口属于客户端接入
 参数，产物名属于标识。它们集中在这里，配置文件热重载时可以直接生效
-（`cmd/subforge/serve.go:330-332`）。
+（`cmd/subforge/serve.go:346-349`）。
 
 ### 7.3 注意什么
 

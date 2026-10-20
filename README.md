@@ -33,16 +33,20 @@ mihomo，SubForge 自身只负责参数解析、节点变换管线与格式渲�
 chmod +x subforge-linux-amd64 && ./subforge-linux-amd64 version
 ```
 
-**二、使用公开镜像**：
+**二、使用容器镜像**：镜像已预设监听地址与数据目录，裸跑即可：
 
 ```sh
-docker run -d --name subforge -p 25500:25500 \
-    ghcr.io/tktogether/subforge:latest serve -listen 0.0.0.0:25500 -token <YOUR_TOKEN>
+docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+  ghcr.io/tktogether/subforge:latest
 ```
 
-`-listen 0.0.0.0:25500` 不能省：容器内 `serve` 默认只监听 `127.0.0.1:25500`，端口发布对它无效。
-`:latest` 基于 alpine 运行层、双架构、自带版本号与根证书；`:latest-scratch` 体积更小但没有根证书，
-只能配合 `http://` 上游或本地文件。
+不需要再传 `-listen` 或 `-data-dir`：镜像里 `SUBFORGE_LISTEN=0.0.0.0:25500` 让端口发布直达容器，
+`SUBFORGE_DATA_DIR=/data` 让订阅管理默认启用，SQLite 落在挂载的 `/data`。对外提供服务前请加
+`-e SUBFORGE_TOKEN=<YOUR_TOKEN>` 开启鉴权。`:latest` 基于 alpine 运行层、双架构、自带版本号与根证书；
+`:latest-scratch` 体积更小但没有根证书，只能配合 `http://` 上游或本地文件。自行构建镜像则用
+`docker build -t subforge:local -f Dockerfile.alpine .`。
+
+> 这两个预设从 v0.1.4 起进入镜像；更早的标签仍需自行传 `-listen 0.0.0.0:25500` 与 `-data-dir /data`。
 
 **三、从源码构建**：`go build -o bin/subforge ./cmd/subforge`（等价于 `make build`）。需要 Go 1.26.0
 （以 [go.mod](go.mod) 为准），依赖已 vendored，构建不需要联网。`make cross` 一次产出完整交付矩阵：
@@ -72,9 +76,11 @@ flowchart LR
 bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 ```
 
-`-data-dir` 用于启用订阅管理（SQLite），不指定时管理类接口返回 `503`。设置了 `-token` 后鉴权是**全局**的：
-`/healthz`、`/version` 同样需要携带令牌，可以用 `Authorization: Bearer <YOUR_TOKEN>`、`X-Token` 请求头
-或 `?token=` 查询参数。`url` 参数本身是一条 URL，多个订阅源请用 `;` 分隔，不能用 `?`。
+`-data-dir` 用于启用订阅管理（SQLite），目录不存在时会自动创建；裸二进制不指定该选项时管理类接口返回
+`503`（启动日志会提示如何启用），仓库内的 Dockerfile 已预设 `SUBFORGE_DATA_DIR=/data`，容器默认就是启用
+状态（公开镜像要到 v0.1.4 才如此）。设置了 `-token` 后鉴权是**全局**的：`/healthz`、`/version` 同样需要
+携带令牌，可以用 `Authorization: Bearer <YOUR_TOKEN>`、`X-Token` 请求头或 `?token=` 查询参数。`url`
+参数本身是一条 URL，多个订阅源请用 `;` 分隔，不能用 `?`。
 
 常用参数：
 
@@ -93,12 +99,25 @@ bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 模板文件，改动后一秒内生效，不需要重启；`token` 与 `mixed_port` 同样热重载。模板段落与覆盖层写法见
 [INI 模板配置详解](docs/wiki/INI-模板配置详解.md)。
 
+`serve` 的四个选项还可以用环境变量给默认值，容器与 systemd 部署不必每次敲参数：
+
+| 环境变量 | 等价选项 |
+| --- | --- |
+| `SUBFORGE_LISTEN` | `-listen` |
+| `SUBFORGE_TOKEN` | `-token` |
+| `SUBFORGE_CONFIG` | `-config`（指向 INI 文件，不是目录） |
+| `SUBFORGE_DATA_DIR` | `-data-dir` |
+
+优先级从低到高是**环境变量 < 命令行参数 < INI 的 `[subforge]` 同名项**。仓库内的 Dockerfile 预设了
+`SUBFORGE_LISTEN` 与 `SUBFORGE_DATA_DIR`；旧名字 `SUBFORGE_DATA` 已废弃，写错不会报错，只会静默地退回
+「未启用订阅管理」。
+
 ## 支持的目标格式
 
 | 族 | 代表 target | 说明 |
 | --- | --- | --- |
 | Clash / mihomo | `clash.meta` | YAML，别名 `clash`、`mihomo`、`yaml` |
-| Clash / mihomo JSON | `clash.meta.json` | JSON，别名 `clash.json`、`mihomo.json` |
+| Clash / mihomo JSON | JSON 变体 | 与 YAML 版同一批别名，target 名以 `.json` 结尾 |
 | sing-box | `sing-box` | JSON，别名 `singbox` |
 | Surge | `surge` | 行式配置，别名 `surge2`、`surge3`、`surge4` |
 | Quantumult X | `quanx` | 行式配置，别名 `quan`、`quantumultx` |
@@ -115,12 +134,12 @@ bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 | `GET /sub` | 主转换入口，另有 `/profile`、`/render` 两个别名 |
 | `GET /getruleset` | 规则集输出，六种 `type` |
 | `GET /inspect` | 回显解析后的参数，用于排障 |
-| `GET /subscribe` | 按令牌聚合输出订阅，需 `-data-dir` |
+| `GET /subscribe` | 按令牌聚合输出订阅，需启用订阅管理 |
 | `POST /api/convert` | JSON 转换接口 |
 | `GET /version`、`/healthz` | 版本信息与存活探针 |
 | `GET /api/targets`、`/api/rulesets` | 目标格式与模板规则集列表 |
 | `GET /api/stats`、`/api/metrics` | 转换统计与运行时指标 |
-| `/api/airports`、`/api/rules`、`/api/tasks` | 订阅管理与运维接口，需 `-data-dir` |
+| `/api/airports`、`/api/rules`、`/api/tasks` | 订阅管理与运维接口，需启用订阅管理 |
 
 完整的端点、请求与响应定义见 [HTTP API 参考](docs/wiki/HTTP-API-参考.md)。
 
@@ -166,11 +185,12 @@ Node 20.19+），构建产物由 Go 的 `embed` 打进二进制；具体命令�
 - `subscheck` 订阅测活默认关闭，需要显式执行 `subforge subscheck`。
 - MCP 服务与 `pkg/subforge` 公开库已实现但未接入，没有调用入口。
 - SMTP 告警通道尚未实现，请使用 Telegram 或 DingTalk。
-- 不指定 `-data-dir` 时，订阅管理与运维类接口返回 `503`。
+- 裸二进制不指定 `-data-dir`（或 `SUBFORGE_DATA_DIR`）时，订阅管理与运维类接口返回 `503`；仓库内
+  Dockerfile 构建的镜像已预设数据目录，不受影响。
 - `condition-gate` 条件覆盖准层只在夜间任务或手动触发时运行，不进入 `make verify`。
 - mips 与 mipsle 不在交付矩阵内，`modernc.org/sqlite` 没有这两个平台的构建支持。
-- `SUBFORGE_DATA`、`SUBFORGE_CONFIG` 环境变量与 OpenWrt 的 `/etc/config/subforge` 选项当前都不被读取，
-  启用订阅管理需要在命令里显式传 `-data-dir`。
+- OpenWrt 的 `/etc/config/subforge` 选项当前不被读取，init 脚本用的是 procd 环境变量；需要 INI 配置时
+  把 `SUBFORGE_CONFIG` 指向一个真实存在的文件，指向目录会让服务启动失败。
 
 ## 许可证与致谢
 

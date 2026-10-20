@@ -12,6 +12,13 @@
 #   docker run --rm -v subforge-data:/data subforge:latest \
 #       convert -file /data/sub.txt -format sing-box -out /data/cfg.json
 #
+# 开箱即用：下面三个 ENV 是 `serve` 真正读取的环境变量，镜像因此无需额外参数即可
+# 从宿主机访问、并默认启用订阅管理（SQLite 落在 /data）。命令行参数优先级更高，
+# 例如 `docker run ... subforge:latest serve -listen 127.0.0.1:25500` 会覆盖 SUBFORGE_LISTEN。
+#   SUBFORGE_LISTEN    0.0.0.0:25500  容器内必须监听所有网卡，端口映射才通
+#   SUBFORGE_DATA_DIR  /data          订阅管理数据库与规则源落盘目录（配合 VOLUME 持久化）
+#   SUBFORGE_TOKEN     未设置         需要鉴权时用 -e SUBFORGE_TOKEN=... 传入
+#
 # 多架构：构建阶段固定在 BUILDPLATFORM 上原生执行，只把目标平台交给 Go 交叉编译
 # （GOOS/GOARCH 取自 buildx 注入的 TARGETOS/TARGETARCH），因此多架构构建不需要为编译
 # 过程做指令级模拟。运行阶段基于 scratch，不需要执行任何程序，同样不依赖模拟。
@@ -63,8 +70,14 @@ FROM scratch
 COPY --from=builder /out/subforge /usr/local/bin/subforge
 COPY LICENSE /LICENSE
 
-# 运行时数据目录（HTTP 缓存等），挂卷持久化。
-ENV SUBFORGE_DATA=/data
+# 运行时数据目录：订阅管理数据库（subforge.db）与规则源缓存的落盘位置，挂卷持久化。
+# 变量名必须是 SUBFORGE_DATA_DIR —— serve 只认这个；写错名字不会报错，只会静默地
+# 退回「未启用订阅管理」，控制台相关接口全部 503。
+ENV SUBFORGE_DATA_DIR=/data
+
+# 容器内必须监听所有网卡：只绑 127.0.0.1 的话，端口映射到宿主机后连接会被重置。
+ENV SUBFORGE_LISTEN=0.0.0.0:25500
+
 VOLUME ["/data"]
 
 # subconverter 习惯端口，对齐默认配置。

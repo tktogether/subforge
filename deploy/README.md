@@ -25,8 +25,7 @@ chmod +x subforge-linux-amd64
 ```
 
 单二进制在 36～38 MiB 量级（见[发布验证报告](../docs/reports/v0.1.2-release-verification.md)），
-按 40 MB 规划镜像、分区或下载预算。同一个 tag 的资产体积随 Go 工具链补丁版本浮动，
-`make cross` 与 CI 的差异属正常。
+按 40 MB 规划镜像、分区或下载预算。同一个 tag 的资产体积随 Go 工具链补丁版本浮动。
 
 ## 2. systemd 单元
 
@@ -49,8 +48,8 @@ systemctl status subforge
 `ExecStart` 里的 `--config /etc/subforge/subforge.ini` **指向的文件必须先存在**：指向不存在的
 路径时 `serve` 立刻退出，报
 `subforge: 读取配置 <path>: open <path>: no such file or directory`（退出码 1）；空文件可以正常
-启动，所有配置项都有内置默认值，按需往里面填即可。缓存目录 `/var/lib/subforge/cache` 由单元里的
-`StateDirectory=subforge` 自动创建，不需要手工 `mkdir`。
+启动，所有配置项都有内置默认值。缓存目录 `/var/lib/subforge/cache` 由单元里的
+`StateDirectory=subforge` 自动创建。
 
 单元默认只监听 `127.0.0.1:25500`，没有写 `--token`。默认监听本机时不设令牌是安全的；
 一旦要把监听地址改成 `0.0.0.0`，**必须先设令牌**——程序对"绑到所有网卡且无令牌"这组组合
@@ -89,6 +88,11 @@ docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
 号），`:latest-scratch` 与 `:v0.1.2-scratch` 是同一份（scratch 运行层）。`:v0.1.0` 与
 `:v0.1.1` 仍在，但 `v0.1.0` 只有 amd64 且不带版本号，别再用。
 
+> **已发布的公开镜像还没有下面的开箱即用默认值**：它构建于本次改造之前，`serve` 仍然只监听
+> `127.0.0.1:25500`，所以拉取路线必须像上面那样显式写 `-listen 0.0.0.0:25500`，否则端口
+> 发布打不通（`HTTP=000` / `Recv failure: Connection reset by peer`）。自行构建的镜像才带
+> 默认值，裸跑即可。
+
 ### 路线二：自行构建
 
 ```sh
@@ -107,18 +111,43 @@ docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.alpine -t s
 ```
 
 不传 `--build-arg` 时镜像自报 `dev (commit none, built unknown)`
-（`Dockerfile:37-39`、`Dockerfile.alpine:28-30`）。两个 Dockerfile 的构建阶段都固定在
+（`Dockerfile:44-46`、`Dockerfile.alpine:35-37`）。两个 Dockerfile 的构建阶段都固定在
 `$BUILDPLATFORM` 上原生执行，只把目标平台交给 Go 交叉编译（`GOOS`/`GOARCH` 取自 buildx 注入的
 `TARGETOS`/`TARGETARCH`），所以多架构构建不需要指令级模拟。
 
 > **不要在 `Dockerfile` 里写 `ARG LDFLAGS=...${VERSION}...`。** Docker 在声明 ARG 时就把
 > `${VERSION}` 展开成声明处的默认值，`--build-arg VERSION=...` 覆盖不到它，镜像会永远自报
 > `dev (commit none, built unknown)`。要在 `go build` 的 `-ldflags` 里直接引用 ARG
-> （`Dockerfile:54-59`、`Dockerfile.alpine:44-49`）。
+> （`Dockerfile:62`、`Dockerfile.alpine:52`）。
+
+### 环境变量与开箱即用
+
+`serve` 的四个选项支持用环境变量给默认值，优先级从低到高是
+**环境变量 < 命令行参数 < 配置文件同名项**。配置文件里能覆盖的只有 `token`、`mixed_port`、
+`name` 三项（INI 的 `[subforge]` 段），`-listen` 与 `-data-dir` 没有对应的 INI 项。
+
+| 环境变量 | 等价选项 | 说明 |
+| --- | --- | --- |
+| `SUBFORGE_LISTEN` | `-listen` | 监听地址 |
+| `SUBFORGE_TOKEN` | `-token` | 访问令牌 |
+| `SUBFORGE_CONFIG` | `-config` | INI 文件路径（**必须是文件，不能是目录**） |
+| `SUBFORGE_DATA_DIR` | `-data-dir` | 订阅管理数据目录（SQLite） |
+
+两个 Dockerfile 都预设了 `SUBFORGE_LISTEN=0.0.0.0:25500` 与 `SUBFORGE_DATA_DIR=/data`
+（`Dockerfile:76`、`:79`，`Dockerfile.alpine:69`、`:72`），所以**自行构建的镜像裸跑就可用**：
+
+```sh
+docker run -d -p 25500:25500 -v subforge-data:/data subforge:alpine
+```
+
+订阅管理随之默认启用，数据库落在 `/data`（配合 `VOLUME` 持久化）；`-data-dir` 指向的目录
+**不存在时会自动创建**，不需要提前 `mkdir`（`cmd/subforge/serve.go:170`）。**裸二进制没有
+这些默认值**：不给 `-data-dir` 也不给 `SUBFORGE_DATA_DIR` 时订阅管理不启用，控制台的订阅、
+规则、令牌、任务等接口返回 503，启动日志会打印一行提示（`cmd/subforge/serve.go:247-248`）。
 
 ### 运行
 
-容器默认命令是 `serve`（`Dockerfile:74-75`、`Dockerfile.alpine:67-68`），覆盖命令即可执行
+容器默认命令是 `serve`（`Dockerfile:87-88`、`Dockerfile.alpine:80-81`），覆盖命令即可执行
 其他子命令：
 
 ```sh
@@ -126,27 +155,25 @@ docker run --rm -v subforge-data:/data subforge:alpine convert \
     -file /data/nodes.txt -format sing-box -out /data/cfg.json
 ```
 
-`-listen 0.0.0.0:25500` **不能省**：`serve` 默认只监听 `127.0.0.1:25500`
-（`cmd/subforge/serve.go:100`），在容器里就是容器自己的回环网卡，`-p` 发布出去的端口打不通
-（宿主机 `curl` 得到 `HTTP=000` / `Recv failure: Connection reset by peer`，容器内回环访问
-却是 200）。
+`serve` 默认只监听 `127.0.0.1:25500`（`cmd/subforge/serve.go:108`），在容器里就是容器自己的
+回环网卡，`-p` 发布出去的端口打不通。自行构建的镜像已用 `SUBFORGE_LISTEN` 覆盖该默认值，
+公开镜像则要显式传 `-listen 0.0.0.0:25500`。
 
 ### docker compose
 
-`docker-compose.yml` 构建 `Dockerfile.alpine`（`docker-compose.yml:9`），并在
-`container_name` 之后显式补了 `command: [serve, -listen, 0.0.0.0:25500]`
-（`docker-compose.yml:23`）——**没有这段 `command` 时端口发布同样打不通**。
+`docker-compose.yml` 构建 `Dockerfile.alpine`（`docker-compose.yml:13`），`environment` 里
+只保留 `SUBFORGE_DATA_DIR=/data` 与 `SUBFORGE_LISTEN=0.0.0.0:25500`
+（`docker-compose.yml:30-35`），没有 `command:` 覆盖——镜像的默认值已经够用。
 
 ```sh
 docker compose up -d --build
 curl http://127.0.0.1:25500/healthz    # {"status":"ok"}
 ```
 
-`docker-compose.yml` 与两个 Dockerfile 里的 `SUBFORGE_DATA`、`SUBFORGE_CONFIG` 只用于声明
-路径，`serve` **不读取**这两个变量；非测试代码里读取环境变量的只有 `SUBFORGE_DATA_DIR`
-（`cmd/subforge/doctor.go:62`）、`PATH`（`cmd/subforge/doctor.go:126`）、
-`TELEGRAM_CHAT_ID`（`cmd/subforge/scheduler.go:47`）、`SUBFORGE_DEBUG`
-（`internal/api/pprof.go:22`）。监听地址、令牌等参数以命令行参数与 INI 配置文件为准。
+非测试代码里读取环境变量的位置：上面四个选项（`cmd/subforge/serve.go:108-113`）、
+`SUBFORGE_DATA_DIR`（`cmd/subforge/doctor.go:62`）、`PATH`（`cmd/subforge/doctor.go:126`）、
+`TELEGRAM_CHAT_ID`（`cmd/subforge/scheduler.go:47`）、`SUBFORGE_DEBUG`（`internal/api/pprof.go:22`）。
+`SUBFORGE_DATA` 这个旧名字**没有任何代码读取**，别再用。
 
 ## 4. OpenWrt
 
@@ -182,11 +209,9 @@ cp -a <repo>/deploy/openwrt/bin/subforge package/subforge/bin/
 make package/subforge/compile V=s
 ```
 
-产物落在 **`<sdk>/bin/packages/<PKGARCH>/base/`**（不是 `bin/targets/...`），文件名形如
-`subforge_1.0.0-r1_x86_64.ipk`。x86/64 与 `aarch64_cortex-a72` 两个目标都实测成功，
-完整记录见 [OpenWrt 打包验证报告](../docs/reports/openwrt-packaging-verification.md)。
-
-### 检查 ipk 内容
+产物落在 **`<sdk>/bin/packages/<PKGARCH>/base/`**（不是 `bin/targets/...`），形如
+`subforge_1.0.0-r1_x86_64.ipk`。x86/64 与 `aarch64_cortex-a72` 两个目标都实测成功，完整记录见
+[OpenWrt 打包验证报告](../docs/reports/openwrt-packaging-verification.md)。
 
 这个 SDK 产出的 `.ipk` **外层是 gzip 包一层 tar，不是 `ar` 归档**（`ar t` 会报
 `file format not recognized`），要看内容必须先 `gunzip`：
@@ -203,16 +228,23 @@ tar -xzf data.tar.gz               # ./usr/bin/subforge ./etc/init.d/subforge ./
 
 ### 两个必须知道的坑
 
-**1. `files/subforge.conf` 的 UCI 选项当前没有任何代码读取。** `files/subforge.init` 里
-没有 `config_load`/`config_get`，脚本硬编码了 `SUBFORGE_DATA`、`SUBFORGE_CONFIG` 两个
-环境变量，而这两个变量全仓库无人读取——`serve` 的入口是命令行 flag。所以 UCI 里改 `port`、
-`data_dir`、`log_level` **不会生效**，要改行为只能编辑 init 脚本里的命令行。这是已知缺陷，
-详见 `docs/wiki/安装与部署.md` 第 7.4 节。
+**1. `files/subforge.conf` 的 UCI 选项当前没有任何代码读取。** `files/subforge.init` 里没有
+`config_load`/`config_get`，UCI 里改 `port`、`data_dir`、`log_level` **不会生效**。init 脚本
+用的是 procd 环境变量，跟上面容器那四个是同一套语义——procd 只是把变量注入进程环境，`serve`
+照常读取，所以变量名与取值都必须和选项一致。脚本当前只设 `SUBFORGE_DATA_DIR`
+（`deploy/openwrt/files/subforge.init:18`），取值是 `/etc/subforge/data`：`/var` 在 OpenWrt 上是
+tmpfs，放那里重启就没了，因此落在持久分区上。
 
-**2. 包内二进制比放进去的源文件小几 KB，这是正常的。** SDK 打包时会对安装树跑
-`scripts/rstrip.sh`，它对 ELF 可执行文件调用 `staging_dir/host/bin/sstrip -z` 削掉节头表等
-运行时不需要的数据。被处理过的二进制 `file` 会报 `too large section header offset`，但仍能
-正常运行。
+早期版本这里写的是 `SUBFORGE_DATA=/var/lib/subforge` 与 `SUBFORGE_CONFIG=/etc/subforge`，两行
+都不可用：前者是已废弃的变量名（没有任何代码读取，订阅管理静默不启用），后者指向**目录**而
+`serve` 只认文件路径，会让服务以 `读取配置 ...: is a directory` 退出（退出码 1）。如果你的固件
+包里还是这两行，按上面的写法替换即可。需要 INI 配置时把 `SUBFORGE_CONFIG` 指向一个**真实存在的
+文件**（例如 `/etc/subforge/subforge.ini`），空文件也能正常启动。详见 `docs/wiki/安装与部署.md`
+第 7.4 节。
+
+**2. 包内二进制比放进去的源文件小几 KB，这是正常的。** SDK 打包时会对安装树跑 `rstrip.sh`，
+它对 ELF 可执行文件调用 `sstrip -z` 削掉节头表等运行时不需要的数据；被处理过的二进制 `file`
+会报 `too large section header offset`，但仍能正常运行。
 
 ### 改了二进制之后怎么重打
 

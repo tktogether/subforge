@@ -35,17 +35,24 @@ owns parameter parsing, the node transformation pipeline and format rendering.
 chmod +x subforge-linux-amd64 && ./subforge-linux-amd64 version
 ```
 
-**2. Use the published image**:
+**2. Use the container image**: the image presets the listen address and the data directory, so a bare run
+works:
 
 ```sh
-docker run -d --name subforge -p 25500:25500 \
-    ghcr.io/tktogether/subforge:latest serve -listen 0.0.0.0:25500 -token <YOUR_TOKEN>
+docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+  ghcr.io/tktogether/subforge:latest
 ```
 
-`-listen 0.0.0.0:25500` is not optional: inside a container `serve` listens on `127.0.0.1:25500` by
-default, which published ports cannot reach. `:latest` uses an alpine runtime layer, ships both
-`linux/amd64` and `linux/arm64`, and carries the version string and root certificates; `:latest-scratch` is
-smaller but has no root certificates and only works with `http://` upstreams or local files.
+No `-listen` or `-data-dir` is needed: `SUBFORGE_LISTEN=0.0.0.0:25500` makes the published port reach the
+container, and `SUBFORGE_DATA_DIR=/data` enables subscription management by default, with SQLite stored in the
+mounted `/data` volume. Add `-e SUBFORGE_TOKEN=<YOUR_TOKEN>` before exposing the service. `:latest` uses an
+alpine runtime layer, ships both `linux/amd64` and `linux/arm64`, and carries the version string and root
+certificates; `:latest-scratch` is smaller but has no root certificates and only works with `http://` upstreams
+or local files. To build the image yourself, use
+`docker build -t subforge:local -f Dockerfile.alpine .`.
+
+> Both presets reach the image starting with v0.1.4; earlier tags still need `-listen 0.0.0.0:25500` and
+> `-data-dir /data` passed explicitly.
 
 **3. Build from source**: `go build -o bin/subforge ./cmd/subforge` (equivalent to `make build`). Go 1.26.0
 is required (see [go.mod](go.mod)); dependencies are vendored, so the build needs no network access.
@@ -77,10 +84,13 @@ With the HTTP service running, point the client at
 bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 ```
 
-`-data-dir` enables subscription management (SQLite); without it the management endpoints return `503`.
-Once `-token` is set, authentication is **global**: `/healthz` and `/version` need the token too, supplied
-through `Authorization: Bearer <YOUR_TOKEN>`, the `X-Token` header or the `?token=` query parameter. The
-`url` parameter is itself a URL, so separate multiple subscriptions with `;`, never with `?`.
+`-data-dir` enables subscription management (SQLite) and the directory is created when missing; a bare
+binary without it returns `503` from the management endpoints (the startup log explains how to enable it),
+while the Dockerfiles in this repository preset `SUBFORGE_DATA_DIR=/data`, so containers are enabled out of
+the box (published images only from v0.1.4). Once `-token` is set, authentication is **global**: `/healthz`
+and `/version` need the token too, supplied through `Authorization: Bearer <YOUR_TOKEN>`, the `X-Token`
+header or the `?token=` query parameter. The `url` parameter is itself a URL, so separate multiple
+subscriptions with `;`, never with `?`.
 
 Common parameters:
 
@@ -100,12 +110,27 @@ built-in defaults**. `serve -config` watches the template file and applies chang
 restart; `token` and `mixed_port` reload the same way. Template sections and override syntax are covered in
 [INI template reference](docs/wiki/INI-模板配置详解.md).
 
+Four `serve` options also take an environment variable as their default, so container and systemd deployments
+do not have to repeat flags:
+
+| Environment variable | Equivalent option |
+| --- | --- |
+| `SUBFORGE_LISTEN` | `-listen` |
+| `SUBFORGE_TOKEN` | `-token` |
+| `SUBFORGE_CONFIG` | `-config` (an INI file, not a directory) |
+| `SUBFORGE_DATA_DIR` | `-data-dir` |
+
+Precedence, lowest first: **environment variable < command-line parameter < the matching key in the INI
+`[subforge]` section**. The Dockerfiles in this repository preset `SUBFORGE_LISTEN` and `SUBFORGE_DATA_DIR`;
+the old name `SUBFORGE_DATA` is deprecated — a wrong name raises no error, it silently falls back to
+"subscription management disabled".
+
 ## Supported Target Formats
 
 | Family | Representative target | Notes |
 | --- | --- | --- |
 | Clash / mihomo | `clash.meta` | YAML; aliases `clash`, `mihomo`, `yaml` |
-| Clash / mihomo JSON | `clash.meta.json` | JSON; aliases `clash.json`, `mihomo.json` |
+| Clash / mihomo JSON | JSON variant | same aliases as the YAML form; target names end in `.json` |
 | sing-box | `sing-box` | JSON; alias `singbox` |
 | Surge | `surge` | Line-based config; aliases `surge2`, `surge3`, `surge4` |
 | Quantumult X | `quanx` | Line-based config; aliases `quan`, `quantumultx` |
@@ -123,12 +148,12 @@ The full target and alias list lives in
 | `GET /sub` | Main conversion entry point; `/profile` and `/render` are aliases |
 | `GET /getruleset` | Ruleset output with six `type` values |
 | `GET /inspect` | Echoes the parsed parameters, for troubleshooting |
-| `GET /subscribe` | Token-scoped aggregated subscription; requires `-data-dir` |
+| `GET /subscribe` | Token-scoped aggregated subscription; requires subscription management |
 | `POST /api/convert` | JSON conversion endpoint |
 | `GET /version`, `/healthz` | Version information and liveness probe |
 | `GET /api/targets`, `/api/rulesets` | Target formats and template rulesets |
 | `GET /api/stats`, `/api/metrics` | Conversion statistics and runtime metrics |
-| `/api/airports`, `/api/rules`, `/api/tasks` | Management and operations endpoints; require `-data-dir` |
+| `/api/airports`, `/api/rules`, `/api/tasks` | Management and operations endpoints; require subscription management |
 
 Full endpoint, request and response definitions are in the
 [HTTP API reference](docs/wiki/HTTP-API-参考.md).
@@ -175,11 +200,13 @@ Coverage gates: 80% statement coverage and 100% function coverage. The front end
 - `subscheck` subscription health checks are off by default and must be invoked as `subforge subscheck`.
 - The MCP server and the `pkg/subforge` public library are implemented but not wired to any entry point.
 - The SMTP alert channel is not implemented; use Telegram or DingTalk.
-- Without `-data-dir`, subscription management and operations endpoints return `503`.
+- A bare binary without `-data-dir` (or `SUBFORGE_DATA_DIR`) returns `503` from subscription management and
+  operations endpoints; the images built from this repository preset the data directory and are unaffected.
 - The `condition-gate` tier runs only in the nightly job or on manual dispatch, never as part of `make verify`.
 - mips and mipsle are outside the delivery matrix because `modernc.org/sqlite` has no build support for them.
-- The `SUBFORGE_DATA` and `SUBFORGE_CONFIG` environment variables and the OpenWrt `/etc/config/subforge`
-  options are currently not read; enable subscription management by passing `-data-dir` explicitly.
+- The OpenWrt `/etc/config/subforge` options are currently not read; the init script uses procd environment
+  variables instead. Point `SUBFORGE_CONFIG` at an existing file when you need INI configuration — a directory
+  makes the service fail to start.
 
 ## License and Acknowledgements
 

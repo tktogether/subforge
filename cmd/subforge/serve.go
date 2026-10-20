@@ -45,6 +45,14 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   -data-dir   订阅管理数据目录（SQLite，默认不启用）
   -name      写入产物注释头的配置名（启动时固定）
 
+环境变量（作为对应选项的默认值，显式传入的命令行参数优先级更高）:
+  SUBFORGE_LISTEN    同 -listen
+  SUBFORGE_TOKEN     同 -token
+  SUBFORGE_CONFIG    同 -config
+  SUBFORGE_DATA_DIR  同 -data-dir
+  官方容器镜像预设了 SUBFORGE_LISTEN、SUBFORGE_DATA_DIR 与 SUBFORGE_TOKEN（后者留空），
+  因此 docker run -p 25500:25500 开箱即可从宿主机访问，且订阅管理默认启用。
+
 配置文件 [subforge] 段落:
   token       访问令牌（热重载生效）
   mixed_port  clash.meta mixed-port（1-65535，热重载生效）
@@ -97,12 +105,12 @@ func cmdServe(args []string) error {
 		listen, token, cacheDir, dataDir, name, configFile string
 		mixedPort, timeoutSeconds, shutdownSeconds         int
 	)
-	fs.StringVar(&listen, "listen", "127.0.0.1:25500", "监听地址")
-	fs.StringVar(&token, "token", "", "访问令牌（空表示不鉴权）")
+	fs.StringVar(&listen, "listen", envOr("SUBFORGE_LISTEN", "127.0.0.1:25500"), "监听地址")
+	fs.StringVar(&token, "token", envOr("SUBFORGE_TOKEN", ""), "访问令牌（空表示不鉴权）")
 	fs.StringVar(&cacheDir, "cache-dir", "", "上游内容磁盘缓存目录（默认不缓存）")
-	fs.StringVar(&dataDir, "data-dir", "", "订阅管理数据目录（SQLite，默认不启用）")
+	fs.StringVar(&dataDir, "data-dir", envOr("SUBFORGE_DATA_DIR", ""), "订阅管理数据目录（SQLite，默认不启用）")
 	fs.StringVar(&name, "name", "", "写入产物注释头的配置名")
-	fs.StringVar(&configFile, "config", "", "INI 配置文件，改动后自动热重载")
+	fs.StringVar(&configFile, "config", envOr("SUBFORGE_CONFIG", ""), "INI 配置文件，改动后自动热重载")
 	fs.IntVar(&mixedPort, "mixed-port", config.DefaultMixedPort, "clash.meta 输出的 mixed-port")
 	fs.IntVar(&timeoutSeconds, "timeout", 30, "上游请求与单请求超时秒数")
 	fs.IntVar(&shutdownSeconds, "shutdown", 10, "收到停止信号后的优雅关闭秒数")
@@ -112,7 +120,7 @@ func cmdServe(args []string) error {
 		return err
 	}
 
-	// 命令行参数是最低优先级：配置文件里的同名项覆盖它。
+	// 优先级从低到高：环境变量（已作为选项默认值）< 命令行参数 < 配置文件同名项。
 	snap, err := loadSettings(configFile, config.Settings{Token: token, MixedPort: mixedPort, Name: name})
 	if err != nil {
 		return err
@@ -157,6 +165,11 @@ func cmdServe(args []string) error {
 	})
 
 	if dataDir != "" {
+		// 首次运行时目录可能还不存在（裸机 `-data-dir ./data`、容器里挂载点刚建好等）。
+		// 这里主动建出来，用户不必先手工 mkdir 才能启动。
+		if err := ensureDataDir(dataDir); err != nil {
+			return err
+		}
 		mgr, err := subforge.NewManagerWithDataDir(filepath.Join(dataDir, "subforge.db"), dataDir)
 		if err != nil {
 			return fmt.Errorf("初始化订阅管理: %w", err)
@@ -230,6 +243,9 @@ func cmdServe(args []string) error {
 		sch.Start()
 		// defer 后进先出：sch.Stop 先于 mgr.Close 执行，确保调度器在 manager 关闭前停止。
 		defer sch.Stop()
+	} else {
+		fmt.Fprintln(os.Stderr, "订阅管理未启用：-data-dir 与 SUBFORGE_DATA_DIR 都为空，"+
+			"控制台的订阅、规则、令牌、任务等接口会返回 503。加 -data-dir ./data 即可启用。")
 	}
 
 	httpServer := &http.Server{
@@ -338,6 +354,27 @@ func watchConfig(ctx context.Context, path string, base config.Settings, snap *r
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "配置热重载停止: %v\n", err)
 	}
+}
+
+// ensureDataDir 保证数据目录存在。首次运行时目录通常还没有，主动建出来，
+// 用户不必先手工 mkdir 才能启动（容器里挂载点由 Docker 建，裸机上就得靠这一步）。
+func ensureDataDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("创建数据目录 %s: %w", dir, err)
+	}
+	return nil
+}
+
+// envOr 取环境变量的值作为选项的默认值；变量未设置或只有空白时返回 fallback。
+//
+// 只当默认值用：显式传入的命令行参数会覆盖它，配置文件里的同名项再覆盖命令行参数。
+// 这样容器里 `-e SUBFORGE_DATA_DIR=/data` 就能免去每次敲参数，而 `docker run ... serve
+// -data-dir /tmp/x` 仍然按用户说的来。
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // bindAllInterfaces 判定监听地址是否会暴露到本机网卡上。

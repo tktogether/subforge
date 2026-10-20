@@ -3,3 +3,13 @@ dist/
 *.exe
 .git/
 *.test
+# 本地临时工作目录（探针脚本、下载的发行产物等），不属于构建上下文
+.tmp/
+# 文档与设计资料不参与镜像构建
+docs/
+web/node_modules/
+web/coverage*/
+.zcode/
+.compat/
+.gocache/
+tools/

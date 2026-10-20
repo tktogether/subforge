@@ -167,7 +167,7 @@ SubForge 仍在持续开发中。为避免误解，以下事实在使用前需�
 | MCP 能力 | `internal/mcp` 包已实现，但尚未接入命令行或 HTTP 入口 |
 | 公开库 `pkg/subforge` | 已提供，仓库内部暂无调用方 |
 | 订阅测活 `subscheck` | 默认关闭，需要显式开启 |
-| 订阅管理数据 | 不指定 `-data-dir` 时不启用 SQLite 存储 |
+| 订阅管理数据 | 裸二进制不指定 `-data-dir`（或 `SUBFORGE_DATA_DIR`）时不启用 SQLite 存储；官方容器镜像已预设该变量，默认启用 |
 | 条件覆盖门禁 | `condgate -engine=gobco` 准层不进 `verify`，仅在 nightly 或手动触发时执行 |
 
 完整的限制清单与对应源码位置见仓库根目录 `README.md` 的"已知限制与未完成项"一节。

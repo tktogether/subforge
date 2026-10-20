@@ -89,25 +89,27 @@ sequenceDiagram
 
 ### 5.1 必须开启访问令牌
 
-`serve` 的 `-token` 默认为空，空值表示不鉴权（`cmd/subforge/serve.go:101`）。除纯本机自用外，部署时必须设置一个随机且足够长的令牌。
+`serve` 的 `-token` 默认为空，空值表示不鉴权（`cmd/subforge/serve.go:109`）；它也可以由环境变量 `SUBFORGE_TOKEN` 提供默认值。除纯本机自用外，部署时必须设置一个随机且足够长的令牌。
 
-需要特别注意：监听所有网卡且未设置令牌时，当前实现只在启动时打印一行警告，**不会阻止启动**（`cmd/subforge/serve.go:121-125`）。`deploy/subforge.service:11` 的注释称该组合会拒绝启动，与当前源码不一致，因此不要把启动拦截当作安全防护，必须显式配置令牌。
+需要特别注意：监听所有网卡且未设置令牌时，当前实现只在启动时打印一行警告，**不会阻止启动**（`cmd/subforge/serve.go:129-134`）。不要把启动拦截当作安全防护，必须显式配置令牌。容器镜像预设了 `SUBFORGE_LISTEN=0.0.0.0:25500`，因此用官方镜像部署时**默认就是监听所有网卡**，令牌要么通过 `-e SUBFORGE_TOKEN=<令牌>` 注入，要么用反向代理在外层拦一道。
 
-令牌校验支持三种提交方式，优先级为 `Authorization: Bearer` 高于 `X-Token` 高于查询参数 `token`（`internal/api/middleware.go:79`、`internal/api/middleware.go:98-107`）；校验失败返回 `401` 并附带 `WWW-Authenticate: Bearer realm="subforge"`（`internal/api/middleware.go:92`）。查询参数方式会把令牌写入访问日志与浏览器历史，仅在客户端不支持请求头时使用。
+令牌校验支持三种提交方式，优先级为 `Authorization: Bearer` 高于 `X-Token` 高于查询参数 `token`（`internal/api/middleware.go:80`、`internal/api/middleware.go:98-112`）；校验失败返回 `401` 并附带 `WWW-Authenticate: Bearer realm="subforge"`（`internal/api/middleware.go:92`）。查询参数方式会把令牌写入访问日志与浏览器历史，仅在客户端不支持请求头时使用。
 
 ### 5.2 认清 `/subscribe` 的鉴权差异
 
-全局鉴权中间件对 `/subscribe` 做精确路径豁免（`internal/api/server.go:127`、`internal/api/server.go:291-303`），因为该端点使用订阅令牌而不是服务端访问令牌。这意味着订阅地址本身就是凭据：拿到订阅地址的任何人都能获取节点配置。请像保管密码一样保管订阅地址，不要在公开渠道分享、截图或提交进仓库。
+全局鉴权中间件对 `/subscribe` 做精确路径豁免（`internal/api/server.go:127`、`internal/api/server.go:295-307`），因为该端点使用订阅令牌而不是服务端访问令牌。这意味着订阅地址本身就是凭据：拿到订阅地址的任何人都能获取节点配置。请像保管密码一样保管订阅地址，不要在公开渠道分享、截图或提交进仓库。
+
+同一处豁免还覆盖**控制台静态外壳**：`/`、`/assets/*`、`/favicon.ico` 以及前端路由的深层链接（`internal/api/server.go:309-328`）。这是有意为之——外壳只是一份不含数据的 HTML 与 JS，若连它都要令牌，浏览器将无法加载任何页面，用户也就没有地方输入令牌。**所有取数接口仍然全部受保护**，豁免范围不包含 `/api/*`、`/sub`、`/profile`、`/render`、`/getruleset`、`/inspect`、`/version`、`/healthz`、`/metrics` 与 `/debug/pprof/*`。
 
 ### 5.3 不要把调试与管理接口暴露到公网
 
 - `/debug/pprof/*` 仅在请求带 `?debug=1` 或进程环境变量 `SUBFORGE_DEBUG=1` 时才响应，其他情况返回 `404`（`internal/api/pprof.go:3-4`、`internal/api/pprof.go:16-26`、`internal/api/pprof.go:30-33`）。生产环境不要设置该环境变量。
 - 即使处于调试模式，pprof 与管理 API 仍受全局令牌保护，但不应作为唯一防线：请通过反向代理限制来源，不要直接暴露 `/api/*` 与 `/debug/pprof/*`。
-- 默认监听地址为 `127.0.0.1:25500`，只在本机可达（`cmd/subforge/serve.go:100`）。需要远程访问时，建议保持本机监听并由反向代理提供 HTTPS；`deploy/subforge.service:30-35` 的单元文件即按此方式配置。
+- 默认监听地址为 `127.0.0.1:25500`，只在本机可达（`cmd/subforge/serve.go:108`）。需要远程访问时，建议保持本机监听并由反向代理提供 HTTPS；`deploy/subforge.service:30-35` 的单元文件即按此方式配置。容器镜像把默认值改成了 `0.0.0.0:25500`，此时反向代理之外还应有网络层隔离。
 
 ### 5.4 限制数据目录权限
 
-只有在指定 `-data-dir` 时才启用订阅管理，SQLite 数据库位于 `<data-dir>/subforge.db`（`cmd/subforge/serve.go:103`、`cmd/subforge/serve.go:158-159`）；不指定时不会创建该数据库。该目录包含机场、分组、节点与令牌数据，应当：
+只有在指定 `-data-dir`（或环境变量 `SUBFORGE_DATA_DIR`）时才启用订阅管理，SQLite 数据库位于 `<data-dir>/subforge.db`（`cmd/subforge/serve.go:111`、`cmd/subforge/serve.go:167-179`）；两者都为空时不会创建该数据库。目录不存在时服务会自动创建（`cmd/subforge/serve.go:361`），因此不要依赖「启动失败」来发现路径写错。该目录包含机场、分组、节点与令牌数据，应当：
 
 - 使用专用低权限用户运行服务，不要以 root 运行；`deploy/subforge.service:28-29` 使用 `subforge` 用户与用户组。
 - 目录权限限制为服务用户可读写，例如 `StateDirectoryMode=0750`（`deploy/subforge.service:56-57`）。
