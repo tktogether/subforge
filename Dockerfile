@@ -29,13 +29,14 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
 # 版本信息，与 Makefile 的 LDFLAGS 保持同一套变量名。
+# 注意：这三个变量必须在下面的 go build 里**直接引用**，不能再套一层
+# `ARG LDFLAGS=...${VERSION}...`。Docker 在声明 ARG 时就把默认值里的 ${VERSION} 展开成
+# 声明处的默认值，`--build-arg VERSION=...` 覆盖不到它，结果是镜像始终自报 dev/none/unknown
+# （2026-10-20 实测：本文件传 build-args 后仍报 `subforge dev (commit none, built unknown)`，
+# 而 Dockerfile.alpine 因为直接在 RUN 里引用而正常）。
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-ARG LDFLAGS=-s -w \
-    -X github.com/tktogether/subforge/internal/buildinfo.Version=${VERSION} \
-    -X github.com/tktogether/subforge/internal/buildinfo.Commit=${COMMIT} \
-    -X github.com/tktogether/subforge/internal/buildinfo.Date=${DATE}
 
 WORKDIR /src
 
@@ -49,8 +50,13 @@ COPY . .
 
 # CGO_ENABLED=0：纯静态二进制，可跑在 scratch。-mod=vendor 保证不联网解析。
 # GOOS/GOARCH 取自 TARGETOS/TARGETARCH：多架构构建时即为目标平台。
+# -X 注入的版本信息直接引用上面的 ARG，见 ARG 处的说明。
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -mod=vendor \
-        -ldflags "${LDFLAGS}" -o /out/subforge ./cmd/subforge
+        -ldflags="-s -w \
+        -X github.com/tktogether/subforge/internal/buildinfo.Version=${VERSION} \
+        -X github.com/tktogether/subforge/internal/buildinfo.Commit=${COMMIT} \
+        -X github.com/tktogether/subforge/internal/buildinfo.Date=${DATE}" \
+        -o /out/subforge ./cmd/subforge
 
 FROM scratch
 
