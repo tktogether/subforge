@@ -1,7 +1,6 @@
 package api
 
 import (
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,7 +59,12 @@ func TestAuthExemptPath(t *testing.T) {
 // TestAuth_ConsoleShellLoadsWithoutToken 是本次修复的核心契约：
 // 设了访问令牌时，控制台外壳必须能匿名加载，否则浏览器只会看到一行 401 纯文本，
 // 用户没有任何地方可以输入令牌。
+//
+// 用 uiFakeDist 换掉 webFS 而不是断言真实嵌入产物：dist/ 是构建产物、不入库，
+// 干净 clone 与只跑前端门禁的工作流里 webFS 没有 index.html，
+// 直接断言真实产物等于在测「本地有没有跑前端构建」（见 web_ui_test.go 的说明）。
 func TestAuth_ConsoleShellLoadsWithoutToken(t *testing.T) {
+	uiFakeDist(t)
 	ts := newTestServer(t, func(c *Config) { c.Token = func() string { return "s3cr3t" } })
 
 	for _, path := range []string{"/", "/subscriptions", "/favicon.ico"} {
@@ -73,10 +77,10 @@ func TestAuth_ConsoleShellLoadsWithoutToken(t *testing.T) {
 		}
 	}
 
-	// 外壳能拿到真正的 index.html（前端构建产物存在时）。
+	// 外壳能拿到 index.html。
 	status, hdr, body := doGet(t, ts.URL+"/", "", "")
 	if status != http.StatusOK {
-		t.Fatalf("GET / = %d，want 200（internal/api/web/dist/index.html 应已构建）", status)
+		t.Fatalf("GET / = %d，want 200", status)
 	}
 	if ct := hdr.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("GET / Content-Type = %q，want text/html", ct)
@@ -85,14 +89,22 @@ func TestAuth_ConsoleShellLoadsWithoutToken(t *testing.T) {
 		t.Errorf("GET / 未返回控制台外壳，正文前 80 字节 = %q", firstBytes(body, 80))
 	}
 
-	// 静态资源同样豁免（用真实存在的产物文件名，避免落到 404 分支）。
-	assets, err := fs.ReadDir(webFS, "assets")
-	if err != nil || len(assets) == 0 {
-		t.Fatalf("前端产物缺失：%v", err)
+	// 深层链接同样豁免，并且回落到同一个外壳。
+	status, hdr, body = doGet(t, ts.URL+"/subscriptions", "", "")
+	if status != http.StatusOK {
+		t.Errorf("GET /subscriptions = %d，want 200", status)
 	}
-	status, _, _ = doGet(t, ts.URL+"/assets/"+assets[0].Name(), "", "")
+	if ct := hdr.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("GET /subscriptions Content-Type = %q，want text/html", ct)
+	}
+	if !strings.Contains(body, "<div id=\"app\">") {
+		t.Errorf("GET /subscriptions 未回落到控制台外壳，正文前 80 字节 = %q", firstBytes(body, 80))
+	}
+
+	// 静态资源同样豁免。
+	status, _, _ = doGet(t, ts.URL+"/assets/index-abc123.js", "", "")
 	if status == http.StatusUnauthorized {
-		t.Errorf("GET /assets/%s 不应要求访问令牌，实际 401", assets[0].Name())
+		t.Errorf("GET /assets/index-abc123.js 不应要求访问令牌，实际 401")
 	}
 }
 
