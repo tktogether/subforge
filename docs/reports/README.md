@@ -18,6 +18,7 @@
 | [quality-audit.md](quality-audit.md) | M1 里程碑质量核查 | 2026-10-16 | 质量达标，验收通过 |
 | [v0.1.2-release-verification.md](v0.1.2-release-verification.md) | 发布产物验证 | 2026-10-20 | 镜像双架构、自带版本号、默认镜像具备根证书；Release 资产为裸可执行文件 |
 | [v0.1.4-release-verification.md](v0.1.4-release-verification.md) | 发布产物验证 | 2026-10-20 | 镜像开箱即用：裸跑即可从宿主机访问控制台并启用订阅管理；双架构、自带版本号、HTTPS 上游可抓取 |
+| [v0.1.5-release-verification.md](v0.1.5-release-verification.md) | 发布产物验证 | 2026-10-20 | 控制台管线可参与转换、机场流量不再误报失败、规则源返回逐源结果、INI 内联规则集可展开；双架构与版本注入保持不变 |
 | [openwrt-packaging-verification.md](openwrt-packaging-verification.md) | 打包链路验证 | 2026-10-20 | 可打包；原配方缺 `Build/Prepare` 会失败，修复后两个架构均成功 |
 
 发布类报告（`vX.Y.Z-release-verification.md`）与里程碑报告的分工不同：里程碑报告回答
