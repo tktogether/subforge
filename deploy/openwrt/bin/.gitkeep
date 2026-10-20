@@ -1,0 +1,3 @@
+bin/ 下需要放置打包用的预编译静态二进制（不属于源码树，不入版本库）：
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -mod=vendor \
+    -ldflags "-s -w" -o deploy/openwrt/bin/subforge ./cmd/subforge
