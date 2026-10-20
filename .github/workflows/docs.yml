@@ -1,0 +1,38 @@
+# 文档门禁（Docs）：在文档改动时自动运行 scripts/check-docs.mjs。
+#
+# 为什么文档也要过门禁：文档中的相对链接、Mermaid 图与 Wiki 页面结构一旦写错，
+# 在 GitHub 上会直接渲染失败或指向不存在的页面，而代码工作流（ci.yml）不检查这些内容。
+# 因此这里单独设置一个只跑文档自检的工作流，与代码门禁互不干扰，也不参与发布流程。
+
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - 'scripts/check-docs.mjs'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - 'scripts/check-docs.mjs'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: docs-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run docs self-check
+        run: node scripts/check-docs.mjs

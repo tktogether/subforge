@@ -87,3 +87,10 @@ condition-gate: coverage
 # 本机一把过：go build/vet/test + 门禁A + 门禁B快层 + 前端 typecheck/test/build。
 verify: build vet test coverage-gate web-typecheck web-coverage web-build
 	@echo "verify: all green"
+
+# --- Docs check (independent gate) ---
+
+# 文档自检：检查代码围栏闭合、Mermaid 语法、相对链接可达性与 Wiki 页面结构。
+# 独立门禁：不并入 verify（verify 只覆盖 Go 与前端），CI 由 .github/workflows/docs.yml 调用。
+docs-check:
+	@node scripts/check-docs.mjs
