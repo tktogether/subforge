@@ -6,6 +6,14 @@ services:
       dockerfile: Dockerfile
     image: subforge:latest
     container_name: subforge
+    # 容器内 serve 的默认监听地址是 127.0.0.1:25500，只监听容器回环；而 ports 做的是端口
+    # 发布（转发到容器网卡地址），两者不匹配时从宿主机访问会得到 Connection reset by peer。
+    # 因此这里显式绑定所有网卡。若要暴露到局域网，请再追加一行 -token 与你的访问令牌，
+    # 否则服务会对整个容器网络开放。
+    command:
+      - serve
+      - -listen
+      - 0.0.0.0:25500
     ports:
       - "25500:25500"
     volumes:

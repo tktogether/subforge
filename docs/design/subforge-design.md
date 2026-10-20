@@ -243,7 +243,7 @@ flowchart LR
     end
     subgraph Out[输出面]
         O1[兼容 /sub API<br/>subconverter/SCE 参数超集]
-        O2[/getruleset·MRS 文件]
+        O2["/getruleset·MRS 文件"]
         O3[Web UI embed<br/>兼容 sub-web 协议]
         O4[诊断 /inspect /dashboard]
     end

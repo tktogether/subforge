@@ -39,6 +39,11 @@ Thumbs.db
 # Linux binary for test machine
 subforge-linux-amd64
 
+# OpenWrt 打包用的预编译二进制（约 40 MB，不属于源码树）
+# 打包前由打包者自行交叉编译到该路径，详见 deploy/openwrt/Makefile 的 Build/Prepare
+deploy/openwrt/bin/*
+!deploy/openwrt/bin/.gitkeep
+
 # 前端构建产物（Vite outDir 直接指向 Go embed 目录）
 # 产物是哈希文件名，不入库；只放行占位文件，保证干净 clone 时 go:embed 不会因目录缺失而编译失败
 /internal/api/web/dist/*
@@ -48,3 +53,9 @@ subforge-linux-amd64
 coverage.out
 # 准层 gobco 产物（condgate 的 gobco 引擎输出，含分片中间文件）
 gobco-*
+
+# Wiki 发布脚本的本地缓存（scripts/publish-wiki.ps1 默认把 .wiki.git 克隆到这里）
+.wiki-cache/
+
+# 本地临时工作目录（脚本与排查过程的中间产物，不属于项目内容）
+/.tmp/

@@ -439,8 +439,9 @@ JSON 不支持注释，配置头无处可放，元信息只留在 HTTP 响应头
 ## 内核行为（mihomo v1.19.31，实机核实）
 
 这两条是 `mihomo -t` 实机校验直接测出来的，直接影响产物能否被内核加载。
-复现：`SUBFORGE_MIHOMO=<mihomo 路径> make mihomo-check`（或直接跑
-`scripts/validate-mihomo.sh`），Go 侧等价门控是 `TestRender_MihomoValid`。
+复现：`SUBFORGE_MIHOMO=<mihomo 路径> bash scripts/validate-mihomo.sh`（脚本需要 `SUBFORGE_MIHOMO`
+指向 mihomo 二进制，见 `scripts/validate-mihomo.sh:16-20`），Go 侧等价门控是
+`TestRender_MihomoValid`（同样由 `SUBFORGE_MIHOMO` 环境变量门控，未设置时跳过）。
 
 | # | 内核事实 | 证据 | 影响 | 处置 |
 |---|---|---|---|---|

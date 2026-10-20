@@ -12,12 +12,12 @@
 #   docker run --rm -v subforge-data:/data subforge:latest \
 #       convert -file /data/sub.txt -format sing-box -out /data/cfg.json
 #
-# 环境限制：本仓库的两台可用机器都打不出镜像——本机未安装 Docker，已用的远端
-# （Ubuntu 22.04）内核没有 overlayfs 挂载点也没有 overlay 模块，dockerd 起不来。
-# 因此本文件的构建配方由等价命令实测验证（同一份 ldflags、同一 set of flags 在
-# linux/amd64 与 linux/arm64 上 `go build` 成功，产物 `file` 判定为静态链接、
-# `ldd` 报 not a dynamic executable），但镜像层本身尚未在任何机器上构建过。
-# 拿到可用 Docker 后需补一次 `docker build` 实测。
+# 构建实测（2026-10-20，WSL2 Ubuntu 22.04 + Docker 29.1.3 + overlayfs 存储驱动）：
+# 本文件与 Dockerfile.alpine 均已成功构建并启动，镜像内二进制经 `file` 与 `ldd` 判定为
+# 静态链接（not a dynamic executable），容器内 `version`、`serve`、`convert` 三个子命令
+# 全部跑通。已发布的 ghcr.io/tktogether/subforge:v0.1.0 亦可拉取与运行。
+# 注意：release.yml 的 build-push 步骤目前没有传 build-args，因此发布镜像自报版本为
+# `dev (commit none, built unknown)`；本地构建请显式传 --build-arg VERSION/COMMIT/DATE。
 
 FROM golang:1.26-bookworm AS builder
 

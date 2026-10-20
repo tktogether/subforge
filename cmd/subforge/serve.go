@@ -61,8 +61,8 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   GET /version      版本与运行时长
   GET /healthz      存活探针
   GET /inspect      回显解析后的参数
-  GET /getruleset   规则集（M1 返回 501，见 I6）
-  GET /subscribe    订阅推送（SSE）
+  GET /getruleset   规则集（type 1~6 六种形态）
+  GET /subscribe    订阅令牌鉴权，返回纯文本配置
   GET /api/version  API 版本
   GET /api/stats    统计信息
   GET /api/history  转换历史
@@ -87,7 +87,7 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   /api/settings     设置（GET/PUT）
   /api/template     模板（GET/PUT）
   /api/override     覆盖（GET/PUT）
-  GET /api/metrics  Prometheus 指标
+  GET /api/metrics  运行时指标（JSON）
   /debug/pprof/*    性能分析
 `
 
@@ -119,7 +119,8 @@ func cmdServe(args []string) error {
 	}
 
 	// 默认只监听本机。这个服务会向外部发订阅请求，一旦绑到所有网卡又没有令牌，
-	// 就成了一个能借用本机网络去拉别人订阅的开放中转——启动时把这个组合拦下来。
+	// 就成了一个能借用本机网络去拉别人订阅的开放中转——启动时把这个组合警告出来。
+	// 这里只警告不拦截：用户可能在反向代理或内网隔离环境里刻意这么部署。
 	if bindAllInterfaces(listen) && snap.Load().Token == "" {
 		fmt.Fprintln(os.Stderr, "警告: 监听所有网卡但未设置访问令牌，同网段任何主机都能使用本服务。")
 	}
