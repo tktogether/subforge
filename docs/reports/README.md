@@ -1,6 +1,6 @@
-# 质量核查报告目录
+# 核查与验证报告目录
 
-本目录存放 SubForge 各个里程碑的质量核查与验收报告。报告由核查人独立产出，
+本目录存放 SubForge 的质量核查报告与发布验证报告。报告由核查人独立产出，
 记录当时的核查范围、实测数据、发现的问题与最终结论，用于回答两个问题：
 
 1. 这个版本当时是否达到了验收标准？
@@ -13,9 +13,16 @@
 
 ## 一、报告清单
 
-| 报告 | 里程碑 | 日期 | 结论 |
+| 报告 | 类型 | 日期 | 结论 |
 | --- | --- | --- | --- |
-| [quality-audit.md](quality-audit.md) | M1 | 2026-10-16 | 质量达标，验收通过 |
+| [quality-audit.md](quality-audit.md) | M1 里程碑质量核查 | 2026-10-16 | 质量达标，验收通过 |
+| [v0.1.2-release-verification.md](v0.1.2-release-verification.md) | 发布产物验证 | 2026-10-20 | 镜像双架构、自带版本号、默认镜像具备根证书；Release 资产为裸可执行文件 |
+| [openwrt-packaging-verification.md](openwrt-packaging-verification.md) | 打包链路验证 | 2026-10-20 | 可打包；原配方缺 `Build/Prepare` 会失败，修复后两个架构均成功 |
+
+发布类报告（`vX.Y.Z-release-verification.md`）与里程碑报告的分工不同：里程碑报告回答
+"这一版整体是否可交付"，发布报告只回答"这一次发布的产物是否可用、边界在哪"。
+README 与 Wiki 中涉及具体数值的表述应链接到本目录，而不是把数值抄进正文
+（见 [../style-guide.md](../style-guide.md) 第 9 节）。
 
 ---
 
