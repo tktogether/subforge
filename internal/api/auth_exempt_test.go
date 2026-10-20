@@ -24,6 +24,7 @@ func TestAuthExemptPath(t *testing.T) {
 		{http.MethodGet, "/", true},
 		{http.MethodHead, "/", true},
 		{http.MethodGet, "/favicon.ico", true},
+		{http.MethodGet, "/favicon.svg", true},
 		{http.MethodGet, "/assets/index-abc123.js", true},
 		{http.MethodGet, "/assets/index-abc123.css", true},
 		// 前端路由深层链接（会回退到 index.html）
@@ -67,7 +68,7 @@ func TestAuth_ConsoleShellLoadsWithoutToken(t *testing.T) {
 	uiFakeDist(t)
 	ts := newTestServer(t, func(c *Config) { c.Token = func() string { return "s3cr3t" } })
 
-	for _, path := range []string{"/", "/subscriptions", "/favicon.ico"} {
+	for _, path := range []string{"/", "/subscriptions", "/favicon.ico", "/favicon.svg"} {
 		status, hdr, _ := doGet(t, ts.URL+path, "", "")
 		if status == http.StatusUnauthorized {
 			t.Errorf("GET %s 不应要求访问令牌，实际 401", path)

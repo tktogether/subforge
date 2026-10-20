@@ -319,7 +319,7 @@ func authExceptSubscribe(tokenFor func() string) func(http.Handler) http.Handler
 // 因此凡是会返回 index.html 的路径都豁免，凡是交给真实处理器或 /api/* 的都不豁免。
 func authExemptPath(r *http.Request) bool {
 	p := r.URL.Path
-	if p == "/subscribe" || p == "/favicon.ico" || strings.HasPrefix(p, "/assets/") {
+	if p == "/subscribe" || p == "/favicon.ico" || p == "/favicon.svg" || strings.HasPrefix(p, "/assets/") {
 		return true
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
