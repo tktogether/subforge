@@ -6,7 +6,7 @@
 
 ## 1. 服务概览
 
-HTTP 服务由 `subforge serve` 命令启动（`cmd/subforge/serve.go:108-113`），默认监听 `127.0.0.1:25500`。启动选项可以用环境变量提供默认值：`SUBFORGE_LISTEN`、`SUBFORGE_TOKEN`、`SUBFORGE_CONFIG`、`SUBFORGE_DATA_DIR` 分别对应 `-listen`、`-token`、`-config`、`-data-dir`，优先级为「环境变量 < 命令行参数 < INI 配置文件同名项」（`cmd/subforge/serve.go:123`）。三个参数决定了接口的行为边界：`-token` 为空时不鉴权；`-data-dir` 为空时不启用 SQLite 订阅管理，相关接口统一返回 503，而数据目录本身不要求预先存在，缺失时会自动创建（`cmd/subforge/serve.go:361`）；`-timeout` 默认为 30 秒，同时约束上游拉取与单请求。官方容器镜像（v0.1.4 起）预设了 `SUBFORGE_DATA_DIR=/data` 与 `SUBFORGE_LISTEN=0.0.0.0:25500`，容器裸跑即可使用；当前已发布的镜像（v0.1.3 及更早）仍是旧行为。完整启动参数见[安装与部署](安装与部署)。
+HTTP 服务由 `subforge serve` 命令启动（`cmd/subforge/serve.go:108-113`），默认监听 `127.0.0.1:25500`。启动选项可以用环境变量提供默认值：`SUBFORGE_LISTEN`、`SUBFORGE_TOKEN`、`SUBFORGE_CONFIG`、`SUBFORGE_DATA_DIR` 分别对应 `-listen`、`-token`、`-config`、`-data-dir`，优先级为「环境变量 < 命令行参数 < INI 配置文件同名项」（`cmd/subforge/serve.go:123`）。三个参数决定了接口的行为边界：`-token` 为空时不鉴权；`-data-dir` 为空时不启用 SQLite 订阅管理，相关接口统一返回 503，而数据目录本身不要求预先存在，缺失时会自动创建（`cmd/subforge/serve.go:361`）；`-timeout` 默认为 30 秒，同时约束上游拉取与单请求。官方容器镜像（`v0.1.4` 及之后的标签）预设了 `SUBFORGE_DATA_DIR=/data` 与 `SUBFORGE_LISTEN=0.0.0.0:25500`，容器裸跑即可使用；更早的标签（`v0.1.3` 及以前）需要显式传参。完整启动参数见[安装与部署](安装与部署)。
 
 ### 1.1 请求处理链
 
