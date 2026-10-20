@@ -427,6 +427,8 @@
 
 前两轮另有 5 个 commit：7b2bba0（输入校验与排序落库）、6c6a8c7（批量导入）、a04bbe3（规则源指针/回滚/MRS）、ea0bdb5（P3 三项）、a7745fe（favicon 免鉴权）。
 
+发布后另有 2 个**只改测试**的收尾 commit：92d9a83（`test(web)`：补齐 vitest 覆盖率门禁，6 files +256）、4a8eb8e（`test(ci)`：Go 覆盖率门禁 + gofmt，6 files +155/−8），背景见 §12。
+
 ### 11.9 评分重估（第三轮，主观）
 
 | 维度 | 第三轮 | 变化理由 |
@@ -447,4 +449,35 @@
 4. 未做压力/并发测试；`/api/rules` 全量返回在大数据量下仍是隐患（未改）。
 5. 队员自测只作线索：§11.6 全部来自 Lead 自己跑的 `run.mjs` 原始输出与源码核对。
 
-6. **teammate 的模型路由未验证**：`list_agents` 对这些 *-free teammate 报 `model=deepseek-flash`，与「名字带 free 即免费模型」的约定不一致；如需确证，只能改用 subagent(provider=llmio, model=free) 或由部署侧核对路由日志。
+6. **teammate 的模型路由未验证**：第二轮 teammate 的 `list_agents` 报 `model=deepseek-flash`，与「名字带 free 即免费模型」的约定不一致；第三轮三名修复 teammate 报 `model=free`（见 §12.1 更正）。底层推理是否走免费路由仍无法从 DSH 侧确证，只能改用 subagent(provider=llmio, model=free) 或由部署侧核对路由日志。
+
+## 12. CI 门禁收尾（v0.1.8 之后）
+
+v0.1.8 的 tag 推送后，GitHub Actions 的 `CI` 工作流连续失败两次。两次都不是功能代码出错，而是仓库门禁自身没达标；而且第一次失败把其余 job 全部 skipped，所以有两个 Go 门禁直到第二次才暴露出来。
+
+### 12.1 失败与修复
+
+| 失败 job | 失败步骤 | 根因 | 修复 |
+| --- | --- | --- | --- |
+| web: Test + coverage gate | `pnpm run coverage` | vitest 全局阈值 lines/functions/statements=100、branch=80，实测 98.8 / 95.65 / 98.31 / 99.17；未覆盖点全部落在本轮新增代码：RulesPage 批量条与筛选、ScriptsPage 示例/试运行对话框、AppShell 退出确认、AirportsPage withRules 失败分支等 | 92d9a83：只补测试、不改阈值、不删测试，6 个 spec +256 行 |
+| coverage | `Coverage gate` | `coveragegate -min 80 -min-func 100`：语句 91.2% 达标，函数覆盖 887/890。缺的 3 个函数是 `render/clashmeta.Warnings`（62c694c 的规则目标自动映射引入，clashmeta 包内没有测试调用它）与 `store/rules_batch.go` 的 `BatchInsertImportedRules`、`MaxRulesSortOrder`（只被 internal/subforge 间接调用，而 `go test -coverprofile` 只统计被测包自身） | 4a8eb8e：新增 `internal/store/rules_batch_test.go`（4 例：空批次、首次写入、重复导入刷新 updated_at、空 origin_key 恒新增）、clashmeta_test.go 加 `TestWarnings_RewrittenRuleTargets` |
+| test (ubuntu-latest) | `Gofmt check (Linux)` | 4 个测试文件 gofmt 不干净（结构体字段对齐、拼接空格、多余空行，纯空白差异） | 4a8eb8e 内 `gofmt -w` |
+
+补充说明：`62c694c` 那次 CI（run 39397203494）其实已经只失败在 `coverage` 一个 job —— 函数覆盖的洞在前端改动之前就存在；gofmt 与 web 覆盖率的洞则是本轮测试文件与前端改动带进来的。
+
+### 12.2 本地复跑证据（Lead 原始命令）
+
+- `cd web; npx vitest run --coverage` → 39 files / 768 tests 全 PASS；All files 100 stmts / 96.5 branch / 100 funcs / 100 lines，退出码 0。
+- `go test -coverprofile=<abs> -covermode=atomic ./internal/... -count=1` 后 `go run ./internal/tools/coveragegate -min 80 -min-func 100` → **语句 91.5%（8795/9610，≥80）、函数 890/890 = 100%**，退出码 0；`go run ./internal/tools/condgate -engine=profile -min 80` → 条件覆盖 82.8%，退出码 0。
+- `go build ./...`、`go vet ./...`、`go test ./... -count=1` 全绿（32 包）。
+- `gofmt -l cmd internal pkg` 输出为空。
+
+### 12.3 最终 CI 状态
+
+- run **39467600382**（main `4a8eb8e`）：**全部 job 成功** —— web / test (ubuntu-latest) / test (windows-latest) / coverage / cross-build / benchmark / docker-build；condition-audit 为手动触发，skipped 属正常。
+- v0.1.8 Release（`bddbe64`）与两个收尾 commit 无关：它们只改 `_test.go` 与 spec，产物二进制无差异，因此 tag 未移动、Release 未重发。若后续要发 v0.1.9，应从当前 main 打 tag。
+
+### 12.4 对 §11.10 第 6 条的更正
+
+§11.10 第 6 条写于第二轮，依据是当时 teammate 的 `list_agents` 输出（报 `model=deepseek-flash`）。第三轮三名修复 teammate（fix-w1-free / fix-w2-free / fix-w3-free）在 spawn 后与运行期间，`list_agents` 报的是 `model=free`；失联转 `inactive` 后才显示 `deepseek-flash`。因此可下的结论只有「名字含 free 时列表字段显示 free，第三轮与约定一致」，**底层推理是否真的路由到免费模型仍无法从 DSH 侧确证**。
+
