@@ -1,12 +1,82 @@
+// 两个长度上限：详情进折叠块，可以长一点；展示文案是给用户看的一句话，必须短。
+const DETAIL_LIMIT = 2000
+const TEXT_LIMIT = 200
+
+// 服务端 401 的纯文本是「401: 缺少或错误的访问令牌」，再拼上 HTTP 401
+// 会变成「HTTP 401: 401: 缺少…」这种自说自话的重复，这里去掉重复的状态码前缀。
+function stripStatusPrefix(text: string): string {
+  return text.replace(/^\s*(?:http\s*)?\d{3}\s*[:：]\s*/i, '').trim()
+}
+
+function truncate(text: string, limit: number): string {
+  return text.length <= limit ? text : text.slice(0, limit) + '…'
+}
+
+// parseErrorRecord 认出服务端的 JSON 错误体（形如 {"error":"…","detail":"…"}）。
+// 认不出就返回 null，调用方按纯文本处理。
+function parseErrorRecord(body: string): Record<string, unknown> | null {
+  const trimmed = body.trim()
+  if (trimmed === '' || !trimmed.startsWith('{')) {
+    return null
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // 不是合法 JSON：交给纯文本分支。
+  }
+  return null
+}
+
+// errorText 从响应体里取出给用户看的一句话。
+// 服务端的 JSON 错误体优先用 error 字段；纯文本直接用（去掉状态码前缀）。
+export function errorText(body: string): string {
+  const trimmed = body.trim()
+  if (trimmed === '') {
+    return ''
+  }
+  const record = parseErrorRecord(trimmed)
+  if (record !== null) {
+    const message = record['error']
+    if (typeof message === 'string' && message.trim() !== '') {
+      return truncate(stripStatusPrefix(message.trim()), TEXT_LIMIT)
+    }
+  }
+  return truncate(stripStatusPrefix(trimmed), TEXT_LIMIT)
+}
+
+// errorDetail 取折叠展示的原文：服务端 JSON 体的 detail 字段（原始 Go 错误）优先，
+// 没有就退回整个响应体。它只进折叠块，永远不当主文案展示。
+export function errorDetail(body: string): string {
+  const trimmed = body.trim()
+  if (trimmed === '') {
+    return ''
+  }
+  const record = parseErrorRecord(trimmed)
+  if (record !== null) {
+    const detail = record['detail']
+    if (typeof detail === 'string' && detail.trim() !== '') {
+      return truncate(detail.trim(), DETAIL_LIMIT)
+    }
+  }
+  return truncate(trimmed, DETAIL_LIMIT)
+}
+
 export class HttpError extends Error {
   readonly status: number
   readonly body: string
+  readonly detail: string
 
   constructor(status: number, body: string) {
-    super('HTTP ' + status + (body === '' ? '' : ': ' + body))
+    const text = errorText(body)
+    const detail = errorDetail(body)
+    super('HTTP ' + status + (text === '' ? '' : ': ' + text))
     this.name = 'HttpError'
     this.status = status
     this.body = body
+    this.detail = detail
   }
 }
 

@@ -57,6 +57,23 @@ describe('AppTopBar', () => {
     expect(w.find('[data-testid="token-button"]').attributes('title')).toBe('已设置访问令牌，点击修改')
   })
 
+  it('D-20：渲染「退出登录」入口并带可读提示', () => {
+    const w = mountTopBar({ title: '机场' })
+    const btn = w.find('[data-testid="logout"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBe('退出登录')
+    expect(btn.attributes('aria-label')).toBe('退出登录')
+  })
+
+  it('D-20：点击「退出登录」触发 logout 事件', async () => {
+    const w = mountTopBar({ title: '机场' })
+    const cmp = w.findComponent(AppTopBar)
+    await w.find('[data-testid="logout"]').trigger('click')
+    const emitted = cmp.emitted('logout')
+    expect(emitted).toBeTruthy()
+    expect(emitted!.length).toBe(1)
+  })
+
   it('title 为空串也能渲染', () => {
     const w = mountTopBar({ title: '' })
     expect(w.find('[data-testid="topbar"]').exists()).toBe(true)

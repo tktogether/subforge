@@ -83,6 +83,17 @@ function scriptRefStatus(step: { op: string; args: Record<string, string> }): 'o
   return enabled ? 'ok' : 'disabled'
 }
 
+// D-16：脚本 kind 可能缺失（老脚本 kind 为空串或接口没带这个字段）。
+// 统一归一成空串，绝不把 undefined 印到界面上。
+function scriptRefKind(step: { op: string; args: Record<string, string> }): string {
+  const refName = stepScriptRef(step)
+  if (refName === '') return ''
+  const found = scripts.value.find((s) => s.name === refName)
+  if (found === undefined) return ''
+  const kind = (found as { kind?: string }).kind
+  return typeof kind === 'string' ? kind.trim() : ''
+}
+
 // W7D 改动 3：脚本 kind 只有 filter / operate 两种取值
 // （internal/api/scripts_test_api.go:59 `if kind != "filter" && kind != "operate"`；
 //  web/src/content/help.ts:367、web/src/pages/ScriptsPage.vue:107）。
@@ -91,14 +102,18 @@ function scriptRefKindMismatch(step: { op: string; args: Record<string, string> 
   if (step.op !== 'filter.script' && step.op !== 'op.script') return ''
   const refName = stepScriptRef(step)
   if (refName === '') return ''
-  const found = scripts.value.find((s) => s.name === refName)
-  if (found === undefined) return ''
-  // 老脚本（D-01 迁移前入库）kind 为空串：无法判定类型，不做「可能不匹配」提示，
+  // 老脚本（D-01 迁移前入库）kind 为空串或缺失：无法判定类型，不做「可能不匹配」提示，
   // 否则所有历史脚本都会被误报。
-  if (found.kind === '') return ''
+  const kind = scriptRefKind(step)
+  if (kind === '') return ''
   const want = step.op === 'filter.script' ? 'filter' : 'operate'
-  if (found.kind === want) return ''
-  return `类型可能不匹配：脚本 kind=${found.kind}，该步骤需要 ${want}`
+  if (kind === want) return ''
+  return `类型可能不匹配：脚本 kind=${kind}，该步骤需要 ${want}`
+}
+
+// D-16：kind 缺失时只留一条中性提示，不与「可能不匹配」同屏矛盾。
+function scriptRefOkText(step: { op: string; args: Record<string, string> }): string {
+  return scriptRefKind(step) === '' ? '脚本已启用（类型未标注）' : '脚本已启用'
 }
 
 async function load(): Promise<void> {
@@ -307,7 +322,7 @@ onMounted(() => {
               skip：跳过该步，保留已处理结果，产物继续生成；abort：中止整次转换并报错（默认）；warn：记录告警，继续执行后续步骤。不填就跟随段落默认。
             </div>
             <div v-if="step.op === 'filter.script' || step.op === 'op.script'">
-              <div v-if="scriptRefStatus(step) === 'ok'" data-testid="script-ref-ok" class="text-success text-body-2">脚本已启用</div>
+              <div v-if="scriptRefStatus(step) === 'ok'" data-testid="script-ref-ok" class="text-success text-body-2">{{ scriptRefOkText(step) }}</div>
               <div v-if="scriptRefStatus(step) === 'disabled'" data-testid="script-ref-disabled" class="text-warning text-body-2">脚本已存在但未启用</div>
               <div v-if="scriptRefStatus(step) === 'missing'" data-testid="script-ref-missing" class="text-error text-body-2">未找到该脚本</div>
               <div v-if="scriptRefKindMismatch(step) !== ''" data-testid="script-ref-kind-mismatch" class="text-warning text-body-2">{{ scriptRefKindMismatch(step) }}</div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { endpoints, type Script, type ScriptTestResult } from '../api/endpoints'
-import { errorMessage } from '../composables/useAsync'
+import { errorDetail, errorMessage } from '../composables/useAsync'
 import { pageHelp, fieldHelp } from '../content/help'
 import { SCRIPTS_HELP } from '../content/help'
 import { formatDuration } from '../format'
@@ -12,6 +12,8 @@ const help = pageHelp('scripts')
 
 const loading = ref(false)
 const error = ref('')
+// errorDetail 存原始报文（服务端内部错误等），只进折叠块，主文案仍是可读的一句话。
+const errorDetailText = ref('')
 const scripts = ref<Script[]>([])
 
 const dialog = ref(false)
@@ -23,6 +25,12 @@ const formEnabled = ref(true)
 const exampleMenu = ref(false)
 const saving = ref(false)
 const saveError = ref('')
+// saveErrorDetail 存保存失败时的原始报文，供折叠详情展示（D-22）。
+const saveErrorDetail = ref('')
+
+// D-21：删除是破坏性操作，先记住待删脚本并弹确认框，确认后才真正删。
+const confirmOpen = ref(false)
+const pendingDelete = ref<Script | null>(null)
 
 const testDialog = ref(false)
 const testCode = ref('')
@@ -35,10 +43,12 @@ const testing = ref(false)
 async function load(): Promise<void> {
   loading.value = true
   error.value = ''
+  errorDetailText.value = ''
   try {
     scripts.value = await endpoints.listScripts()
   } catch (err) {
     error.value = errorMessage(err)
+    errorDetailText.value = errorDetail(err)
   } finally {
     loading.value = false
   }
@@ -67,6 +77,7 @@ function openEdit(s: Script): void {
 async function save(): Promise<void> {
   saving.value = true
   saveError.value = ''
+  saveErrorDetail.value = ''
   try {
     if (editing.value === null) {
       await endpoints.createScript({ name: formName.value, kind: formKind.value, code: formCode.value, enabled: formEnabled.value })
@@ -77,17 +88,29 @@ async function save(): Promise<void> {
     await load()
   } catch (err) {
     saveError.value = errorMessage(err)
+    saveErrorDetail.value = errorDetail(err)
   } finally {
     saving.value = false
   }
 }
 
-async function remove(s: Script): Promise<void> {
+// askDelete 不直接删，把目标记下来并弹确认框，防止误点（D-21）。
+function askDelete(s: Script): void {
+  pendingDelete.value = s
+  confirmOpen.value = true
+}
+
+async function doDelete(): Promise<void> {
+  const target = pendingDelete.value
+  if (target === null) return
   try {
-    await endpoints.deleteScript(s.id)
+    await endpoints.deleteScript(target.id)
+    confirmOpen.value = false
+    pendingDelete.value = null
     await load()
   } catch (err) {
     error.value = errorMessage(err)
+    errorDetailText.value = errorDetail(err)
   }
 }
 
@@ -100,8 +123,16 @@ function openTest(s: Script): void {
   testDialog.value = true
 }
 
+// D-15：点「插入示例」必须一次生效。这里直接填入默认示例（第一个：按地区保留节点），
+// 同时把下拉展开，其余示例仍可点选替换。
+const DEFAULT_EXAMPLE = SCRIPTS_HELP.examples[0]
+
 function toggleExamples(): void {
-  exampleMenu.value = !exampleMenu.value
+  const opening = !exampleMenu.value
+  exampleMenu.value = opening
+  if (opening && DEFAULT_EXAMPLE !== undefined) {
+    onInsertExample(DEFAULT_EXAMPLE)
+  }
 }
 
 function onInsertExample(ex: { name: string; kind: 'filter' | 'operate'; code: string }): void {
@@ -188,17 +219,39 @@ onMounted(() => {
     <div v-for="(w, i) in SCRIPTS_HELP.writeback" :key="i" class="text-body-2 mb-1">{{ w }}</div>
   </div>
 
-  <AsyncSection :loading="loading" :error="error" :empty="scripts.length === 0 ? (help.emptyState ?? false) : false" :empty-text="'暂无脚本'" @retry="load">
+  <AsyncSection
+    :loading="loading"
+    :error="error"
+    :error-detail="errorDetailText"
+    :empty="scripts.length === 0 ? (help.emptyState ?? false) : false"
+    :empty-text="'暂无脚本'"
+    @retry="load"
+  >
     <v-list data-testid="scripts-list">
       <v-list-item v-for="s in scripts" :key="s.id" :title="s.name" :subtitle="s.kind">
         <template #append>
-          <v-btn size="small" variant="text" @click="openEdit(s)">编辑</v-btn>
-          <v-btn size="small" variant="text" @click="openTest(s)">试运行</v-btn>
-          <v-btn size="small" variant="text" color="error" @click="remove(s)">删除</v-btn>
+          <v-btn size="small" variant="text" data-testid="script-edit" @click="openEdit(s)">编辑</v-btn>
+          <v-btn size="small" variant="text" data-testid="script-test" @click="openTest(s)">试运行</v-btn>
+          <v-btn size="small" variant="text" color="error" data-testid="script-delete" @click="askDelete(s)">删除</v-btn>
         </template>
       </v-list-item>
     </v-list>
   </AsyncSection>
+
+  <!-- D-21：删除前二次确认，对齐机场/管线已有模式。 -->
+  <v-dialog v-model="confirmOpen" max-width="480">
+    <v-card>
+      <v-card-title>确认删除</v-card-title>
+      <v-card-text>
+        删除脚本「{{ pendingDelete?.name ?? '' }}」后无法恢复，确定继续？
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="script-confirm-cancel" @click="confirmOpen = false">取消</v-btn>
+        <v-btn color="error" data-testid="script-confirm-delete" @click="doDelete">删除</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 
   <v-dialog v-model="dialog" max-width="720">
     <v-card>
@@ -217,7 +270,12 @@ onMounted(() => {
           </div>
         </div>
         <v-switch v-model="formEnabled" label="启用" />
-        <div v-if="saveError !== ''" class="text-error mt-2">{{ saveError }}</div>
+        <div v-if="saveError !== ''" class="text-error mt-2" data-testid="script-save-error">{{ saveError }}</div>
+        <!-- D-22：主文案是可读的一句话，原始报文进折叠块。 -->
+        <details v-if="saveErrorDetail !== ''" data-testid="script-save-error-detail" class="mt-1">
+          <summary class="text-body-2 text-medium-emphasis">查看错误详情</summary>
+          <pre class="text-caption">{{ saveErrorDetail }}</pre>
+        </details>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
@@ -227,7 +285,7 @@ onMounted(() => {
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="testDialog" max-width="720">
+  <v-dialog v-model="testDialog" max-width="720" scrollable>
     <v-card>
       <v-card-title>试运行脚本</v-card-title>
       <v-card-text>
@@ -238,7 +296,13 @@ onMounted(() => {
           <v-text-field v-model.number="testTimeout" label="超时毫秒" type="number" class="mb-2" />
           <v-btn color="primary" :loading="testing" @click="runTest">运行</v-btn>
         </div>
-        <div v-if="testResult !== null" data-testid="test-result" class="mt-4">
+        <!-- D-23：结果区固定最大高度并可滚动，长结果不再被对话框底边裁切。 -->
+        <div
+          v-if="testResult !== null"
+          data-testid="test-result"
+          class="mt-4 test-result-scroll"
+          style="max-height: 40vh; overflow-y: auto;"
+        >
           <div v-if="testResult.error" data-testid="test-error" class="text-error">{{ testResult.error }}</div>
           <div v-if="testResult.ok && testKind === 'filter'">
             <span v-if="testResult.kept === true" data-testid="test-kept">保留 ✅</span>
@@ -261,3 +325,12 @@ onMounted(() => {
     </v-card>
   </v-dialog>
 </template>
+
+<style scoped>
+/* D-23：结果区可滚动 + 限高，保证 0 结果和多结果都能看全。 */
+.test-result-scroll {
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+</style>

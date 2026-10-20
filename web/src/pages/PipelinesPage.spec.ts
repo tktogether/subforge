@@ -255,6 +255,61 @@ describe('PipelinesPage', () => {
     w.unmount()
   })
 
+  it('W3D-16：kind 为空的脚本只显示中性提示，不出现 undefined 或矛盾句', async () => {
+    scriptsMock.mockResolvedValue([
+      { id: 3, name: 'legacy-nokind', kind: '', code: 'return node', enabled: true },
+    ])
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].op = 'op.script'
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].args.ref = 'legacy-nokind'
+    await flushPromises()
+    await (w.vm as any).$nextTick()
+    await flushPromises()
+
+    const ok = document.querySelector('[data-testid="script-ref-ok"]')
+    expect(ok, 'script-ref-ok 未渲染').not.toBeNull()
+    expect(ok?.textContent?.trim()).toBe('脚本已启用（类型未标注）')
+    // 只保留一条提示：没有「类型可能不匹配」，也没有 undefined
+    expect(document.querySelector('[data-testid="script-ref-kind-mismatch"]')).toBeNull()
+    expect(document.querySelector('[data-testid="script-ref-disabled"]')).toBeNull()
+    expect(document.querySelector('[data-testid="script-ref-missing"]')).toBeNull()
+    const scope = ok?.parentElement?.textContent ?? ''
+    expect(scope).not.toContain('类型可能不匹配')
+    expect(scope).not.toContain('undefined')
+    expect((w.vm as any).scriptRefKind((w.vm as any).formSteps[0])).toBe('')
+    w.unmount()
+  })
+
+  it('W3D-16：kind 已标注且与步骤匹配时显示「脚本已启用」且无不匹配提示', async () => {
+    scriptsMock.mockResolvedValue([
+      { id: 9, name: 'enabled-operate', kind: 'operate', code: 'node.port = 443', enabled: true },
+    ])
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].op = 'op.script'
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].args.ref = 'enabled-operate'
+    await flushPromises()
+    await (w.vm as any).$nextTick()
+    await flushPromises()
+
+    const ok = document.querySelector('[data-testid="script-ref-ok"]')
+    expect(ok?.textContent?.trim()).toBe('脚本已启用')
+    expect(document.querySelector('[data-testid="script-ref-kind-mismatch"]')).toBeNull()
+    expect((w.vm as any).scriptRefOkText((w.vm as any).formSteps[0])).toBe('脚本已启用')
+    w.unmount()
+  })
+
   it('保存失败原样显示后端错误', async () => {
     createMock.mockRejectedValueOnce(new Error('流水线名称不能为空'))
     const w = mountPage()

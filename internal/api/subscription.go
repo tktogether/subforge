@@ -37,8 +37,11 @@ func (s *Server) SubscriptionManager() *subforge.Manager {
 //
 // 前端 api() 助手对每个响应都调 res.json()，因此失败响应绝不能是纯文本——
 // 否则前端拿不到错误原因，只会看到 JSON 解析异常。
+//
+// 文案治理集中在 writeError（D-22）：JSON 解码错误翻译成中文可读文案并把原始
+// 报文放进 detail，500 统一成「服务端内部错误（请求 ID …）」。
 func (s *Server) writeAPIError(w http.ResponseWriter, r *http.Request, status int, err error) {
-	s.fail(w, r, status, err)
+	s.writeError(w, r, status, err)
 }
 
 // subManagerOr503 取订阅管理器；未启用时写出 503 JSON 并返回 ok=false。
@@ -61,6 +64,8 @@ func (s *Server) pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 }
 
 // decodeBody 解析 JSON 请求体；失败时写出 400 JSON 并返回 false。
+// 解码错误（字段类型不对、不是合法 JSON）由 writeError 翻译成中文可读文案，
+// 原始 Go 报文只放在 detail 里给排障用。
 func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		s.writeAPIError(w, r, http.StatusBadRequest, err)

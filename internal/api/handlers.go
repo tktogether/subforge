@@ -3,8 +3,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -299,9 +301,106 @@ func sanitizeQuery(q map[string][]string) map[string][]string {
 
 // fail 写出错误响应，并在日志里带上上下文。
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, status int, err error) {
+	s.writeError(w, r, status, err)
+}
+
+// apiErrorBody 是错误响应的统一报文：error 给用户看，detail 保留原始报文给排障，
+// request_id 只在 5xx 出现，方便把用户看到的现象对回服务端日志。
+type apiErrorBody struct {
+	Error     string `json:"error"`
+	Detail    string `json:"detail,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+// writeError 是错误响应的唯一出口（D-22）。
+//
+// 文案治理：
+//   - JSON 解码/类型错误（400）→ 「请求参数格式不正确：字段 interval 需要整数」，
+//     原始 Go 报文（json: cannot unmarshal ...）放进 detail，不再直接甩给用户；
+//   - 500 → 「服务端内部错误（请求 ID xxx）」，原始报文进 detail，完整报文另有日志；
+//   - 其它状态码沿用调用方给出的中文文案，报文形状与文案都不变。
+func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	rid := chimw.GetReqID(r.Context())
 	s.logger.Printf("rid=%s %s %s -> %d: %v",
-		dash(chimw.GetReqID(r.Context())), r.Method, r.URL.RequestURI(), status, err)
-	s.writeJSON(w, status, map[string]any{"error": err.Error()})
+		dash(rid), r.Method, r.URL.RequestURI(), status, err)
+	msg, detail := apiErrorText(status, err, rid)
+	body := apiErrorBody{Error: msg, Detail: detail}
+	if status >= 500 && rid != "" {
+		body.RequestID = rid
+	}
+	s.writeJSON(w, status, body)
+}
+
+// apiErrorText 返回 (给用户看的文案, 排障用的原始报文)。
+func apiErrorText(status int, err error, rid string) (string, string) {
+	raw := ""
+	if err != nil {
+		raw = err.Error()
+	}
+	if status == http.StatusInternalServerError {
+		if rid == "" {
+			return "服务端内部错误", raw
+		}
+		return "服务端内部错误（请求 ID " + rid + "）", raw
+	}
+	if msg, ok := jsonDecodeErrorText(err); ok {
+		return msg, raw
+	}
+	return raw, ""
+}
+
+// jsonDecodeErrorText 把 encoding/json 的解码错误翻译成中文文案；
+// 认不出来的错误返回 ok=false，由调用方沿用原文。
+func jsonDecodeErrorText(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		zh := goTypeName(typeErr.Type.String())
+		field := strings.TrimSpace(typeErr.Field)
+		if field == "" {
+			return "请求参数格式不正确：请求体需要" + zh, true
+		}
+		return "请求参数格式不正确：字段 " + field + " 需要" + zh, true
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return "请求体不是合法的 JSON", true
+	}
+	// 请求体被截断（读到一半没了）或整段为空，都算 JSON 不合法。
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return "请求体不是合法的 JSON", true
+	}
+	return "", false
+}
+
+// goTypeNames 把 Go 类型名翻成中文，翻不出来的原样返回（goTypeName）。
+var goTypeNames = map[string]string{
+	"bool":                    "布尔值",
+	"string":                  "字符串",
+	"int":                     "整数",
+	"int8":                    "整数",
+	"int16":                   "整数",
+	"int32":                   "整数",
+	"int64":                   "整数",
+	"uint":                    "整数",
+	"uint8":                   "整数",
+	"uint16":                  "整数",
+	"uint32":                  "整数",
+	"uint64":                  "整数",
+	"float32":                 "数字",
+	"float64":                 "数字",
+	"time.Time":               "日期时间字符串",
+	"[]interface {}":          "数组",
+	"map[string]interface {}": "对象",
+}
+
+func goTypeName(name string) string {
+	if zh, ok := goTypeNames[name]; ok {
+		return zh
+	}
+	return name
 }
 
 // unknownKeys 列出参数里没有被任何字段消费掉的键。

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { errorMessage, useAsync } from './useAsync'
+import { errorDetail, errorMessage, useAsync } from './useAsync'
+import { HttpError } from '../api/client'
 
 describe('errorMessage', () => {
   it('传入 Error 实例时返回 err.message', () => {
@@ -22,6 +23,19 @@ describe('errorMessage', () => {
     expect(errorMessage({ a: 1 })).toBe('[object Object]')
     expect(errorMessage(null)).toBe('null')
     expect(errorMessage(undefined)).toBe('undefined')
+  })
+})
+
+describe('errorDetail（D-22）', () => {
+  it('HttpError 时返回折叠用的原始报文', () => {
+    const err = new HttpError(500, '{"error":"服务端内部错误（请求 ID r-1）","detail":"boom: 内部细节"}')
+    expect(errorDetail(err)).toBe('boom: 内部细节')
+  })
+
+  it('普通 Error / 非 HttpError 时返回空串', () => {
+    expect(errorDetail(new Error('boom'))).toBe('')
+    expect(errorDetail('boom')).toBe('')
+    expect(errorDetail(null)).toBe('')
   })
 })
 

@@ -6,6 +6,8 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import ScriptsPage from './ScriptsPage.vue'
 import { endpoints } from '../api/endpoints'
+import { HttpError } from '../api/client'
+import { SCRIPTS_HELP } from '../content/help'
 
 vi.mock('../api/endpoints', async () => {
   const actual = await vi.importActual<any>('../api/endpoints')
@@ -177,6 +179,9 @@ describe('ScriptsPage', () => {
 
     await button(w, '删除').trigger('click')
     await flushPromises()
+    // D-21：二次确认 — 点确认才真正删除
+    await w.find('[data-testid="script-confirm-delete"]').trigger('click')
+    await flushPromises()
 
     expect(deleteScriptMock).toHaveBeenCalledWith(5)
     expect(listScriptsMock).toHaveBeenCalledTimes(2)
@@ -191,6 +196,8 @@ describe('ScriptsPage', () => {
     await flushPromises()
 
     await button(w, '删除').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="script-confirm-delete"]').trigger('click')
     await flushPromises()
 
     expect(w.text()).toContain('del boom')
@@ -710,4 +717,113 @@ describe('ScriptsPage', () => {
     w.unmount()
   })
 
+  describe('W3 探针', () => {
+    it('W3D-15：点一次「插入示例」即写入默认示例，且下拉同时展开', async () => {
+      listScriptsMock.mockResolvedValue([])
+      const w = mountPage()
+      await flushPromises()
+      await button(w, '新建脚本').trigger('click')
+      await flushPromises()
+
+      const vm = w.vm as unknown as ScriptsVm
+      expect(vm.formCode).toBe('')
+      await w.find('[data-testid="example-insert"]').trigger('click')
+      await flushPromises()
+
+      const def = SCRIPTS_HELP.examples[0]
+      expect(def).toBeTruthy()
+      expect(vm.formCode).toBe(def!.code)
+      expect(vm.formKind).toBe(def!.kind)
+      expect(vm.exampleMenu).toBe(true)
+      expect(w.find('[data-testid="example-item"]').exists()).toBe(true)
+      w.unmount()
+    })
+
+    it('W3D-21：删除先弹确认，取消不删，确认才删并刷新', async () => {
+      listScriptsMock.mockResolvedValue([{ id: 5, name: 'e', kind: 'filter', code: 'q', enabled: true }])
+      deleteScriptMock.mockResolvedValue({ ok: true })
+
+      const w = mountPage()
+      await flushPromises()
+      await button(w, '删除').trigger('click')
+      await flushPromises()
+
+      expect(deleteScriptMock).not.toHaveBeenCalled()
+      expect(w.text()).toContain('删除脚本「e」后无法恢复')
+      expect(w.find('[data-testid="script-confirm-delete"]').text()).toContain('删除')
+
+      await w.find('[data-testid="script-confirm-cancel"]').trigger('click')
+      await flushPromises()
+      expect(deleteScriptMock).not.toHaveBeenCalled()
+      expect(listScriptsMock).toHaveBeenCalledTimes(1)
+
+      await button(w, '删除').trigger('click')
+      await flushPromises()
+      await w.find('[data-testid="script-confirm-delete"]').trigger('click')
+      await flushPromises()
+      expect(deleteScriptMock).toHaveBeenCalledWith(5)
+      expect(listScriptsMock).toHaveBeenCalledTimes(2)
+      w.unmount()
+    })
+
+    it('W3D-22：保存失败时主文案走 error 字段，原始报文进折叠详情不泄露', async () => {
+      listScriptsMock.mockResolvedValue([])
+      createScriptMock.mockRejectedValueOnce(
+        new HttpError(400, '{"error":"请求参数格式不正确：字段 name 需要字符串","detail":"json: cannot unmarshal number into Go struct field .name of type string"}'),
+      )
+
+      const w = mountPage()
+      await flushPromises()
+      await button(w, '新建脚本').trigger('click')
+      await flushPromises()
+      await button(w, '保存').trigger('click')
+      await flushPromises()
+
+      const box = w.find('[data-testid="script-save-error"]')
+      expect(box.text()).toContain('请求参数格式不正确：字段 name 需要字符串')
+      expect(box.text()).not.toContain('cannot unmarshal')
+      const det = w.find('[data-testid="script-save-error-detail"]')
+      expect(det.exists()).toBe(true)
+      expect(det.text()).toContain('json: cannot unmarshal')
+      w.unmount()
+    })
+
+    it('W3D-23：试运行结果容器带 test-result-scroll + 限高可滚动；0 结果时不渲染', async () => {
+      listScriptsMock.mockResolvedValue([])
+      testScriptMock.mockResolvedValue({ ok: true, kept: true, before: {}, after: {}, duration_ms: 1 })
+      const w = mountPage()
+      await flushPromises()
+      const vm = w.vm as unknown as ScriptsVm
+      vm.testDialog = true
+      vm.testKind = 'filter'
+      vm.testCode = 'true'
+      await vm.runTest()
+      await flushPromises()
+
+      const el = w.find('[data-testid="test-result"]')
+      expect(el.exists()).toBe(true)
+      expect(el.classes()).toContain('test-result-scroll')
+      const style = el.attributes('style') ?? ''
+      expect(style).toContain('max-height')
+      expect(style).toContain('overflow-y: auto')
+
+      // 0 结果：容器不渲染，对话框仍可正常关闭（高度自适应）
+      const w2 = mountPage()
+      await flushPromises()
+      const vm2 = w2.vm as unknown as ScriptsVm
+      vm2.testDialog = true
+      await flushPromises()
+      expect(w2.find('[data-testid="test-result"]').exists()).toBe(false)
+      const close = w2.findAll('button').find((b) => b.text().includes('关闭'))
+      expect(close).toBeDefined()
+      await close!.trigger('click')
+      await flushPromises()
+      expect(vm2.testDialog).toBe(false)
+      w2.unmount()
+      w.unmount()
+    })
+  })
+
 })
+
+

@@ -6,7 +6,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import AppShell from './AppShell.vue'
 import TokenDialog from '../components/TokenDialog.vue'
-import { tokenDialogOpen, tokenRejected, tokenState } from '../api/token'
+import { TOKEN_STORAGE_KEY, saveToken, tokenDialogOpen, tokenRejected, tokenState } from '../api/token'
 import { useThemeMode } from '../composables/useThemeMode'
 
 const { routeRef } = vi.hoisted(() => ({ routeRef: { value: { meta: {}, path: '/' } } }))
@@ -30,7 +30,7 @@ vi.mock('./AppTopBar.vue', () => ({
   default: {
     name: 'AppTopBar',
     props: ['title'],
-    emits: ['toggle-drawer', 'open-token'],
+    emits: ['toggle-drawer', 'open-token', 'logout'],
     template: '<div class="apptopbar-stub">{{ title }}</div>',
   },
 }))
@@ -57,6 +57,19 @@ const vuetify = createVuetify({
     },
   },
 })
+
+function queryTestId(w: ReturnType<typeof mount>, id: string): Element | null {
+  const inside = w.find(`[data-testid="${id}"]`)
+  if (inside.exists()) return inside.element
+  return document.querySelector(`[data-testid="${id}"]`)
+}
+
+async function clickTestId(w: ReturnType<typeof mount>, id: string): Promise<void> {
+  const el = queryTestId(w, id)
+  expect(el, '未渲染 ' + id).not.toBeNull()
+  ;(el as HTMLElement).click()
+  await flushPromises()
+}
 
 describe('AppShell', () => {
   beforeEach(() => {
@@ -174,6 +187,39 @@ describe('AppShell', () => {
     expect(snack.exists()).toBe(true)
     await snack.vm.$emit('update:model-value', false)
     expect(closeNotify).toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('D-20：顶栏 logout 先弹确认框，取消不清令牌也不弹令牌框', async () => {
+    saveToken('tok-1')
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.findComponent({ name: 'AppTopBar' }).vm.$emit('logout')
+    await flushPromises()
+
+    expect(tokenDialogOpen.value).toBe(false)
+    expect(queryTestId(w, 'logout-confirm'), '未渲染退出确认框').not.toBeNull()
+    expect(queryTestId(w, 'logout-cancel'), '未渲染取消按钮').not.toBeNull()
+
+    await clickTestId(w, 'logout-cancel')
+    expect(tokenState.value).toBe('tok-1')
+    expect(window.localStorage.getItem(TOKEN_STORAGE_KEY)).toBe('tok-1')
+    expect(tokenDialogOpen.value).toBe(false)
+    w.unmount()
+  })
+
+  it('D-20：确认退出登录清空令牌并弹出令牌输入框', async () => {
+    saveToken('tok-1')
+    const w = mount(AppShell, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.findComponent({ name: 'AppTopBar' }).vm.$emit('logout')
+    await flushPromises()
+
+    await clickTestId(w, 'logout-confirm')
+    expect(tokenState.value).toBe('')
+    expect(window.localStorage.getItem(TOKEN_STORAGE_KEY)).toBeNull()
+    expect(tokenDialogOpen.value).toBe(true)
+    expect((w.vm as any).reloadKey).toBe(1)
     w.unmount()
   })
 

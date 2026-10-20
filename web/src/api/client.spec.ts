@@ -264,6 +264,59 @@ describe('api', () => {
 })
 
 
+describe('D-18/D-22 错误文案治理', () => {
+  it('D-18：401 纯文本正文只出现一次状态码（服务端前缀被去掉）', () => {
+    const err = new HttpError(401, '401: 缺少或错误的访问令牌')
+    expect(err.message).toBe('HTTP 401: 缺少或错误的访问令牌')
+    expect(err.message.match(/\d{3}/g)?.length).toBe(1)
+  })
+
+  it('D-22：JSON 错误体只取 error 字段做主文案，原始报文进 detail', () => {
+    const body = '{"error":"请求参数格式不正确：字段 interval 需要整数","detail":"json: cannot unmarshal string into Go struct field .interval of type int"}'
+    const err = new HttpError(400, body)
+    expect(err.message).toBe('HTTP 400: 请求参数格式不正确：字段 interval 需要整数')
+    expect(err.message).not.toContain('cannot unmarshal')
+    expect(err.body).toBe(body)
+    expect(err.detail).toBe('json: cannot unmarshal string into Go struct field .interval of type int')
+  })
+
+  it('D-22：500 的主文案取 error 字段，detail 保留原始信息', () => {
+    const err = new HttpError(500, '{"error":"服务端内部错误（请求 ID abc）","detail":"boom: 内部细节"}')
+    expect(err.message).toBe('HTTP 500: 服务端内部错误（请求 ID abc）')
+    expect(err.detail).toBe('boom: 内部细节')
+  })
+
+  it('D-22：非 JSON 长文本被截断到 200 字（详情保留到 2000 字）', () => {
+    const long = 'x'.repeat(500)
+    const err = new HttpError(500, long)
+    expect(err.message).toBe('HTTP 500: ' + 'x'.repeat(200) + '…')
+    expect(err.detail).toBe(long)
+  })
+
+  it('D-22：短的非 JSON 报文原样展示', () => {
+    expect(new HttpError(404, 'not found').message).toBe('HTTP 404: not found')
+    expect(new HttpError(500, 'ConvertToMrs: invalid input').message).toBe('HTTP 500: ConvertToMrs: invalid input')
+  })
+
+  it('D-22：空 body 没有正文也没有详情', () => {
+    const err = new HttpError(401, '')
+    expect(err.message).toBe('HTTP 401')
+    expect(err.detail).toBe('')
+  })
+
+  it('D-22：非法 JSON 的 body 按纯文本处理', () => {
+    const err = new HttpError(400, '{bad json')
+    expect(err.message).toBe('HTTP 400: {bad json')
+    expect(err.detail).toBe('{bad json')
+  })
+
+  it('D-22：JSON 体但没有 error 字段时退回纯文本展示', () => {
+    const err = new HttpError(400, '{"a":1}')
+    expect(err.message).toBe('HTTP 400: {"a":1}')
+    expect(err.detail).toBe('{"a":1}')
+  })
+})
+
 describe('default tokenProvider (fresh module)', () => {
   afterEach(() => {
     vi.unstubAllGlobals()

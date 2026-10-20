@@ -10,6 +10,8 @@ const props = defineProps<{
   empty: EmptyProp
   emptyText: string
   hint?: string
+  // errorDetail 是原始报文（例如服务端内部错误），只进折叠块，不与主文案重复展示。
+  errorDetail?: string
 }>()
 
 const emit = defineEmits<{ retry: [] }>()
@@ -30,6 +32,14 @@ function retry(): void {
         <v-btn variant="text" size="small" data-testid="async-retry" @click="retry">重试</v-btn>
       </template>
     </v-alert>
+    <details
+      v-if="props.error !== '' && props.errorDetail !== undefined && props.errorDetail !== ''"
+      data-testid="async-error-detail"
+      class="mb-4"
+    >
+      <summary class="text-body-2 text-medium-emphasis">查看错误详情</summary>
+      <pre class="async-error-detail__body">{{ props.errorDetail }}</pre>
+    </details>
     <div v-if="props.error !== '' && props.hint" data-testid="async-hint" class="text-body-2 text-medium-emphasis mb-4">
       {{ props.hint }}
     </div>
@@ -78,5 +88,18 @@ function retry(): void {
 @keyframes async-skeleton-pulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
+}
+.async-error-detail__body {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--sf-bg-subtle);
+  border-radius: var(--sf-radius);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

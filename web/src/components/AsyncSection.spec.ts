@@ -107,6 +107,34 @@ describe('AsyncSection', () => {
     expect(a.text()).toContain('去添加')
   })
 
+  it('D-22：errorDetail 非空时渲染可折叠的详情块，主文案区不重复原始报文', () => {
+    const wrapper = mount(AsyncSection, {
+      props: {
+        loading: false,
+        error: '服务端内部错误（请求 ID r-1）',
+        empty: false,
+        emptyText: '空',
+        errorDetail: 'boom: 内部细节',
+      },
+      global: { plugins: [vuetify] },
+    })
+    const err = wrapper.find('[data-testid="async-error"]')
+    expect(err.text()).toContain('服务端内部错误（请求 ID r-1）')
+    expect(err.text()).not.toContain('boom: 内部细节')
+    const det = wrapper.find('[data-testid="async-error-detail"]')
+    expect(det.exists()).toBe(true)
+    expect(det.text()).toContain('boom: 内部细节')
+    expect(det.text()).toContain('查看错误详情')
+  })
+
+  it('D-22：errorDetail 为空时不渲染详情块', () => {
+    const wrapper = mount(AsyncSection, {
+      props: { loading: false, error: '炸了', empty: false, emptyText: '空', errorDetail: '' },
+      global: { plugins: [vuetify] },
+    })
+    expect(wrapper.find('[data-testid="async-error-detail"]').exists()).toBe(false)
+  })
+
   it('empty 的 action 无 to 时渲染 empty-state-action 为按钮', () => {
     const wrapper = mount(AsyncSection, {
       props: {

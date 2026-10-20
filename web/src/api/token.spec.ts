@@ -4,6 +4,7 @@ import {
   TOKEN_STORAGE_KEY,
   closeTokenDialog,
   initToken,
+  logout,
   openTokenDialog,
   readStoredToken,
   saveToken,
@@ -99,6 +100,20 @@ describe('api/token', () => {
     await expect(request('GET', '/api/version')).rejects.toThrow('HTTP 401')
     expect(tokenRejected.value).toBe(true)
     expect(tokenDialogOpen.value).toBe(true)
+  })
+
+  it('D-20：logout 清空 localStorage 与内存令牌，并复位 401 标记', () => {
+    saveToken('tok-1')
+    tokenRejected.value = true
+    logout()
+    expect(window.localStorage.getItem(TOKEN_STORAGE_KEY)).toBeNull()
+    expect(tokenState.value).toBe('')
+    expect(tokenRejected.value).toBe(false)
+  })
+
+  it('D-20：logout 在没有令牌时也不报错', () => {
+    expect(() => logout()).not.toThrow()
+    expect(tokenState.value).toBe('')
   })
 
   it('initToken：非 401 的失败不会弹出输入框', async () => {

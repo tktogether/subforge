@@ -34,6 +34,13 @@ export function closeTokenDialog(): void {
   tokenDialogOpen.value = false
 }
 
+// logout 清掉当前生效的令牌（内存 + localStorage）并复位 401 标记。
+// 退出登录相当于 saveToken(''): 清空后所有请求都不再带 X-Token，
+// 顶栏令牌按钮弹框也会跟着失效。
+export function logout(): void {
+  saveToken('')
+}
+
 // initToken 把令牌接到请求层：每个请求带 X-Token，收到 401 时自动弹出输入框。
 //
 // 服务端没设令牌时不会出现 401，输入框也就不会自己跳出来——用户仍可从顶栏手动打开。

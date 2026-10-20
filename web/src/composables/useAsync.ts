@@ -1,10 +1,20 @@
 import { ref, type Ref } from 'vue'
+import { HttpError } from '../api/client'
 
 export function errorMessage(err: unknown): string {
   if (err instanceof Error) {
     return err.message
   }
   return String(err)
+}
+
+// errorDetail 取出 HttpError 的可折叠原始报文（例如服务端内部错误）供 AsyncSection
+// 的折叠块展示。其他错误没有详情，返回空串，界面就不显示折叠块。
+export function errorDetail(err: unknown): string {
+  if (err instanceof HttpError) {
+    return err.detail
+  }
+  return ''
 }
 
 export interface AsyncState<T> {
