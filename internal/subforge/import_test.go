@@ -2,8 +2,10 @@ package subforge
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tktogether/subforge/internal/model"
 )
@@ -34,7 +36,7 @@ func TestImportRulesCandidateQueue(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
 
-	g, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0)
+	g, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0, 0)
 	if err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}
@@ -119,7 +121,7 @@ func TestImportRulesCandidateQueue(t *testing.T) {
 func TestImportRulesIdempotent(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
-	if _, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0); err != nil {
+	if _, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0, 0); err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}
 	rules := []string{
@@ -221,7 +223,7 @@ func TestImportRulesEmpty(t *testing.T) {
 func TestImportRulesResolveDNS(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
-	if _, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0); err != nil {
+	if _, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0, 0); err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}
 	rules := []string{
@@ -252,7 +254,7 @@ func TestImportRulesResolveDNS(t *testing.T) {
 func TestImportRulesResolveDNSRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
-	if _, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0); err != nil {
+	if _, err := m.AddProxyGroup(ctx, "PROXY", "select", "", "", 0, 0); err != nil {
 		t.Fatalf("AddProxyGroup: %v", err)
 	}
 
@@ -320,3 +322,131 @@ func TestImportRulesResolveDNSRoundTrip(t *testing.T) {
 		t.Errorf("往返渲染 = %q, want %q", got, "DOMAIN-SUFFIX,example.com,DIRECT")
 	}
 }
+// countImportRules 返回 rules 表总行数。
+func countImportRules(t *testing.T, m *Manager) int {
+	t.Helper()
+	var n int
+	if err := m.DB().Raw().QueryRowContext(context.Background(), "SELECT COUNT(*) FROM rules").Scan(&n); err != nil {
+		t.Fatalf("count rules: %v", err)
+	}
+	return n
+}
+
+// TestImportRulesBulk10000 覆盖 D-04：一次性导入 10000 条规则必须秒级完成（原来逐条
+// INSERT 每条一次 fsync，9638 条需要 >30s）。同时断言计数、幂等跳过与 sort_order 连续性。
+func TestImportRulesBulk10000(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	if _, err := m.AddProxyGroup(ctx, "RELAY", "select", "", "", 0, 0); err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+
+	const n = 10000
+	rules := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		rules = append(rules, fmt.Sprintf("DOMAIN-SUFFIX,uxt-%d.test,RELAY", i))
+	}
+
+	// 第一次：全部新增。目标「5000 条 < 3s」，这里按 10000 条放宽到 5s，避免慢 CI 误报。
+	start := time.Now()
+	res, err := m.ImportRules(ctx, "airport:bulk", rules, nil)
+	first := time.Since(start)
+	if err != nil {
+		t.Fatalf("首次 ImportRules: %v", err)
+	}
+	if res.RulesAdded != n || res.RulesSkipped != 0 {
+		t.Fatalf("首次 added/skipped = %d/%d, want %d/0", res.RulesAdded, res.RulesSkipped, n)
+	}
+	if first > 5*time.Second {
+		t.Fatalf("首次导入 %d 条耗时 %v，应 < 5s（批量写在单事务里）", n, first)
+	}
+	if got := countImportRules(t, m); got != n {
+		t.Fatalf("rules 行数 = %d, want %d", got, n)
+	}
+
+	// sort_order 必须从 1 开始严格递增（步长 1，无空洞）。
+	rows, err := m.DB().Raw().QueryContext(ctx, "SELECT sort_order FROM rules ORDER BY sort_order")
+	if err != nil {
+		t.Fatalf("查询 sort_order: %v", err)
+	}
+	defer rows.Close()
+	idx := 0
+	for rows.Next() {
+		var so int
+		if err := rows.Scan(&so); err != nil {
+			t.Fatalf("扫描 sort_order: %v", err)
+		}
+		if so != idx+1 {
+			t.Fatalf("第 %d 行的 sort_order = %d, want %d（应严格递增且从 1 开始）", idx, so, idx+1)
+		}
+		idx++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("遍历 sort_order: %v", err)
+	}
+	if idx != n {
+		t.Fatalf("sort_order 行数 = %d, want %d", idx, n)
+	}
+
+	// 第二次：同样 10000 条，全部命中 (source, origin_key) 唯一索引 → 跳过、不新增行。
+	start = time.Now()
+	res2, err := m.ImportRules(ctx, "airport:bulk", rules, nil)
+	second := time.Since(start)
+	if err != nil {
+		t.Fatalf("二次 ImportRules: %v", err)
+	}
+	if res2.RulesAdded != 0 || res2.RulesSkipped != n {
+		t.Fatalf("二次 added/skipped = %d/%d, want 0/%d", res2.RulesAdded, res2.RulesSkipped, n)
+	}
+	if second > 5*time.Second {
+		t.Fatalf("二次导入 %d 条耗时 %v，应 < 5s", n, second)
+	}
+	if got := countImportRules(t, m); got != n {
+		t.Fatalf("二次导入后 rules 行数 = %d, want %d", got, n)
+	}
+	t.Logf("首次导入 %d 条耗时 %v；二次（全跳过）耗时 %v", n, first, second)
+
+	// 追加导入：新序号必须从「已有最大值 + 1」继续，而不是从 1 重来。
+	appendRules := []string{
+		"DOMAIN-SUFFIX,uxt-new-1.test,RELAY",
+		"DOMAIN-SUFFIX,uxt-new-2.test,RELAY",
+	}
+	res3, err := m.ImportRules(ctx, "airport:bulk", appendRules, nil)
+	if err != nil {
+		t.Fatalf("追加 ImportRules: %v", err)
+	}
+	if res3.RulesAdded != 2 || res3.RulesSkipped != 0 {
+		t.Fatalf("追加 added/skipped = %d/%d, want 2/0", res3.RulesAdded, res3.RulesSkipped)
+	}
+	var minNew int
+	if err := m.DB().Raw().QueryRowContext(ctx,
+		"SELECT MIN(sort_order) FROM rules WHERE rule_param LIKE 'uxt-new-%'").Scan(&minNew); err != nil {
+		t.Fatalf("查询追加行序号: %v", err)
+	}
+	if minNew != n+1 {
+		t.Fatalf("追加行最小 sort_order = %d, want %d（原最大值 + 1）", minNew, n+1)
+	}
+}
+
+// TestImportRulesBatchDuplicateWithinOneImport 覆盖同一批里出现完全重复行：
+// INSERT OR IGNORE 让第二条跳过并计入 skipped，整批不失败。
+func TestImportRulesBatchDuplicateWithinOneImport(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	rules := []string{
+		"DOMAIN-SUFFIX,dup.test,DIRECT",
+		"DOMAIN-SUFFIX,dup.test,DIRECT",
+		"DOMAIN-SUFFIX,other.test,DIRECT",
+	}
+	res, err := m.ImportRules(ctx, "airport:dup", rules, nil)
+	if err != nil {
+		t.Fatalf("ImportRules: %v", err)
+	}
+	if res.RulesAdded != 2 || res.RulesSkipped != 1 {
+		t.Fatalf("added/skipped = %d/%d, want 2/1", res.RulesAdded, res.RulesSkipped)
+	}
+	if got := countImportRules(t, m); got != 2 {
+		t.Fatalf("rules 行数 = %d, want 2", got)
+	}
+}
+

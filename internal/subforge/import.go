@@ -57,19 +57,15 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 		groupIDByName[g.Name] = g.ID
 	}
 
-	var maxSort int
-	existing, err := m.ListRules(ctx)
+	// 只取当前最大 sort_order（一行聚合），不再为了新序号把全部规则读进内存。
+	maxSort, err := m.db.MaxRulesSortOrder(ctx)
 	if err != nil {
 		return result, err
-	}
-	for _, r := range existing {
-		if r.SortOrder > maxSort {
-			maxSort = r.SortOrder
-		}
 	}
 
 	now := time.Now()
 	missingTargets := map[string]int{}
+	pending := make([]store.ImportedRuleRow, 0, len(rules))
 	for i, line := range rules {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -120,22 +116,29 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 			}
 		}
 
-		sortOrder := maxSort + i + 1
-		_, err := m.db.Raw().ExecContext(ctx,
-			"INSERT INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, source, raw, origin_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			ruleType, ruleParam, ruleConfig, resolveDNS, false, sortOrder, source, line, originKey, now, now)
-		if err != nil {
-			if strings.Contains(err.Error(), "UNIQUE") {
-				result.RulesSkipped++
-				_, _ = m.db.Raw().ExecContext(ctx,
-					"UPDATE rules SET updated_at = ? WHERE source = ? AND origin_key = ?",
-					now, source, originKey)
-				continue
-			}
-			return result, err
-		}
-		result.RulesAdded++
+		pending = append(pending, store.ImportedRuleRow{
+			RuleType:   ruleType,
+			RuleParam:  ruleParam,
+			RuleConfig: ruleConfig,
+			ResolveDNS: resolveDNS,
+			Enabled:    false,
+			SortOrder:  maxSort + i + 1,
+			Source:     source,
+			Raw:        line,
+			OriginKey:  originKey,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		})
 	}
+
+	// 批量写：单事务一次提交，把 N 次 fsync 合成 1 次（原实现逐条 INSERT 让导入 9638 条耗时 >30s）。
+	added, skipped, err := m.db.BatchInsertImportedRules(ctx, pending)
+	if err != nil {
+		// 事务已整体回滚：这次导入没有落库任何规则，计数保持 0。
+		return result, err
+	}
+	result.RulesAdded += added
+	result.RulesSkipped += skipped
 
 	if len(missingTargets) > 0 {
 		names := make([]string, 0, len(missingTargets))
