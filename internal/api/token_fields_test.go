@@ -340,15 +340,21 @@ func TestSubscribeTokenEmptyFieldsRegression(t *testing.T) {
 		t.Fatalf("空字段令牌未产出默认 Clash YAML")
 	}
 
-	// (1b) 确定性字节回归：include=tuic-node 只渲染无随机 UA 的 tuic 节点，
-	// 此时「无 target」与「显式 target=clash.meta」必须逐字节相同（无需归一化）。
+	// (1b) 确定性字节回归：include=tuic-node 只渲染 tuic 节点（mihomo 不会给该协议
+	// 注入随机 UA），此时「无 target」与「显式 target=clash.meta」除生成时间外必须
+	// 逐字节相同。生成时间由每次请求现取、精度到秒，两次请求跨秒就不同——CI 上
+	// internal/api 整个包要跑一分多钟，跨秒是常态（windows-latest 实测 02:00:30 与
+	// 02:00:31 两次渲染即失败），所以只折叠这一个字面量，保留「其余字节完全一致」
+	// 的断言强度。
 	_, _, ssA := uiGet(t, base, "/subscribe?token=tok-reg&include=tuic-node")
 	_, _, ssB := uiGet(t, base, "/subscribe?token=tok-reg&target=clash.meta&include=tuic-node")
 	if !strings.Contains(ssA, "tuic-node") {
 		t.Fatalf("include=tuic-node 未产出目标节点，用例失效: %s", ssA)
 	}
-	if ssA != ssB {
-		t.Fatalf("确定性字节回归失败: %s", firstDiffSnippet(ssA, ssB))
+	normA := generatedAtRe.ReplaceAllString(ssA, "生成时间: TS")
+	normB := generatedAtRe.ReplaceAllString(ssB, "生成时间: TS")
+	if normA != normB {
+		t.Fatalf("确定性字节回归失败: %s", firstDiffSnippet(normA, normB))
 	}
 
 	// (2) pipeline 的 config 表回落链仍然生效（令牌 pipeline 为空时）。
