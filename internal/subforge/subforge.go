@@ -161,6 +161,20 @@ func (m *Manager) UpdateAirportTraffic(ctx context.Context, id int64, u *traffic
 	return err
 }
 
+// UpdateAirportNodeCount 只回写节点数并清空 traffic_err，不动流量值与 traffic_at。
+//
+// 存在的理由：有些机场根本不返回 subscription-userinfo，拉取本身却是成功的。
+// 这种"成功但拿不到流量"既不该记成采集失败，也不该把节点数丢掉，而
+// UpdateAirportTraffic 在 u == nil 时只写 traffic_err、写不了节点数。
+// traffic_at 保持不变是刻意的——它表示"上次拿到流量余额的时刻"，这次没拿到。
+func (m *Manager) UpdateAirportNodeCount(ctx context.Context, id int64, nodeCount int) error {
+	now := time.Now()
+	_, err := m.db.Raw().ExecContext(ctx,
+		"UPDATE airports SET node_count = ?, traffic_err = '', updated_at = ? WHERE id = ?",
+		nodeCount, now, id)
+	return err
+}
+
 // --- SelfNode（自建节点）管理 ---
 
 // SelfNode 是一个自建节点。行类型定义在 internal/store。

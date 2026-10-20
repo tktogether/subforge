@@ -374,6 +374,27 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
+  it('refreshOne 结果表在成功但有说明时显示 note，且不按失败渲染', async () => {
+    refreshMock.mockResolvedValueOnce({
+      result: {
+        airport_id: 1, name: 'HK', ok: true,
+        usage: { upload: '', download: '', total: '', expire: '' }, node_count: 12,
+        err: '', note: '上游未提供 subscription-userinfo：本次只更新了节点数，流量信息保持未知',
+      },
+    })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).refreshOne((w.vm as any).rows[0])
+    await flushPromises()
+    const rows = w.findAll('[data-testid="refresh-result-row"]')
+    expect(rows.length).toBe(1)
+    expect(rows[0].text()).toContain('成功')
+    const note = w.find('[data-testid="refresh-result-note"]')
+    expect(note.exists()).toBe(true)
+    expect(note.text()).toContain('subscription-userinfo')
+    w.unmount()
+  })
+
   it('refreshOne 结果表显示单条 ok 与 err', async () => {
     refreshMock.mockResolvedValueOnce({ result: { airport_id: 1, name: 'HK', ok: false, usage: { upload: '', download: '', total: '', expire: '' }, node_count: 0, err: '单机场失败' } })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })

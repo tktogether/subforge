@@ -193,6 +193,25 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
+  it('全部更新失败时，500 响应体里的逐源结果仍要渲染出来', async () => {
+    // 服务端在 500 里也回逐源结果；界面只弹一句「所有 N 个 source 更新失败」
+    // 的话，唯一能定位问题的原因就丢了。
+    updateMock.mockRejectedValueOnce({
+      status: 500,
+      body: JSON.stringify({
+        error: '所有 1 个 source 更新失败',
+        results: [{ source: 'src1', version: '', path: '', from_cache: false, err: '展开失败：56 个 ruleset' }],
+      }),
+    })
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="update-all"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="update-results"]').exists()).toBe(true)
+    expect(w.find('[data-testid="source-update-error"]').text()).toContain('展开失败')
+    w.unmount()
+  })
+
   it('点击回滚按钮打开对话框，确认后调用 rollbackRuleSource', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()

@@ -425,8 +425,8 @@ subforge convert -file sub.b64 -config demo.ini -pipeline lite
 - 步骤参数含空格时用双引号包裹，引号在解析时被剥掉
   （`internal/config/pipeline.go:189-210`）。
 - 管线名不存在时报错并退出：
-  `未找到命名管线 "nope"：模板里没有 [pipeline:nope] 段落`
-  （`internal/convert/params.go:251-264`）。
+  `未找到命名管线 "nope"：模板里没有 [pipeline:nope] 段落，控制台的「管线」页也没有启用的同名管线（GET /api/pipelines 可查现有名称）`
+  （`internal/convert/params.go:251-264`）。命名管线除了模板里的 `[pipeline:<名>]` 段落，还可以来自控制台「管线」页，详见[转换流水线原理](转换流水线原理)第 5 节。
 - `on_error` 可以按步覆盖：在 `step` 行里写 `on_error=skip` 即可。
 
 ---

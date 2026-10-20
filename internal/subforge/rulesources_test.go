@@ -500,6 +500,34 @@ func TestRuleManifestTemplate(t *testing.T) {
 	}
 }
 
+// TestRuleManifestTemplateURLsAreDistinct 钉住两件事：每条公式源都是 https、
+// 且两个源的地址不相同。
+//
+// 之前 reject 指向 meta-rules-dat 的 geoip/reject.yaml，那个路径在上游是 404，
+// 于是"开箱即用"的默认清单每次更新都会留一条假失败。这里不做网络请求（单测不
+// 该依赖外网），只保证两源不重复、都是 https，指向关系由文档与实测记录兜底。
+func TestRuleManifestTemplateURLsAreDistinct(t *testing.T) {
+	tpl := RuleManifestTemplate()
+	urls := make([]string, 0, 2)
+	for _, line := range strings.Split(tpl, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "url: ") {
+			continue
+		}
+		u := strings.TrimPrefix(line, "url: ")
+		if !strings.HasPrefix(u, "https://") {
+			t.Errorf("规则源地址应使用 https: %q", u)
+		}
+		urls = append(urls, u)
+	}
+	if len(urls) != 2 {
+		t.Fatalf("默认清单应有 2 个源，实得 %d 个: %v", len(urls), urls)
+	}
+	if urls[0] == urls[1] {
+		t.Errorf("两个源的地址不应相同: %q", urls[0])
+	}
+}
+
 // TestEnsureRuleManifestCreate 覆盖首次创建：created=true 且内容等于模板。
 func TestEnsureRuleManifestCreate(t *testing.T) {
 	ctx := context.Background()

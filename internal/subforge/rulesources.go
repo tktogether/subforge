@@ -109,7 +109,10 @@ func RuleManifestTemplate() string {
 		"# 每个 source 会被抓取并落盘为 <name>-<UTC 时间戳>.<ext>，默认保留最近 5 个版本。\n" +
 		"sources:\n" +
 		"  - name: reject\n" +
-		"    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/reject.yaml\n" +
+		// meta-rules-dat 没有 geoip/reject.yaml（该路径 404），广告/拦截域名清单在
+		// geosite/category-ads-all.yaml 下。默认清单是全仓库唯一被"开箱即用"的地方，
+		// 指向一个不存在的地址等于每次更新都留一条假失败。
+		"    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ads-all.yaml\n" +
 		"    format: clash-meta\n" +
 		"  - name: private\n" +
 		"    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/private.yaml\n" +

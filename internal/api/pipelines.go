@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 
+	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/store"
 )
 
@@ -77,6 +79,44 @@ func (s *Server) mergedPipelines(ctx context.Context, configRef string) ([]apiPi
 			},
 			ReadOnly: true,
 		})
+	}
+	return out, nil
+}
+
+// uiPipelineSpecs 把控制台维护的管线（source=ui）翻译成引擎认的命名管线定义。
+//
+// steps_json 里的 op 就是 config.PipelineStep.Kind（apiPipelineStep 的注释已约定
+// 两者同名），所以这里只做反序列化，不重新解释语义：编译与报错交给
+// PipelineSpec.Compile，保证界面建的管线和 INI 里写的管线走同一段校验。
+//
+// 停用的行直接跳过。界面上「停用」是「别拿它跑转换」的意思，让它在引擎里继续
+// 生效会让开关形同虚设。
+func (s *Server) uiPipelineSpecs(ctx context.Context) (map[string]config.PipelineSpec, error) {
+	if s.subManager == nil {
+		return nil, nil
+	}
+	rows, err := s.subManager.ListPipelines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]config.PipelineSpec, len(rows))
+	for _, row := range rows {
+		if !row.Enabled {
+			continue
+		}
+		var steps []apiPipelineStep
+		if raw := strings.TrimSpace(row.StepsJSON); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &steps); err != nil {
+				return nil, fmt.Errorf("控制台管线 %q 的步骤不是合法 JSON: %w", row.Name, err)
+			}
+		}
+		spec := config.PipelineSpec{Name: row.Name, Steps: make([]config.PipelineStep, 0, len(steps))}
+		for _, st := range steps {
+			spec.Steps = append(spec.Steps, config.PipelineStep{
+				Kind: st.Op, Args: st.Args, OnError: st.OnError, Line: st.Line,
+			})
+		}
+		out[row.Name] = spec
 	}
 	return out, nil
 }

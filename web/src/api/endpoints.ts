@@ -289,6 +289,8 @@ export interface TrafficStrategy {
 export interface TrafficRefreshResult {
   airport_id: number; name: string; ok: boolean
   usage: TrafficUsage; node_count: number; err: string
+  /** 成功但有话要说时的说明（目前只有「上游不提供流量信息」一种）。不是错误。 */
+  note?: string
 }
 export interface ImportRulesOutcome {
   airport_id: number; name: string

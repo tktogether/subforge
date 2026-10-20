@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,6 +42,47 @@ func postJSON(t *testing.T, srv *Server, target, body string) *httptest.Response
 	rec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rec, req)
 	return rec
+}
+
+// TestRuleSourcesUpdateAllFailedKeepsPerSourceErrors 全部源更新失败时，500 响应体里
+// 必须仍然带上逐源结果：manifest 只回一句「所有 N 个 source 更新失败」，真正能
+// 定位问题的原因（哪个源、上游报了什么）全在 results 里。丢掉它，界面上就只剩
+// 一句笼统的失败，用户无从下手。
+func TestRuleSourcesUpdateAllFailedKeepsPerSourceErrors(t *testing.T) {
+	srv, mgr := newWriteTestServer(t)
+	path := seedWriteManifest(t, mgr)
+	// 127.0.0.1:1 是必然连不上的地址，用来稳定地制造"全部源失败"。
+	unreachable := "sources:\n  - name: base\n    url: http://127.0.0.1:1/base.yaml\noutput:\n  format: clash-meta\n  path: ./rules\n"
+	if err := os.WriteFile(path, []byte(unreachable), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	rec := postJSON(t, srv, "/api/rule-sources/update", "{}")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Error   string `json:"error"`
+		Results []struct {
+			Source string `json:"source"`
+			Err    string `json:"err"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("解析响应: %v（body=%s）", err, rec.Body.String())
+	}
+	if got.Error == "" {
+		t.Error("响应应带 error 字段")
+	}
+	if len(got.Results) != 1 {
+		t.Fatalf("results 长度 = %d, want 1（逐源结果不能丢）: %s", len(got.Results), rec.Body.String())
+	}
+	if got.Results[0].Source != "base" {
+		t.Errorf("source = %q, want base", got.Results[0].Source)
+	}
+	if got.Results[0].Err == "" {
+		t.Errorf("失败源的 err 不能为空: %s", rec.Body.String())
+	}
 }
 
 func TestRuleSourcesAdd503(t *testing.T) {

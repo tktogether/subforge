@@ -79,21 +79,8 @@ func (s *Server) handleAPIRuleSourcesInit(w http.ResponseWriter, r *http.Request
 	s.writeJSON(w, http.StatusOK, map[string]any{"path": path, "created": created})
 }
 
-// handleAPIRuleSourcesUpdate 处理 POST /api/rule-sources/update。
-func (s *Server) handleAPIRuleSourcesUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
-		return
-	}
-	m, ok := s.subManagerOr503(w, r)
-	if !ok {
-		return
-	}
-	results, err := m.UpdateRuleSources(r.Context())
-	if err != nil {
-		s.writeAPIError(w, r, http.StatusInternalServerError, err)
-		return
-	}
+// ruleSourceResults 把 manifest 的逐源结果转成响应体里的一份。
+func ruleSourceResults(results []manifest.UpdateResult) []map[string]any {
 	out := make([]map[string]any, 0, len(results))
 	for _, res := range results {
 		errStr := ""
@@ -107,6 +94,37 @@ func (s *Server) handleAPIRuleSourcesUpdate(w http.ResponseWriter, r *http.Reque
 			"from_cache": res.FromCache,
 			"err":        errStr,
 		})
+	}
+	return out
+}
+
+// writeRuleSourceFailure 回 500，但把逐源结果一起带上。
+//
+// 全部源都失败时 manifest 返回的 error 只有一句「所有 N 个 source 更新失败」，
+// 真正有用的信息（哪个源、哪一步、上游说了什么）全在 results 里。只回 error
+// 的话，界面上只剩一句笼统的失败，用户无从下手。
+func (s *Server) writeRuleSourceFailure(w http.ResponseWriter, err error, out []map[string]any) {
+	s.writeJSON(w, http.StatusInternalServerError, map[string]any{
+		"error":   err.Error(),
+		"results": out,
+	})
+}
+
+// handleAPIRuleSourcesUpdate 处理 POST /api/rule-sources/update。
+func (s *Server) handleAPIRuleSourcesUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	results, err := m.UpdateRuleSources(r.Context())
+	out := ruleSourceResults(results)
+	if err != nil {
+		s.writeRuleSourceFailure(w, err, out)
+		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"results": out})
 }
@@ -313,7 +331,7 @@ func (s *Server) handleAPIRuleSourcesUpdateOne(w http.ResponseWriter, r *http.Re
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return
 		}
-		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		s.writeRuleSourceFailure(w, err, ruleSourceResults(results))
 		return
 	}
 	out := make([]map[string]any, 0, len(results))

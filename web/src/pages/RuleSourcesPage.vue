@@ -104,7 +104,7 @@ async function updateAll(): Promise<void> {
     notify('更新完成', 'ok')
     await load()
   } catch (err) {
-    notify(errorMessage(err), 'error')
+    showUpdateFailure(err)
   }
 }
 
@@ -196,6 +196,30 @@ async function confirmRemove(): Promise<void> {
   }
 }
 
+// showUpdateFailure 把更新失败渲染出来。
+//
+// 服务端在 500 里也带着逐源结果（每条的原因在里面），只弹一句
+// 「所有 1 个 source 更新失败」等于把唯一有用的信息丢掉。
+function showUpdateFailure(err: unknown): void {
+  const body = (err as { body?: unknown }).body
+  let message = errorMessage(err)
+  let results: RuleSourceUpdateResult[] = []
+  if (typeof body === 'string' && body !== '') {
+    try {
+      const parsed = JSON.parse(body) as { error?: string; results?: RuleSourceUpdateResult[] }
+      if (typeof parsed.error === 'string' && parsed.error !== '') message = parsed.error
+      if (Array.isArray(parsed.results)) results = parsed.results
+    } catch {
+      // 响应体不是 JSON（网关错误页等）：保留 errorMessage 的兜底文案。
+    }
+  }
+  if (results.length > 0) {
+    updateResults.value = results
+    showUpdateResults.value = true
+  }
+  notify(message, 'error')
+}
+
 async function updateOne(name: string): Promise<void> {
   if (updatingOne.value) return
   updatingOne.value = name
@@ -205,7 +229,7 @@ async function updateOne(name: string): Promise<void> {
     showUpdateResults.value = true
     await load()
   } catch (err) {
-    notify(errorMessage(err), 'error')
+    showUpdateFailure(err)
   } finally {
     updatingOne.value = ''
   }
@@ -305,7 +329,6 @@ onMounted(() => {
             <div>路径：{{ r.path }}</div>
             <span v-if="r.from_cache" data-testid="from-cache">命中缓存</span>
             <div v-if="r.err !== ''" data-testid="source-update-error" class="text-error">{{ r.err }}</div>
-            <div v-if="r.err !== ''" class="text-caption text-medium-emphasis">该源保留上一版本，产物不受影响</div>
             <div v-if="r.err !== ''" class="text-caption text-medium-emphasis">该源保留上一版本，产物不受影响</div>
           </div>
         </v-card-text>

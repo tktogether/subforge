@@ -270,6 +270,8 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 
 机场对象包含 `id`、`name`、`subscription_url`、`remarks`、`enabled`、`sort_order`、`upload`、`download`、`total`、`expire`、`node_count`、`traffic_at`、`traffic_err`、`created_at`、`updated_at`（`internal/subforge/subforge.go:74-94`）。流量刷新失败时只写 `traffic_err`，保留上一次成功的数值，不会清零（`internal/subforge/subforge.go:149-162`）。
 
+刷新结果里还有一个可选的 `note` 字段（`internal/subforge/traffic.go:34-36`）：拉取成功但上游没回 `subscription-userinfo` 时，`ok` 仍为 `true`、`note` 给出说明，节点数照常写回。详见[流量策略与用量统计](流量策略与用量统计)第 3.3 节。
+
 测活结果保存在进程内存中，重启后 `/api/airports/check/last` 返回空结果（`internal/api/check.go:30-131`）。`ids` 为空数组时返回 400 `没有可测活的机场`，包含不存在的机场时返回 400 `机场 N 不存在`。
 
 ### 5.2 自建节点
@@ -364,8 +366,8 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 | GET | `/api/rule-sources` | — | 清单路径、规则源数组、状态与提示 |
 | POST | `/api/rule-sources/init` | 可选 `?force=1` | `{"path":"...","created":bool}` |
 | POST | `/api/rule-sources` | `name`、`url`、`input_format` | `{"path":"...","created":bool}` |
-| POST | `/api/rule-sources/update` | — | `{"results":[{"source","version","path","from_cache","err"}]}` |
-| POST | `/api/rule-sources/update-one` | `{"name":"..."}` | 同 `update` 的结果数组 |
+| POST | `/api/rule-sources/update` | — | `{"results":[{"source","version","path","from_cache","err"}]}`；有源失败时整体返回 500，响应体为 `{"error":"所有 N 个 source 更新失败","results":[...]}` |
+| POST | `/api/rule-sources/update-one` | `{"name":"..."}` | 同 `update` 的结果数组；失败时同样在 500 里带 `results` |
 | POST | `/api/rule-sources/rollback` | `{"name":"..."}` | `{"path":"..."}` |
 | POST | `/api/rule-sources/mrs` | `name`、`behavior`、`format` | `{"path":"...","bytes":N}` |
 | POST | `/api/rule-sources/remove` | `{"name":"..."}` | `{"ok":true,"path":"..."}` |

@@ -46,6 +46,13 @@ type Engine struct {
 	// RulesetLoader 拉取模板引用的远程规则集（ruleset=clash-domain:URL）。
 	// 为 nil 时用默认 HTTP 客户端；两者都不能复用 Fetcher，理由见 rulesetBody。
 	RulesetLoader config.RemoteLoader
+	// ExtraPipelines 返回模板之外的命名管线，由控制台在数据库里维护
+	// （GET /api/pipelines 里 source=ui 的那些行）。
+	//
+	// 口径与那个接口保持一致：DB 定义优先于模板，同名时覆盖 [pipeline:<name>] 段落。
+	// 停用的管线不在这里返回——界面上的「停用」意思是别拿它跑转换。
+	// 为 nil 时只认模板，纯 CLI 部署照常工作。
+	ExtraPipelines func(ctx context.Context) (map[string]config.PipelineSpec, error)
 }
 
 // Result 是一次转换的产物。
@@ -326,7 +333,8 @@ func (e *Engine) resolveParams(ctx context.Context, base Params) (Params, error)
 		chains = append(chains, tpl)
 	}
 	if len(chains) == 0 {
-		return base, nil
+		// 一份模板都没有也要并控制台管线：只用界面、不写 INI 的部署是常态。
+		return e.mergeExtraPipelines(ctx, base)
 	}
 	merged, err := config.Merge(chains...)
 	if err != nil {
@@ -340,12 +348,41 @@ func (e *Engine) resolveParams(ctx context.Context, base Params) (Params, error)
 	if err != nil {
 		return Params{}, err
 	}
+	out, err = e.mergeExtraPipelines(ctx, out)
+	if err != nil {
+		return Params{}, err
+	}
 	// 远程规则集在这里展开：Semantics 是纯解析没有网络能力，只有拿到模板引用才拉。
 	expanded, warns := e.expandRemoteRulesets(ctx, out)
 	if len(warns) > 0 {
 		expanded.TemplateWarnings = append(expanded.TemplateWarnings, warns...)
 	}
 	return expanded, nil
+}
+
+// mergeExtraPipelines 把模板之外的命名管线并进参数。
+//
+// 没有模板时 resolveParams 会提前返回，所以这条路径必须单独走一次：
+// 控制台里建的管线跟 INI 无关，用户完全可能一份模板都没有。
+// 同名时以 ExtraPipelines 为准，与 GET /api/pipelines 的合并口径一致。
+func (e *Engine) mergeExtraPipelines(ctx context.Context, p Params) (Params, error) {
+	if e == nil || e.ExtraPipelines == nil {
+		return p, nil
+	}
+	extra, err := e.ExtraPipelines(ctx)
+	if err != nil {
+		return Params{}, fmt.Errorf("加载控制台管线: %w", err)
+	}
+	if len(extra) == 0 {
+		return p, nil
+	}
+	if p.Pipelines == nil {
+		p.Pipelines = make(map[string]config.PipelineSpec, len(extra))
+	}
+	for name, spec := range extra {
+		p.Pipelines[name] = spec
+	}
+	return p, nil
 }
 
 func nowUTC(now func() time.Time) string {

@@ -346,6 +346,7 @@ async function restoreLastCheck(): Promise<void> {
           <span>{{ res.name }}</span>
           <span :class="res.ok ? 'text-success' : 'text-error'">{{ res.ok ? '成功' : '失败' }}</span>
           <span v-if="res.err !== ''" class="text-error">{{ res.err }}</span>
+          <span v-else-if="res.note" data-testid="refresh-result-note" class="text-medium-emphasis">{{ res.note }}</span>
         </div>
       </div>
 

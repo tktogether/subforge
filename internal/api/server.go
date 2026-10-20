@@ -107,6 +107,11 @@ func New(cfg Config) *Server {
 // 由调用方在创建 Server 后调用，避免在 New 里引入可选依赖。
 func (s *Server) SetSubManager(m *subforge.Manager) {
 	s.subManager = m
+	// 控制台建的管线也要能被 pipeline=<name> 选中：引擎本身只认模板，
+	// 不接这一步的话界面上列得出的名字拿去跑转换会直接报「未找到命名管线」。
+	if s.engine != nil {
+		s.engine.ExtraPipelines = s.uiPipelineSpecs
+	}
 }
 
 // SetScheduler 注入定时调度器，供 GET /api/tasks 读取执行历史。

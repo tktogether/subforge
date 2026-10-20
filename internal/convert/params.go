@@ -252,7 +252,11 @@ func BuildPlan(p Params) (transform.Plan, error) {
 	if p.Pipeline != "" {
 		spec, ok := p.Pipelines[p.Pipeline]
 		if !ok {
-			return transform.Plan{}, fmt.Errorf("未找到命名管线 %q：模板里没有 [pipeline:%s] 段落", p.Pipeline, p.Pipeline)
+			// 报错要把两条来源都点出来：控制台的「管线」页和模板 INI 是两处独立定义，
+			// 只说模板会让只在界面上建过管线的用户以为功能坏了。
+			return transform.Plan{}, fmt.Errorf(
+				"未找到命名管线 %q：模板里没有 [pipeline:%s] 段落，控制台的「管线」页也没有启用的同名管线（GET /api/pipelines 可查现有名称）",
+				p.Pipeline, p.Pipeline)
 		}
 		return spec.Compile()
 	}

@@ -253,8 +253,11 @@ func TestExpand_Custom_MergeDedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expand: %v", err)
 	}
-	// 合并顺序：g1 先（a,b），g2 后（b 去重, c）→ a,b,c
-	want := []string{"DOMAIN-SUFFIX,a.com,PROXY", "DOMAIN-SUFFIX,b.com,PROXY", "DOMAIN-SUFFIX,c.com,PROXY"}
+	// 合并顺序：g1 先（a,b），g2 后（b 落另一个组所以不是重复行, c）→ a,b,b,c。
+	// 去重按整行：同一条域名落到不同组是两条合法规则，不能合并。
+	// 出站名必须是引用声明的组（g1/g2），而不是清单原文里的 PROXY：
+	// 规则源展开后是最终产物，清单自带的出站名会把规则指向一个并不存在的策略组。
+	want := []string{"DOMAIN-SUFFIX,a.com,g1", "DOMAIN-SUFFIX,b.com,g1", "DOMAIN-SUFFIX,b.com,g2", "DOMAIN-SUFFIX,c.com,g2"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -288,7 +291,7 @@ func TestExpand_Custom_PartialFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("partial fail should not error: %v", err)
 	}
-	if len(got) != 1 || got[0] != "DOMAIN-SUFFIX,a.com,PROXY" {
+	if len(got) != 1 || got[0] != "DOMAIN-SUFFIX,a.com,good" {
 		t.Fatalf("got %v", got)
 	}
 }

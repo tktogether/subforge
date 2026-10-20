@@ -2,6 +2,7 @@ package convert
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -128,6 +129,105 @@ func TestEngine_NamedPipelineUnknown(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nope") {
 		t.Errorf("错误信息应带上管线名: %v", err)
+	}
+}
+
+// TestEngine_NamedPipelineFromExtra 控制台建的管线（ExtraPipelines）不依赖模板也要能用。
+//
+// 这条路径以前是断的：界面在「管线」页列得出名字，转换引擎却只认模板段落，
+// 于是用户选中界面上的管线就会拿到 502「未找到命名管线」。
+// 这里刻意一份模板都不挂，覆盖 resolveParams 里 len(chains)==0 的提前返回分支。
+func TestEngine_NamedPipelineFromExtra(t *testing.T) {
+	srv := subServer(t,
+		ssLink("10.14.0.1", 8388, "HK-01 - 香港"),
+		ssLink("10.14.0.2", 8388, "US-01 - 美国"),
+	)
+	e := newEngine(t)
+	e.ExtraPipelines = func(context.Context) (map[string]config.PipelineSpec, error) {
+		return map[string]config.PipelineSpec{
+			"uiOnlyHK": {
+				Name: "uiOnlyHK",
+				Steps: []config.PipelineStep{
+					{Kind: "filter.regex", Args: map[string]string{"include": "^HK"}},
+					{Kind: "op.rename", Args: map[string]string{"pattern": " - .*$", "repl": ""}},
+				},
+			},
+		}, nil
+	}
+
+	res, err := e.Run(context.Background(), Params{
+		Target:   "clash.meta",
+		URLs:     []string{srv.URL},
+		Pipeline: "uiOnlyHK",
+		Raw:      map[string][]string{"pipeline": {"uiOnlyHK"}},
+	})
+	if err != nil {
+		t.Fatalf("控制台管线应能被 pipeline= 选中: %v", err)
+	}
+	if res.Nodes != 1 {
+		t.Fatalf("Nodes = %d, want 1（uiOnlyHK 只留香港）", res.Nodes)
+	}
+	out := string(res.Body)
+	if !strings.Contains(out, "HK-01") || strings.Contains(out, "US-01") {
+		t.Errorf("控制台管线未生效:\n%s", firstLines(out, 40))
+	}
+	if strings.Contains(out, " - 香港") {
+		t.Error("控制台管线的 op.rename 未生效：区域后缀仍在")
+	}
+}
+
+// TestEngine_ExtraPipelineOverridesTemplate 同名时以控制台定义为准。
+// 口径必须与 GET /api/pipelines 一致（那里 DB 行排在模板行前面并覆盖同名项），
+// 否则界面显示的和实际跑起来的会是两条不同的管线。
+func TestEngine_ExtraPipelineOverridesTemplate(t *testing.T) {
+	srv := subServer(t,
+		ssLink("10.15.0.1", 8388, "HK-01"),
+		ssLink("10.15.0.2", 8388, "US-01"),
+	)
+	// 模板里的 clean 只留香港；控制台里的同名管线只留美国。
+	e := withTemplate(t, newEngine(t), onlyUSTemplate)
+	e.ExtraPipelines = func(context.Context) (map[string]config.PipelineSpec, error) {
+		return map[string]config.PipelineSpec{
+			"clean": {
+				Name:  "clean",
+				Steps: []config.PipelineStep{{Kind: "filter.regex", Args: map[string]string{"include": "^US"}}},
+			},
+		}, nil
+	}
+
+	res, err := e.Run(context.Background(), Params{
+		Target:   "clash.meta",
+		URLs:     []string{srv.URL},
+		Pipeline: "clean",
+		Raw:      map[string][]string{"pipeline": {"clean"}},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	out := string(res.Body)
+	if !strings.Contains(out, "US-01") || strings.Contains(out, "HK-01") {
+		t.Errorf("同名时应以控制台定义为准:\n%s", firstLines(out, 40))
+	}
+}
+
+// TestEngine_ExtraPipelinesError 控制台管线加载失败要报错，不能静默退回默认装配。
+func TestEngine_ExtraPipelinesError(t *testing.T) {
+	srv := subServer(t, ssLink("10.16.0.1", 8388, "HK-01"))
+	e := newEngine(t)
+	e.ExtraPipelines = func(context.Context) (map[string]config.PipelineSpec, error) {
+		return nil, errors.New("数据库打不开")
+	}
+
+	_, err := e.Run(context.Background(), Params{
+		Target: "clash.meta",
+		URLs:   []string{srv.URL},
+		Raw:    map[string][]string{},
+	})
+	if err == nil {
+		t.Fatal("控制台管线加载失败时应报错")
+	}
+	if !strings.Contains(err.Error(), "数据库打不开") {
+		t.Errorf("错误信息应保留底层原因: %v", err)
 	}
 }
 

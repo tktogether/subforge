@@ -31,6 +31,9 @@ type TrafficRefreshResult struct {
 	Usage     traffic.Usage `json:"usage"`
 	NodeCount int           `json:"node_count"`
 	Err       string        `json:"err"`
+	// Note 是"成功但有话要说"的说明，目前只有一种：上游不返回 subscription-userinfo，
+	// 于是这次只更新了节点数、流量保持未知。它不是错误，调用方不要按失败渲染。
+	Note string `json:"note,omitempty"`
 }
 
 // GetTrafficStrategy 读取流量聚合策略。
@@ -75,8 +78,12 @@ func (m *Manager) SetTrafficStrategy(ctx context.Context, s traffic.Strategy) er
 // 语义（plan §3.3）：
 //   - 拉取失败：只写 traffic_err，**保留上次成功的流量值**；
 //   - 缓存命中（304，SubscriptionUserinfo 为空）：只清 traffic_err，不覆盖流量值；
-//   - 拉取成功但上游未提供该头：流量值保持原样，traffic_err 记「上游未提供 subscription-userinfo」；
+//   - 拉取成功但上游未提供该头：**算成功**——刷新 node_count、清空 traffic_err，
+//     流量值保持原样，并在结果的 note 里说明"上游没给流量信息"；
 //   - 拉取成功且有该头：覆盖流量值 + node_count + traffic_at，清空 traffic_err。
+//
+// 第三种情形为什么算成功：节点数是拉取成功就能拿到的真实数据，一个能正常拉取的
+// 订阅不该因为上游没回 subscription-userinfo 就被记成"采集失败"、节点数写 0。
 //
 // 单个机场失败不影响其他机场；返回结果顺序与 ListAirports 的启用项一致。
 func (m *Manager) RefreshAirportTraffic(ctx context.Context, f *fetch.Fetcher) ([]TrafficRefreshResult, error) {
@@ -142,11 +149,20 @@ func (m *Manager) refreshOneAirport(ctx context.Context, f *fetch.Fetcher, a Air
 	out.NodeCount = nodeCount
 	raw := strings.TrimSpace(res.SubscriptionUserinfo)
 	if raw == "" {
-		if res.FromCache {
-			// 304：上游没回该头是正常的，只清错误
-			return fail("")
+		// 拉取本身是成功的，只是上游没有流量头。
+		//
+		// 这里以前走的是 fail()，后果有两层：节点数被丢掉（UpdateAirportTraffic 在
+		// u==nil 时压根不写 node_count），并且 traffic_err 被写上，界面上一个完全
+		// 能用的机场会显示成"节点数 0 + 采集失败"。不返回流量头是上游的选择，
+		// 不是故障，所以按成功处理：节点数照写、错误清掉，另给一句说明。
+		out.OK = true
+		if !res.FromCache {
+			// 304 时上游不回该头是正常的，连提示都不用给。
+			out.Note = "上游未提供 subscription-userinfo：本次只更新了节点数，流量信息保持未知"
 		}
-		return fail("上游未提供 subscription-userinfo")
+		_ = m.db.AddFetchAudit(ctx, audit)
+		_ = m.UpdateAirportNodeCount(ctx, a.ID, nodeCount)
+		return out
 	}
 	u, ok := traffic.ParseSubscriptionUserinfo(raw)
 	if !ok {

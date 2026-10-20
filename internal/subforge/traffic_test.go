@@ -376,6 +376,13 @@ func TestRefreshAirportTrafficMissingUserinfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first RefreshAirportTraffic: %v", err)
 	}
+	base, err := m.GetAirport(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetAirport: %v", err)
+	}
+	if base.NodeCount <= 0 {
+		t.Fatalf("基线节点数 = %d, want > 0", base.NodeCount)
+	}
 	// 切到无 header 的 server
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(fixture)
@@ -394,11 +401,16 @@ func TestRefreshAirportTrafficMissingUserinfo(t *testing.T) {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
 	r := results[0]
-	if r.OK {
-		t.Fatalf("OK = true, want false")
+	// 上游不返回流量头不是故障：订阅拉到了、节点也解析出来了，只是没有余额可读。
+	// 以前这里算失败，还会把节点数丢掉，界面上就成了"节点数 0 + 采集失败"。
+	if !r.OK {
+		t.Fatalf("OK = false, want true（缺流量头不是采集失败）: err=%q", r.Err)
 	}
-	if r.Err != "上游未提供 subscription-userinfo" {
-		t.Fatalf("Err = %q, want %q", r.Err, "上游未提供 subscription-userinfo")
+	if r.Err != "" {
+		t.Fatalf("Err = %q, want 空串", r.Err)
+	}
+	if !strings.Contains(r.Note, "subscription-userinfo") {
+		t.Fatalf("Note 应说明原因, got %q", r.Note)
 	}
 	got, err := m.GetAirport(ctx, a.ID)
 	if err != nil {
@@ -406,6 +418,12 @@ func TestRefreshAirportTrafficMissingUserinfo(t *testing.T) {
 	}
 	if got.Upload != 10 || got.Download != 20 || got.Total != 100 || got.Expire != 1700000000 {
 		t.Fatalf("traffic changed: %d/%d/%d/%d, want 10/20/100/1700000000", got.Upload, got.Download, got.Total, got.Expire)
+	}
+	if got.NodeCount != base.NodeCount || got.NodeCount != r.NodeCount {
+		t.Fatalf("node_count = %d, want %d（缺流量头也要写回节点数）", got.NodeCount, base.NodeCount)
+	}
+	if got.TrafficErr != "" {
+		t.Fatalf("traffic_err = %q, want 空串（没有失败就不该留错误）", got.TrafficErr)
 	}
 }
 

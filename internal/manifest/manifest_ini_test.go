@@ -45,10 +45,12 @@ func TestUpdate_INI_Source_TextFormat(t *testing.T) {
 	}
 	b, _ := os.ReadFile(res[0].Path)
 	content := string(b)
-	if !strings.Contains(content, "DOMAIN-SUFFIX,google.com,PROXY") {
+	// 出站名取自引用声明的组（ruleset=Google,...），不是清单原文里的 PROXY：
+	// 规则源展开产物是最终规则集，清单自带的出站名指向的策略组并不存在。
+	if !strings.Contains(content, "DOMAIN-SUFFIX,google.com,Google") {
 		t.Fatalf("content missing google rule: %s", content)
 	}
-	if !strings.Contains(content, "DOMAIN-SUFFIX,youtube.com,PROXY") {
+	if !strings.Contains(content, "DOMAIN-SUFFIX,youtube.com,Google") {
 		t.Fatalf("content missing youtube rule: %s", content)
 	}
 }
@@ -88,7 +90,7 @@ func TestUpdate_INI_Source_ClashMetaFormat(t *testing.T) {
 	if !strings.Contains(content, "rules:") {
 		t.Fatalf("content missing rules: key: %s", content)
 	}
-	if !strings.Contains(content, "DOMAIN-SUFFIX,google.com,PROXY") {
+	if !strings.Contains(content, "DOMAIN-SUFFIX,google.com,Google") {
 		t.Fatalf("content missing rule: %s", content)
 	}
 }
@@ -121,7 +123,7 @@ func TestUpdate_AutoSniff_INI(t *testing.T) {
 		t.Fatalf("results = %+v", res)
 	}
 	b, _ := os.ReadFile(res[0].Path)
-	if !strings.Contains(string(b), "DOMAIN-SUFFIX,google.com,PROXY") {
+	if !strings.Contains(string(b), "DOMAIN-SUFFIX,google.com,Google") {
 		t.Fatalf("auto sniff should expand ini: %s", b)
 	}
 }
