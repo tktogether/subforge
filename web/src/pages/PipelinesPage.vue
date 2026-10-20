@@ -5,6 +5,7 @@ import { errorMessage } from '../composables/useAsync'
 import { pageHelp } from '../content/help'
 import { PIPELINE_HELP } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
+import { stepArgRef } from './pipelineStepArgs'
 import AsyncSection from '../components/AsyncSection.vue'
 
 const loading = ref(false)
@@ -92,6 +93,9 @@ function scriptRefKindMismatch(step: { op: string; args: Record<string, string> 
   if (refName === '') return ''
   const found = scripts.value.find((s) => s.name === refName)
   if (found === undefined) return ''
+  // 老脚本（D-01 迁移前入库）kind 为空串：无法判定类型，不做「可能不匹配」提示，
+  // 否则所有历史脚本都会被误报。
+  if (found.kind === '') return ''
   const want = step.op === 'filter.script' ? 'filter' : 'operate'
   if (found.kind === want) return ''
   return `类型可能不匹配：脚本 kind=${found.kind}，该步骤需要 ${want}`
@@ -278,7 +282,7 @@ onMounted(() => {
                 persistent-hint
                 class="mb-2"
                 data-testid="step-arg-ref"
-                @update:model-value="(v: unknown) => { step.args.ref = typeof v === 'string' ? v : String((v as { value?: unknown }).value ?? '') }"
+                @update:model-value="(v: unknown) => { step.args.ref = stepArgRef(v) }"
               />
               <v-text-field
                 v-else

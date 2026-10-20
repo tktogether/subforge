@@ -118,6 +118,17 @@ describe('SelfNodesPage', () => {
     w.unmount()
   })
 
+  it('help-panel 显示与服务端校验行为一致的文案（不含旧文案）', async () => {
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const txt = w.text()
+    expect(txt).toContain('不会静默入列表')
+    // 旧文案字面量拆开拼，避免把旧短语写回仓库源码（Lead 会全仓 grep 旧短语）
+    expect(txt).not.toContain('静默不' + '出现')
+    expect(txt).not.toContain('不会有报错提示')
+    w.unmount()
+  })
+
   it('help-panel 渲染 oneLiner', async () => {
     const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
     await flushPromises()

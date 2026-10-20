@@ -12,7 +12,7 @@
 | 管线 (PipelinesPage.vue) | 创建/编辑处理步骤 | GET/POST /api/pipelines (151-152); GET/PUT/DELETE /api/pipelines/{id} (153-155) | pipelines 357; createPipeline 358; updatePipeline 359; deletePipeline 360 | 表格、新建/编辑 dialog、步骤 builder、op 下拉、by 下拉、ref combobox、on_error 下拉 | 步骤参数除 by/ref 外均为 text-field (283-290)；ref 已下拉 (272-282) | 模板管线只读 (237-238) | P2 | 新卡：步骤参数下拉化 |
 | 脚本 (ScriptsPage.vue) | 编写/试运行 JS 脚本 | GET/POST /api/scripts (220-221); POST /api/scripts/test (223); GET/PUT/DELETE /api/scripts/{id} (224-226) | listScripts 393; create 394; get 395; update 396; delete 397; test 398 | 列表、新建/编辑 dialog、代码框、类型下拉、试运行 dialog | 无新增入口缺口；沙箱提示 (157) | kind 仅 filter/operate (208) | P2 | 暂不修 |
 | 机场 (AirportsPage.vue) | 新增机场→刷新→导入规则 | /api/airports CRUD (164-167); refresh/import/check (167-175) | list/create/update/delete 367-370; refreshAll 423; refreshOne 425; importRules 427; check 429; lastCheck 431 | 表格、新增/编辑 dialog、刷新全部、测活全部、行级刷新/导入/测活 | withRules 开关 (252) 仅影响 refreshAll (187)；行级 refresh/import 独立 (142-159) → 语义不自明 (F6) | 启用状态用圆点而非开关 (265-268) | P1 | F6：文案/布局澄清（建议新卡） |
-| 自建节点 (SelfNodesPage.vue) | 手填分享链接作为节点 | /api/self-nodes CRUD (205-213) | list/create/update/delete 388-391 | ResourcePage 通用表单 | 后端无链接校验 → 无效链接静默不出现 (SelfNodesPage.vue:37-41) | 无报错提示，需去概览看节点数 | P1 | 新卡：链接校验/错误反馈 |
+| 自建节点 (SelfNodesPage.vue) | 手填分享链接作为节点 | /api/self-nodes CRUD (205-213) | list/create/update/delete 388-391 | ResourcePage 通用表单 | 后端 `validateSelfNode` 校验（subscription.go:143-160）→ 非法链接返回 400 且页面报错（已修 D-07；SelfNodesPage.vue:41 文案同步） | 已修：非法链接不再静默入库 | P1 | 已修（D-07） |
 | 规则 (RulesPage.vue) | 规则行/规则集/候选/建议 | /api/rules CRUD+bulk (187-196); /api/rule-providers GET (236); /api/suggestions (237-240) | listRules 377; create 378; update 379; delete 380; bulk 405; listRuleProviders 403; suggestions 407-410 | tabs、ResourcePage、规则集列表、候选勾选、建议卡片 | rule_config 填分组 id 而非下拉 (RulesPage.vue:168)；候选仅前端筛选 (206) | 目标分组 id 与分组页 id 对不上手 | P2 | 新卡：rule_config 改下拉 |
 | 规则源 (RuleSourcesPage.vue) | 导入外部 INI 规则源 | GET (241); POST init (242); POST update (243); POST rollback (244); POST mrs (245)；**无 POST/DELETE/单源 update** (F1) | list 411; updateRuleSources 413; rollback 415; generateMRS 417; init 455；**无 create/delete/single update** (F1) | manifest 卡、源表格、行内"更新" (199)、init/rollback/mrs dialog | F1 双缺；F2 行内更新调全量 (199)；F7 暴露 manifest 路径 (162-164) | INI 源需手编 manifest.yaml | P0 | T1/T3 修复中 |
 | 分组 (GroupsPage.vue) | 定义策略组与归组 | /api/groups CRUD (178-186) | list/create/update/delete 372-375 | ResourcePage + 配方折叠 | 无缺口 | rule_config 依赖分组 id (GroupsPage.vue:40) | P2 | 暂不修 |
@@ -47,7 +47,7 @@
 - F5 v-dialog 高内容顶部裁切：VDialog.css:1-5 居中布局（证据较计划 §3 修正：line 7 已有 max-height，根因是居中）。状态：修复中 T2。
 - F6 机场页 withRules 开关与行内导入规则关系不自明：AirportsPage.vue:252, 187, 298。状态：建议新卡（P1）。
 - F7 设置页暴露内部概念：SettingsPage.vue:82 setting-key code；RuleSourcesPage.vue:162-164 manifest 路径。状态：建议新卡（P2）。
-- F8 自建节点无效链接静默不出现：SelfNodesPage.vue:37-41。状态：建议新卡（P1）。
+- F8 自建节点无效链接静默不出现：SelfNodesPage.vue:37-41。状态：**已修（D-07）** —— post 校验走 `internal/api/subscription.go:143 validateSelfNode`（名称/链接空、解析失败、节点校验失败均 400），页面提示文案同步，见 docs/wiki/订阅与节点管理.md。
 - F9 规则集 providers 只读无启停：server.go:236 仅 GET /api/rule-providers；endpoints.ts:403。状态：建议新卡（P2）。
 - F10 规则 rule_config 填分组 id 非下拉：RulesPage.vue:168。状态：建议新卡（P2）。
 - F11 手动转换 config 未暴露：ConvertPage.vue:117。状态：建议新卡（P2）。

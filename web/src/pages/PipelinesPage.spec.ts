@@ -596,7 +596,12 @@ describe('PipelinesPage', () => {
     w.unmount()
   })
 
-  it('W7D：脚本 kind 与步骤不匹配时给出提示，匹配或未找到时不提示', async () => {
+  it('W7D：脚本 kind 与步骤不匹配时给出提示，匹配、未找到或 kind 为空时不提示', async () => {
+    // 额外一条老脚本（kind 为空串，模拟 D-01 迁移前入库的数据）
+    scriptsMock.mockResolvedValue([
+      ...sampleScripts,
+      { id: 3, name: 'legacy-nokind', kind: '', code: 'return node', enabled: true },
+    ])
     const w = mountPage()
     await flushPromises()
     await w.find('[data-testid="pipeline-new"]').trigger('click')
@@ -629,6 +634,14 @@ describe('PipelinesPage', () => {
     ;(w.vm as any).formSteps[0].args.ref = 'nonexistent'
     await flushPromises()
     expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toBe('')
+
+    // 找到脚本但 kind 为空串（老脚本）→ 不提示「类型可能不匹配」
+    ;(w.vm as any).formSteps[0].op = 'op.script'
+    await flushPromises()
+    ;(w.vm as any).formSteps[0].args.ref = 'legacy-nokind'
+    await flushPromises()
+    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toBe('')
+    expect(document.querySelector('[data-testid="script-ref-kind-mismatch"]')).toBeNull()
 
     w.unmount()
   })
