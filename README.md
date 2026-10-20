@@ -112,6 +112,10 @@ bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 `SUBFORGE_LISTEN` 与 `SUBFORGE_DATA_DIR`；旧名字 `SUBFORGE_DATA` 已废弃，写错不会报错，只会静默地退回
 「未启用订阅管理」。
 
+拉取上游订阅时的 User-Agent 可以用 `SUBFORGE_USER_AGENT` 覆盖，默认是 `mihomo/1.19.31 SubForge/<版本>`。
+不少机场按 User-Agent 决定返回什么内容：认成 Clash 内核时才返回带 `Subscription-Userinfo` 的完整配置，
+否则只给一份纯节点链接清单——没有流量信息、也没有机场自带的规则与规则集。
+
 ## 支持的目标格式
 
 | 族 | 代表 target | 说明 |

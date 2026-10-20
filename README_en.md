@@ -125,6 +125,11 @@ Precedence, lowest first: **environment variable < command-line parameter < the 
 the old name `SUBFORGE_DATA` is deprecated — a wrong name raises no error, it silently falls back to
 "subscription management disabled".
 
+The User-Agent used when fetching upstream subscriptions can be overridden with `SUBFORGE_USER_AGENT`; the
+default is `mihomo/1.19.31 SubForge/<version>`. Many providers decide on the User-Agent what to return: only
+when it looks like a Clash core do they send the full configuration with `Subscription-Userinfo`, otherwise
+they hand back a bare list of share links — no traffic information, no provider-supplied rules or rulesets.
+
 ## Supported Target Formats
 
 | Family | Representative target | Notes |

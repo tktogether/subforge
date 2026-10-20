@@ -296,7 +296,7 @@ func parsePair(kind, raw string) (transform.RegexPair, error) {
 // newFetcher 按命令行参数构造 Fetcher；cacheDir 为空时不做磁盘缓存。
 func newFetcher(cacheDir string, timeout time.Duration) (*fetch.Fetcher, error) {
 	opts := []fetch.Option{fetch.WithConfig(fetch.Config{
-		UserAgent: "SubForge/" + buildinfo.Version + " (+https://github.com/tktogether/subforge)",
+		UserAgent: fetch.DefaultUserAgent(),
 		Timeout:   timeout,
 		Parallel:  8,
 		Retries:   2,

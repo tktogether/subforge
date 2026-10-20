@@ -23,7 +23,7 @@ type Config struct {
 // DefaultConfig 给出保守默认值：上游是机场上游，网络抖动大，故超时与重试都偏宽。
 func DefaultConfig() Config {
 	return Config{
-		UserAgent: "SubForge/0.1 (+https://github.com/tktogether/subforge)",
+		UserAgent: DefaultUserAgent(),
 		Timeout:   30 * time.Second,
 		Parallel:  8,
 		Retries:   2,
