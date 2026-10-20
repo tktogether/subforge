@@ -201,8 +201,11 @@ func TestConvert_TemplateInlineSyntaxApplied(t *testing.T) {
 	sub := fixtureURL(t)
 
 	// 内联 DSL 写不进原样字符串（反引号是定界符），用普通字符串。
+	// 🎯 全球直连 必须显式声明：它既是 ruleset 的目标，也会出现在产物的规则行里，
+	// 少了这一行就等于让规则指向不存在的出站（mihomo 会整份拒绝加载）。
 	inini := "[custom]\n" +
 		"custom_proxy_group=🚀 手动选择`select`[]♻️ 自动选择`.*\n" +
+		"custom_proxy_group=🎯 全球直连`select`[]DIRECT\n" +
 		"ruleset=🎯 全球直连,[]GEOSITE,private\n" +
 		"ruleset=🚀 手动选择,[]FINAL\n"
 

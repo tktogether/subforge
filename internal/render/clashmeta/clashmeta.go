@@ -83,7 +83,14 @@ func DefaultOptions() Options {
 // Renderer 渲染 clash.meta 配置。
 type Renderer struct {
 	opts Options
+
+	// warns 记录最近一次 Render 里被校正过的规则目标，实现 render.WarningReporter。
+	// 渲染器每次请求新建，字段带的是本次结果即可。
+	warns []string
 }
+
+// Warnings 返回最近一次 Render 中被改写或降级的规则目标说明。
+func (r *Renderer) Warnings() []string { return r.warns }
 
 // New 构造渲染器；空配置字段用默认值补齐。
 func New(opts Options) *Renderer {
@@ -137,7 +144,9 @@ func (r *Renderer) Render(req render.Request) ([]byte, error) {
 	if len(rules) == 0 {
 		rules = defaultRules(groups)
 	}
-
+	// 规则与分组来自不同上游，目标名对不上时内核会拒绝加载整份配置。
+	// 这里按「同义分组 → MATCH 兜底分组」的顺序校正，并把结果记进警告。
+	rules = r.resolveRuleTargets(groups, req.Nodes.Names(), rules)
 	entries := make([]any, 0, 20)
 	add := func(k string, v any) {
 		entries = append(entries, k, v)
@@ -274,6 +283,27 @@ func rawMappingNode(raw map[string]any) (yaml.Node, error) {
 		entries = append(entries, k, raw[k])
 	}
 	return render.MappingNode(entries...)
+}
+
+// resolveRuleTargets 把规则行里指向不存在出站的引用换成分组里真实存在的名字。
+//
+// 机场订阅的规则指向机场自己的分组（"📺 Emby影院"），模板定义的又是另一套分组
+// （"🎥 Emby"），两者拼在一起时只要有一处对不上，mihomo 就整份配置拒绝加载。
+// 让用户先去建分组、再手改规则行不现实，所以在这里做一次自动校正，并把
+// 改写了多少条、降级了多少条作为警告回传。
+func (r *Renderer) resolveRuleTargets(groups []render.Group, nodeNames, rules []string) []string {
+	if len(rules) == 0 {
+		return rules
+	}
+	valid := make([]string, 0, len(groups)+len(nodeNames))
+	for _, g := range groups {
+		valid = append(valid, g.Name)
+	}
+	valid = append(valid, nodeNames...)
+
+	fixed, warns := render.ResolveRuleTargets(rules, valid, nil)
+	r.warns = append(r.warns, warns...)
+	return fixed
 }
 
 func (r *Renderer) groupsNode(groups []render.Group) (yaml.Node, error) {

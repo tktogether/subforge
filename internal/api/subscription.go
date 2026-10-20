@@ -689,6 +689,13 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			if name, found := groupName[ru.RuleConfig]; found && strings.TrimSpace(name) != "" {
 				policy = name
 			}
+		} else if raw := strings.TrimSpace(ru.Raw); raw != "" {
+			// 导入的规则如果目标分组当时还不存在，rule_config 是 0，但 raw 里保留着
+			// 规则原文——原目标名不能在这里丢掉：渲染阶段会按名称把它映射到实际
+			// 存在的分组（内部点名的机场分组常与模板分组叫法不同，见
+			// internal/render/ruletarget.go）。直接写 DIRECT 会把规则悄悄改成直连。
+			renderRules = append(renderRules, raw)
+			continue
 		}
 		line := strings.Join([]string{ru.RuleType, ru.RuleParam, policy}, ",")
 		if ru.ResolveDNS {

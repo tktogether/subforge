@@ -54,8 +54,10 @@ func TestImportRulesCandidateQueue(t *testing.T) {
 	if len(res.Warnings) != 1 {
 		t.Fatalf("Warnings = %v, want 1 条", res.Warnings)
 	}
-	if !strings.Contains(res.Warnings[0], "NOPE") || !strings.Contains(res.Warnings[0], "missing.com") {
-		t.Errorf("告警内容不符: %q", res.Warnings[0])
+	// 目标分组不存在时汇总成一条提示，列出缺失的分组名；规则本身照常入库，
+	// 目标名保留在 raw 里，交给渲染阶段按名称映射（不丢规则、不逐条刷警告）。
+	if !strings.Contains(res.Warnings[0], "NOPE") {
+		t.Errorf("告警应点名缺失的目标分组: %q", res.Warnings[0])
 	}
 
 	var total int

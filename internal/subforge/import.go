@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,6 +29,15 @@ func NormalizeRuleOriginKey(line string) string {
 	s = strings.ReplaceAll(s, " ,", ",")
 	s = strings.ReplaceAll(s, ", ", ",")
 	return s
+}
+
+// isBuiltinPolicy 判断规则目标是不是内核内置出站——那些本来就不用建分组。
+func isBuiltinPolicy(name string) bool {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE":
+		return true
+	}
+	return false
 }
 
 // ImportRules 把解析出来的规则行与规则集写入候选队列。
@@ -59,6 +69,7 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 	}
 
 	now := time.Now()
+	missingTargets := map[string]int{}
 	for i, line := range rules {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -101,8 +112,11 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 		if policyName != "" {
 			if id, ok := groupIDByName[policyName]; ok {
 				ruleConfig = id
-			} else {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("规则「%s」的目标分组「%s」不存在", line, policyName))
+			} else if !isBuiltinPolicy(policyName) {
+				// 目标分组还没在「分组」页建过：不丢规则，也不逐条刷警告。
+				// 渲染时会按名称把目标映射到已有分组（见 internal/render/ruletarget.go），
+				// 这里只统计一次，最后汇总成一条提示。
+				missingTargets[policyName]++
 			}
 		}
 
@@ -121,6 +135,22 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 			return result, err
 		}
 		result.RulesAdded++
+	}
+
+	if len(missingTargets) > 0 {
+		names := make([]string, 0, len(missingTargets))
+		total := 0
+		for name, n := range missingTargets {
+			names = append(names, name)
+			total += n
+		}
+		sort.Strings(names)
+		if len(names) > 3 {
+			names = append(names[:3], "…")
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"%d 条规则的目标分组（如 %s）还没在「分组」页里建，转换时会按名称映射到已有分组、映射不到则指向兜底分组；要精确分流请先建同名分组",
+			total, strings.Join(names, "、")))
 	}
 
 	for _, p := range providers {

@@ -52,6 +52,13 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	if len(p.Groups) == 0 {
 		p.Groups = sem.Groups
 	}
+	// 结构化规则（控制台「规则」页启用的规则）同样要带过来：ParseMulti 只认
+	// Raw 里的 rules= 参数，base.Rules 是调用方直接赋值给的，不显式合并就会
+	// 被模板路径静默丢掉——表现为「规则页明明启用了，订阅里一条都没有」。
+	// 优先级仍是「请求 > 模板」，所以放在已解析出的 p.Rules 前面。
+	if len(base.Rules) > 0 {
+		p.Rules = append(append([]string{}, base.Rules...), p.Rules...)
+	}
 	return p, nil
 }
 
