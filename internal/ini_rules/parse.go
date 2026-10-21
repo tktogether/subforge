@@ -85,7 +85,12 @@ const (
 // Expand 的资源上限，防止上游异常撑爆本进程。
 const (
 	// maxRefs 限制单份 INI 里的 ruleset= 引用数。
-	maxRefs = 64
+	//
+	// 真实模板会随上游增删分组而漂移：Aethersailor/Custom_OpenClash_Rules 的
+	// cfg/Custom_Clash_Full.ini 在 2026-10-21 就一度有 71 条 ruleset=（此前上限 64
+	// 直接让「更新规则源」失败）。上限只用于挡住异常膨胀的输入，不能卡住正常模板，
+	// 故放宽到 256；单条引用的体积另由 maxListBytes 限制。
+	maxRefs = 256
 	// maxListBytes 限制单个 .list 文件的体积。
 	maxListBytes = 2 << 20 // 2 MB
 	// maxParallel 限制并发拉取数。

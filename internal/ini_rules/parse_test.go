@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -156,6 +157,34 @@ ruleset=https://example.com/x.list
 	}
 	if doc.RulesetRefs[0].Group != "" || doc.RulesetRefs[0].URL != "https://example.com/x.list" {
 		t.Fatalf("refs[0] = %+v", doc.RulesetRefs[0])
+	}
+}
+
+func TestParse_RealWorldTemplateRefCount_OK(t *testing.T) {
+	// 上游真实模板的 ruleset= 条数会随分组增删漂移：Aethersailor/Custom_OpenClash_Rules
+	// 的 Custom_Clash_Full.ini 在 2026-10-21 曾达到 71 条，旧上限 64 直接让
+	// 「更新规则源」失败。这里钉住「正常模板必须能过」，并用 maxRefs 本身验证边界。
+	const realWorldRefs = 71
+	var sb strings.Builder
+	sb.WriteString("[custom]\n")
+	for i := 0; i < realWorldRefs; i++ {
+		sb.WriteString("ruleset=G" + strconv.Itoa(i) + ",https://example.com/" + strconv.Itoa(i) + ".list\n")
+	}
+	doc, err := Parse([]byte(sb.String()))
+	if err != nil {
+		t.Fatalf("Parse(%d refs) should succeed: %v", realWorldRefs, err)
+	}
+	if got := len(doc.RulesetRefs); got != realWorldRefs {
+		t.Fatalf("refs = %d, want %d", got, realWorldRefs)
+	}
+
+	var atCap strings.Builder
+	atCap.WriteString("[custom]\n")
+	for i := 0; i < maxRefs; i++ {
+		atCap.WriteString("ruleset=G,https://example.com/x.list\n")
+	}
+	if _, err := Parse([]byte(atCap.String())); err != nil {
+		t.Fatalf("Parse(%d refs, at cap) should succeed: %v", maxRefs, err)
 	}
 }
 
