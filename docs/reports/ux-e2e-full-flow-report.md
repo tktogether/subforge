@@ -481,3 +481,135 @@ v0.1.8 的 tag 推送后，GitHub Actions 的 `CI` 工作流连续失败两次�
 
 §11.10 第 6 条写于第二轮，依据是当时 teammate 的 `list_agents` 输出（报 `model=deepseek-flash`）。第三轮三名修复 teammate（fix-w1-free / fix-w2-free / fix-w3-free）在 spawn 后与运行期间，`list_agents` 报的是 `model=free`；失联转 `inactive` 后才显示 `deepseek-flash`。因此可下的结论只有「名字含 free 时列表字段显示 free，第三轮与约定一致」，**底层推理是否真的路由到免费模型仍无法从 DSH 侧确证**。
 
+## 13. 第四轮：远端重测与两套订阅（2026-10-21，全部操作经网页完成）
+
+本轮按用户新指令做三件事：①重测远端 http://192.168.8.102:25500/；②把还没串起来的流程串起来；③在网页上实现两套订阅（规则分别为「守候的规则」与 Aethersailor `Custom_Clash_Full.ini`，机场与自建节点公用）。约束：所有数据操作只经网页（浏览器自动化走 CDP，脚本在 `.tmp/ux-e2e/final/`），不改远端数据库，只读核对事实时用 GET。
+
+### 13.1 远端环境与 13 路由冒烟
+
+| 项 | 实测值 |
+| --- | --- |
+| 版本 | `/api/version` = subforge v0.1.8（commit `bddbe641`，built 2026-10-20T17:14:24Z） |
+| 启动时间 | 2026-10-20T23:30:18Z（北京时间 07:30），本轮开始时 uptime 约 1h39m |
+| 初始数据 | 空库：airports / self-nodes / tokens / groups / scripts / pipelines / rules 全空；仅文件层的 1 个规则源（Custom_Clash_Full，1 个版本）仍在 |
+| 空库原因 | 日志 23:30:49–23:31:51 只有 192.168.8.101 的页面访问与规则源 init/remove/add/update，没有任何 `POST /api/airports` / `POST /api/tokens` → 该实例重启后就是空库，不是本轮删的 |
+| 网络 | 本机 192.168.8.101/24 与 .102 同网段；.102 仅 25500 是 SubForge（无令牌 401），22 端口开放（SSH 存在但无凭据，未使用），25501-25505/25510/25520/25530/8080/9090/3000/8000/5000 均非 SubForge |
+
+13 条路由逐页烟测（脚本 `.tmp/ux-e2e/final/step13-smoke-all.mjs`，结果 `smoke-all.json`，截图 `shots/s13-smoke-<route>.png`）：
+
+- 13 路由：`/`、`/convert`、`/pipelines`、`/scripts`、`/airports`、`/self-nodes`、`/rules`、`/rule-sources`、`/groups`、`/subscriptions`、`/tasks`、`/settings`、`/logs`。
+- **0 console error / 0 page error / 0 failed request**。页面上出现的 `.v-alert` 全部是帮助文案（脚本页 goja 沙箱警示、自建节点说明、规则页说明、分组说明、任务页说明、日志口径说明），不是错误。
+- 首屏渲染（补充定量）：首轮烟测在 1500ms 窗口内看到 `/pipelines`、`/subscriptions` 还是空表，当时怀疑慢；随后用冷 profile（token 预置）定量复测，两页都在 **约 0.44s** 内渲染出 `e2e-hk-pipeline` 与 `fullini`/`shouhou`（`step17c-timing.mjs`：437ms / 436ms；`step17d-cold.mjs` 冷 profile：439ms / 452ms），**未能复现「8–12s」**。首轮空表更可能是烟测脚本的等待与 token 注入时序问题，**不列为缺陷**。
+- `/subscriptions` 初始的「还没有订阅令牌」是 v-select 的静态 hint 文案，不是空态 bug。
+
+### 13.2 经网页重建的数据（本轮写操作审计）
+
+| 操作（全部在网页上点出来） | 结果（API 只读核对） | 证据截图 |
+| --- | --- | --- |
+| `/airports` 新增「守候」，订阅地址 = 旧远端真实机场 URL（`https://sub1.sntp.me/baseStr?...`），备注「守候机场（远端重建，2026-10-21）」 | 行出现，节点数 0 → 点「刷新流量」后 45 节点、5.4 GB / 100.0 GB、到期 2026-11-12 18:00 | `s1-01`–`s1-04` |
+| `/self-nodes` 新增 2 条自建节点（守候订阅里的 HK02/JP02 分享链） | 保存成功；但与机场节点**同服务器同端口同密码**，`model.Dedupe` 按指纹静默去重，订阅仍是 45 节点 | `s2-*` |
+| 行内编辑把自建节点端口改成唯一（12002→39002、12020→39020） | `/subscribe` 变 47 节点（45 机场 + 2 自建） | `s4-selfnodes-fixed.png` |
+| `/airports` 行内「导入规则」拉取守候规则 | 10,393 条，`source=airport:守候`，全部 disabled（候选态） | `s8-01` |
+| `/groups` 新建 7 个分组（守候网络 / 🌏 GFWlist / 🍎 Apple / 📺 Netflix / 🌏 PrivateTracker / 📺 Disney / 📺 Emby影院，type=select，regex=.，排序 1–7） | 7 组，覆盖约 94% 守候规则目标 | `s7-01`、`s7-02` |
+| `/rules` →「导入候选」→「启用本机场全部」 | toast「已更新 10393 条」，10,393 条全部 enabled | `s8-02` |
+| `/subscriptions` 新建令牌 `fullini`（名称 Full.ini 模板订阅） | 保存成功，但 5 个定制字段全空（见 D-25） | `s3-*` |
+| 编辑 `fullini`，展开「高级选项」→ 配置模板填 Full.ini raw URL → 保存 | `config` 落库；此前 `/subscribe` 只有 12,757 字节 / 2 规则 / 5 默认分组 | `s4-tokenB-saved.png` |
+| `/scripts` 新建脚本 `e2e-hk-filter`（filter，表达式 `node.name.indexOf('HK') >= 0`）；先写成 `return ...` 被 400 拒绝 | 保存成功；管线里 ref 显示「脚本已启用」 | `s10-02`、`s10b-01` |
+| `/pipelines` 新建管线 `e2e-hk-pipeline`（步骤 filter.script，ref=`e2e-hk-filter`） | 保存成功 | `s10-04`、`s10b-02` |
+| `/settings` 打开「启用脚本步骤」并保存 | `script.enabled=true` | `s12-02` |
+| `/convert` 用真实守候订阅 URL 做基线转换 | 200，`节点 45（原始 45）`，产物 12,017 字节 | `s11d-01` |
+| `/subscriptions` 新建令牌 `shouhou`（名称 守候规则，config 空） | 保存成功；订阅 A 生效 | `s9-03` |
+
+### 13.3 两套订阅的实现与实测
+
+两个令牌的最终状态（远端真实值）：
+
+| 令牌 | 名称 | config | target / pipeline / include / exclude |
+| --- | --- | --- | --- |
+| `fullini` | Full.ini 模板订阅 | `https://raw.githubusercontent.com/Aethersailor/Custom_OpenClash_Rules/refs/heads/main/cfg/Custom_Clash_Full.ini` | 全空 |
+| `shouhou` | 守候规则 | 空 | 全空 |
+
+`GET /subscribe`（UA=clash.meta，2026-10-21 09:27 实测）：
+
+| 指标 | `token=shouhou`（订阅 A） | `token=fullini`（订阅 B） |
+| --- | --- | --- |
+| HTTP / 大小 | 200 / 485,858 字节 | 200 / 525,700 字节 |
+| 节点 | 47（45 机场 + 2 自建） | 47（同上） |
+| proxy-groups | 7 个（DB 分组，首组「守候网络」） | 7 个（**同样是 DB 分组**） |
+| rules 行数 | 10,393 + 末尾 `MATCH,守候网络` | 11,509 = 10,393 DB + 1,116 模板 |
+| 含「守候网络」/「GFWlist」 | 是 / 是 | 是 / 是 |
+| 含 Full.ini 模板特征 | 否 | 规则被追加，但分组被替换 |
+
+作为对照，B 在「config 已生效、DB 为空」时本来是：**108,809 字节、45 节点、1,116 条模板规则、56 个模板分组**；config 没生效时更只剩 12,757 字节 / 45 节点 / 2 规则 / 5 默认分组。
+
+结论（不粉饰）：
+
+- **订阅 A 成立**：`shouhou` 用「守候的规则」（10,393 条，目标分组按 7 个 DB 分组落到实际策略），与机场/自建节点共用同一批 47 节点。
+- **订阅 B 不成立**：`fullini` 的模板分组被 7 个 DB 分组整体替换、模板规则被 10,393 条守候规则前插。根因是订阅渲染根本没有 per-token 作用域：
+  - `internal/api/subscription.go:804-833`：每次 `/subscribe` 都无条件 `m.ListRules()` 取全库 enabled 规则拼进 `renderRules`，再把 `Groups` 置为 DB 分组（`subscription.go:780-802`）后交给同一个 engine；
+  - `internal/convert/chain.go:29` `ApplyTemplate`：`p.Groups = base.Groups`（DB 分组一旦非空就整体替换模板分组）、`p.Rules = append(base.Rules..., p.Rules...)`（DB 规则前插模板规则）。
+  - 令牌只有 `target/pipeline/config/include/exclude` 五个定制字段（`internal/api/subscription.go:704-735`），没有「规则/分组作用域」开关。
+- 要做到「A 用守候规则、B 用 Full.ini 规则」且互不污染，需要在令牌上新增规则/分组作用域（例如 rules_scope=template/库 + groups_scope=template/库），改 DB 迁移、订阅 handler、令牌弹窗与测试。**本轮未做**，原因见 13.6：远端仍是 v0.1.8，代码改动无法部署到用户指定的那台实例，做了也无法在远端网页复验，只会变成又一次「本地绿、远端旧」的假交付。
+
+### 13.4 本轮新缺陷（编号接 §4 的 24 项）
+
+| 编号 | 级别 | 缺陷 | 证据 / 位置 |
+| --- | --- | --- | --- |
+| D-25 | P1 | **新建令牌时 5 个高级定制字段被静默丢弃**：新建分支只提交 `token` + `name`，用户在「高级选项」里填了配置模板/管线/包含/排除也会被丢掉，保存成功但值不落库；必须再点「编辑」重填一遍。 | `web/src/pages/SubscriptionsPage.vue:130-134` 注释原文「新建分支保持原样：只发 token + name，不扩散 5 个定制字段」；实测 `POST /api/tokens` 后 `GET /api/tokens` 的 config 为空，二次编辑才生效；截图 `s3-tokenB-saved.png`、`s4-tokenB-saved.png` |
+| D-26 | P1 | **脚本代码必须写「表达式」，写 `return` 直接 400，输入框旁没有任何提示**：提示只写在右侧说明区（「表达式（一个值）」），用户按常规 JS 习惯写 `return node.name.indexOf('HK') >= 0` 会在保存时弹 `HTTP 400: 脚本代码语法错误：SyntaxError: script: Line 1:1 Illegal return statement`。 | `internal/api/scripts.go:33` `validateScriptCode`（goja.Compile 表达式语义）；截图 `s10-02-script-created.png` 前的 400 弹窗 |
+| D-27 | P1 | **管线允许保存悬空脚本引用**：脚本还没建出来（或已被删）时，管线弹窗只在引用缺失处显示「未找到该脚本」警告，保存按钮不拦截，`/api/pipelines` 照样落库；之后转换才炸。 | 实测 `e2e-hk-pipeline` 在脚本创建失败后仍保存成功，`steps_json=[{"op":"filter.script","args":{"ref":"e2e-hk-filter"}}]`；`web/src/pages/PipelinesPage.vue` 无保存前校验 |
+| D-28 | P1 | **脚本 → 管线 → 转换/订阅链路 100% 502**：`/api/convert` 与 `/subscribe` 里凡带 `filter.script` 的命名管线都报「脚本步骤需要脚本库支持（filter.script）」，因为转换引擎从来没拿到脚本库。**已修，见 13.5。** | 修复前真机复现 `HTTP 502: 管线 "hk-pipeline" 第 1 步（filter.script）: 脚本步骤需要脚本库支持`；根因 `internal/convert/params.go` BuildPlan → `spec.Compile()`（=`CompileWithResolver(nil)`）、`internal/convert/engine.go` Engine 无 resolver 字段、`internal/api/server.go:120` 附近未注入 |
+| D-29 | P2 | **自建节点「顺序」列直接显示 19 位纳秒时间戳**：新建时留空（0）会回退成 `time.Now().UnixNano()`（如 `1792540493632687000`），列表原样展示，用户既看不懂也不能填一个小值排到前面。 | `internal/store/store.go:158-167` `AddSelfNode`；截图 `s2-selfnodes.png`；`GET /api/self-nodes` 返回同值 |
+| D-30 | P2 | **订阅之间规则与分组完全不隔离**：任一令牌的 `/subscribe` 都注入全库 enabled 规则 + DB 分组，导致 B（Full.ini）被 A（守候规则）污染。 | 见 13.3、`internal/api/subscription.go:780-833`、`internal/convert/chain.go:29` |
+| D-31 | P2 | **「导入候选」表格表头未汉化**：直接渲染后端字段名（`Id` / `Rule_type` / `Rule_param` / `Rule_config` / `Resolve_dns` / `Enabled` / `Source` / `Raw` / `Group_name` …），与全站中文界面不一致。 | `/rules` tab「导入候选」；截图 `s8-01-candidates.png` |
+| D-32 | P3 | **成功提示条（snackbar）会盖住弹窗底部按钮**：Vuetify 默认 5000ms，提示条固定在底部居中，正好压在弹窗「保存」上；用户在提示未消失前点保存会被吞，表现为「点了没反应」。 | `web/src/layout/AppShell.vue:88-95`；本轮脚本因此改成 focus + Enter 提交（鼠标点击连续失败）；截图 `s7-02-groups-created.png` |
+| D-33 | P2 | **规则源产物与订阅之间没有通路**：规则工厂只落本地文件（`/data/rules`），订阅/转换只能靠 INI 模板里 `ruleset=clash-classic:<本地路径>` 手动引用，远端 `rules.output_dir` 还是空串；网页没有「把规则源产物挂进订阅」的入口。 | `docs/wiki/规则工厂与规则源.md` §7；远端 `/api/settings` |
+
+### 13.5 SC-07（D-28）修复与三层验证
+
+修复 commit：**`29266d8`** `fix(convert): 注入 ScriptResolver，打通脚本+管线+转换链路`（6 files +384/−2）。核心改动：
+
+| 文件 | 改动 |
+| --- | --- |
+| `internal/convert/params.go:254-275` | 新增 `BuildPlanWithResolver(p Params, res config.ScriptResolver)`，命名管线改走 `spec.CompileWithResolver(res)`；`BuildPlan` 委托 `nil`，签名不变（CLI 等只认模板的调用方零迁移） |
+| `internal/convert/engine.go:56-61,128` | `Engine` 增加 `ScriptResolver config.ScriptResolver` 字段，`Run` 改调 `BuildPlanWithResolver(eff, e.ScriptResolver)` |
+| `internal/api/server.go:120` | `SetSubManager` 内补 `s.engine.ScriptResolver = m.ScriptResolver()`，脚本库进入 serve 全链路 |
+| `internal/convert/params_test.go`、`script_pipeline_test.go`、`internal/api/convert_script_test.go`（新） | 4 + 2 + 3 个端到端用例：开启时只留脚本放行节点；关闭时 502「脚本步骤已禁用」；resolver 为 nil 时锁定修复前 502「脚本步骤需要脚本库支持」 |
+
+Lead 独立复跑（原始命令，不是队友自测）：
+
+- `gofmt -l cmd internal pkg` 空、`go build ./...` 0、`go vet ./...` 0；
+- `go test ./internal/convert/... ./internal/api/... -count=1` → convert 2.442s ok、api 20.505s ok；`go test ./... -count=1` 全包 ok；
+- 覆盖率门禁 `coveragegate -min 80 -min-func 100` → 语句 91.5%（8800/9613）、函数 891/891 = 100%，exit 0。
+
+真机端到端（新二进制 + 真网页，不是单测）：
+
+- `go build -o .tmp/ux-e2e/verify/subforge-fixed.exe ./cmd/subforge`，起 serve `127.0.0.1:25611`，数据播种到本地 fixture（45 节点），网页 `/convert` 选管线 `hk-pipeline` → **节点 2（原始 45）**，产物含 HK01/HK02、不含 JP01（截图 `s14-01-local-sc07-enabled.png`、`s14-02-local-sc07-result-names.png`）；
+- 设置页关掉「启用脚本步骤」→ 同一路径显示完整 502 文案「…脚本步骤已禁用（在「设置」里开启 script.enabled）」（截图 `s14-03-local-sc07-disabled.png`）；
+- 令牌挂 `pipeline=hk-pipeline` 后 `GET /subscribe` → 200、1,513 字节、含 HK01 不含 JP01。
+
+### 13.6 未完成 / 不能下的结论（诚实边界）
+
+1. **远端仍是 v0.1.8，SC-07 修复没有部署到 192.168.8.102**：22 端口开放但没有凭据，本轮无法部署；所以在**远端网页**上「脚本→管线→转换」仍会 502。要复验必须由用户侧重新部署（或用 `.tmp/ux-e2e/verify/subforge-fixed.exe` 本地跑）。
+2. **两套订阅的隔离没有实现**：订阅 A 成立、订阅 B（Full.ini）被全库规则/分组污染，数字见 13.3。这是产品级缺口（per-token 规则/分组作用域），不是配置能绕过的。
+3. **规则源产物 → 订阅仍未串联**：只有 INI 模板 `ruleset=` 本地路径这一条人工路径（D-33），远端 `rules.output_dir` 为空。
+4. **47 节点的前提是自建节点端口唯一**：机场与自建节点同名同端口会被 `model.Dedupe` 静默去重（45 而不是 47），界面帮助文字提了「与机场重复会被跳过」，但不会提示是哪一条被跳过。
+5. **远端数据已被本轮测试写入**，不是干净库：1 个机场（守候，45 节点）、2 条自建节点、7 个分组、10,393 条守候规则（全部 enabled）、2 个令牌、1 个脚本、1 条管线、`script.enabled=true`。如需还原请在网页上自行删除这些对象。
+6. 本轮没有跑压力/并发测试，也没有验证 `/subscribe` 在 10k 规则下的缓存命中率。
+
+### 13.7 第四轮评分（主观，仅基于本轮证据）
+
+| 维度 | 评分 | 理由 |
+| --- | --- | --- |
+| 远端可用性 | 7/10 | 13 路由无 console/page/请求错误，重测通过；首屏定量复测约 0.44s；扣分项是提示条遮挡弹窗按钮 |
+| 订阅实现 | 6/10 | 一条订阅（守候规则）真正可用；第二条被全库规则污染，且无隔离入口 |
+| 链路串联 | 7/10 | 脚本→管线→转换/订阅已修通并三层验证；规则源→订阅仍断 |
+| 表单与提示 | 6/10 | 新建令牌丢字段、脚本表达式无内联提示、管线可存悬空引用 |
+| 数据一致性 | 7/10 | 机场/自建节点/分组/规则落库一致；自建节点顺序列暴露纳秒时间戳 |
+| **综合** | **≈6.6/10** | 比 v0.1.8 报告时的 8.7 低：本轮把「两套订阅」这个用户核心诉求打回一半，缺陷都是真实网页操作暴露的 |
+
+### 13.8 本轮证据索引
+
+- 脚本：`.tmp/ux-e2e/final/step1-airport.mjs`、`step2-3-nodes-tokenB.mjs`、`step4-fix.mjs`、`step6-import-rules.mjs`、`step7-groups.mjs`、`step8-enable-rules.mjs`、`step9-create-token.mjs`、`step10b-script-fix.mjs`、`step11d-diag.mjs`、`step12*`、`step13-smoke-all.mjs`、`step13b-wait.mjs`、`step15-remote-state.mjs`、`step16-rule-counts.mjs`、`step17c-timing.mjs`、`step17d-cold.mjs`；本地修复验证 `verify/step14*.mjs`。
+- 截图：`.tmp/ux-e2e/final/shots/s1-*` … `s13b-*`（含 13 路由烟测图），修复验证 `.tmp/ux-e2e/verify/shots/s14-01..03`。
+- 队友交付：`.tmp/ux-e2e/fix/SCRIPTS-resolver-report.md`、`.tmp/ux-e2e/fix/SCRIPTS-resolver-progress.log`；Lead 复跑日志 `.tmp/ux-e2e/fix/lead-gotest-after-fix.log`、覆盖率 `.tmp/ux-e2e/fix/cover-after.out`。
