@@ -1,12 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { endpoints, subscribeUrl, type SubToken, type TrafficStrategy, type TrafficRefreshResponse } from '../api/endpoints'
+import { endpoints, subscribeUrl, type Profile, type SubToken, type TrafficStrategy, type TrafficRefreshResponse } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { pageHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 
 const help = pageHelp('subscriptions')
+
+// 方案（Profile）列表：令牌可以绑定方案，绑定后该订阅只使用该方案的规则与分组。
+// 拉取失败降级为「只有未分配」，不阻塞令牌列表本身。
+const profiles = ref<Profile[]>([])
+
+async function loadProfiles(): Promise<void> {
+  try {
+    profiles.value = await endpoints.listProfiles()
+  } catch {
+    profiles.value = []
+  }
+}
+
+// 方案下拉选项：未分配(0) + 各方案（title=方案名，value=方案 id）。
+const profileOptions = computed(() => [
+  { title: '未分配', value: 0 },
+  ...profiles.value.map((p) => ({ title: p.name, value: p.id })),
+])
 
 // ---------- Block 1/2: tokens ----------
 const tokens = ref<SubToken[]>([])
@@ -47,11 +65,13 @@ interface TokenForm {
   config: string
   include: string
   exclude: string
+  // 绑定的方案 id：0 = 未分配（旧的全局池）。
+  profile_id: number
 }
 const tokenDialog = ref(false)
 const editingToken = ref<SubToken | null>(null)
 function emptyTokenForm(): TokenForm {
-  return { token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '' }
+  return { token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '', profile_id: 0 }
 }
 const tokenForm = ref<TokenForm>(emptyTokenForm())
 // target 候选来自 GET /api/targets（endpoints.ts:340 现成封装）；弹窗首次打开时懒加载一次，
@@ -116,6 +136,7 @@ function openEditToken(t: SubToken): void {
     config: t.config ?? '',
     include: t.include ?? '',
     exclude: t.exclude ?? '',
+    profile_id: t.profile_id ?? 0,
   }
   tokenDialog.value = true
   void loadTargets()
@@ -130,8 +151,18 @@ function textOrEmpty(v: string | null | undefined): string {
 async function saveToken(): Promise<void> {
   try {
     if (editingToken.value === null) {
-      // 新建分支保持原样：只发 token + name，不扩散 5 个定制字段。
-      await endpoints.createToken({ token: tokenForm.value.token, name: tokenForm.value.name })
+      // 新建分支：全部字段原样提交（5 个定制字段 + 方案），修掉「新建令牌丢字段」。
+      const f = tokenForm.value
+      await endpoints.createToken({
+        token: f.token,
+        name: f.name,
+        target: textOrEmpty(f.target),
+        pipeline: textOrEmpty(f.pipeline),
+        config: textOrEmpty(f.config),
+        include: textOrEmpty(f.include),
+        exclude: textOrEmpty(f.exclude),
+        profile_id: f.profile_id,
+      })
     } else {
       const f = tokenForm.value
       // 编辑分支 6 个字段全部显式发送：空串=清空，字段缺失=不改动（后端 *string 语义）。
@@ -142,6 +173,7 @@ async function saveToken(): Promise<void> {
         config: textOrEmpty(f.config ?? ''),
         include: textOrEmpty(f.include),
         exclude: textOrEmpty(f.exclude),
+        profile_id: f.profile_id,
       })
     }
     tokenDialog.value = false
@@ -307,6 +339,7 @@ async function refreshAll(): Promise<void> {
 onMounted(() => {
   void resource.list()
   void loadStrategy()
+  void loadProfiles()
 })
 </script>
 
@@ -353,11 +386,12 @@ onMounted(() => {
     <v-card-text>
       <v-btn data-testid="create-token-btn" variant="tonal" class="mb-3" @click="openCreateToken">新建令牌</v-btn>
       <table data-testid="token-table" class="w-100">
-        <thead><tr><th>令牌</th><th>名称</th><th>操作</th></tr></thead>
+        <thead><tr><th>令牌</th><th>名称</th><th>方案</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="t in tokens" :key="t.token" data-testid="token-row">
             <td><code>{{ maskToken(t.token) }}</code></td>
             <td>{{ t.name }}</td>
+            <td data-testid="token-profile-name">{{ t.profile_name ?? '未分配' }}</td>
             <td>
               <v-btn size="small" variant="text" data-testid="token-edit" @click="openEditToken(t)">编辑</v-btn>
               <v-btn size="small" variant="text" color="error" data-testid="token-delete" @click="deleteToken(t)">删除</v-btn>
@@ -385,6 +419,18 @@ onMounted(() => {
           :loading="loadingTargets"
           data-testid="target-select"
         />
+        <v-select
+          v-model="tokenForm.profile_id"
+          :items="profileOptions"
+          item-title="title"
+          item-value="value"
+          label="方案"
+          persistent-hint
+          data-testid="token-profile"
+        />
+        <div data-testid="token-profile-hint" class="text-caption text-medium-emphasis mb-2">
+          绑定方案后，订阅只使用该方案的规则与分组；方案里的模板/管线在令牌未填时兜底
+        </div>
         <v-expansion-panels class="mt-2" data-testid="token-advanced">
           <v-expansion-panel>
             <v-expansion-panel-title>高级选项</v-expansion-panel-title>

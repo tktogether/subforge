@@ -613,3 +613,144 @@ Lead 独立复跑（原始命令，不是队友自测）：
 - 脚本：`.tmp/ux-e2e/final/step1-airport.mjs`、`step2-3-nodes-tokenB.mjs`、`step4-fix.mjs`、`step6-import-rules.mjs`、`step7-groups.mjs`、`step8-enable-rules.mjs`、`step9-create-token.mjs`、`step10b-script-fix.mjs`、`step11d-diag.mjs`、`step12*`、`step13-smoke-all.mjs`、`step13b-wait.mjs`、`step15-remote-state.mjs`、`step16-rule-counts.mjs`、`step17c-timing.mjs`、`step17d-cold.mjs`；本地修复验证 `verify/step14*.mjs`。
 - 截图：`.tmp/ux-e2e/final/shots/s1-*` … `s13b-*`（含 13 路由烟测图），修复验证 `.tmp/ux-e2e/verify/shots/s14-01..03`。
 - 队友交付：`.tmp/ux-e2e/fix/SCRIPTS-resolver-report.md`、`.tmp/ux-e2e/fix/SCRIPTS-resolver-progress.log`；Lead 复跑日志 `.tmp/ux-e2e/fix/lead-gotest-after-fix.log`、覆盖率 `.tmp/ux-e2e/fix/cover-after.out`。
+
+## 14. 第五轮：方案 B（订阅方案 / Profile）落地 —— 规则、分组、导入按方案隔离
+
+### 14.1 从用户的三个痛点到方案 B
+
+用户在第四轮交付后（m04058）提出：
+
+> 把规则和分组和导入的分开，导入的 ini 或者机场的启用其一，这种操作如何呢，或者有没有别的办法？现在导入机场规则一次性有很多且后续不好管理
+
+当时给出的三选一（A 最小改动 / B 引入 Profile / C 规则集化）中，用户选了 B（m04086："B"，并接受更长工期）。§13.3 已证明根因不是配置：/subscribe 每次无条件取全库 enabled 规则 + 全库 DB 分组，再交给 internal/convert/chain.go:29 的 ApplyTemplate 与模板叠加；令牌只有 target/pipeline/config/include/exclude 五个字段，没有任何规则/分组作用域。
+
+方案 B 的数据模型：
+
+- 新增 profiles（订阅方案）表：一条方案 = 名称 + 说明 + 可选模板 config + 可选管线 + 启用开关 + 排序；
+- rules、proxy_groups、sub_tokens 三张表各加 profile_id INTEGER NOT NULL DEFAULT 0（0 = 旧的全局池）；
+- 规则去重索引按方案重建：DROP INDEX idx_rules_origin 后 CREATE UNIQUE INDEX idx_rules_origin ON rules(profile_id, source, origin_key) WHERE origin_key <> ''；
+- 令牌绑方案；/subscribe 先解析方案，再只取该方案的规则/分组；模板规则只来自该令牌/方案的 config；
+- 机场导入时可以指定落到哪个方案，并可选择自动建目标分组；
+- 规则页/分组页按方案筛选，批量接口支持把规则/分组在方案之间移动。
+
+这样「导入的 ini」与「机场导入的规则」不是同一个令牌里二选一，而是各自成为一个方案：令牌 A 绑「机场规则方案」，令牌 B 绑「INI 模板方案」，两套订阅天然互不注入。这是 §13.3/§13.6 里明确未做的 per-token 作用域，本轮补上。
+
+### 14.2 数据层（T1 / T1b，free 队友交付，Lead 复核 diff）
+
+| 位置 | 内容 |
+| --- | --- |
+| internal/store/store.go | migrate 里建 profiles 表；给 rules / proxy_groups / sub_tokens 加 profile_id（addColumnIfMissing）；重建 idx_rules_origin 为 (profile_id, source, origin_key) 部分索引 |
+| internal/store/profiles.go（新，13,334 字节） | 15 个 store 函数：ListProfiles / GetProfile / AddProfile / UpdateProfile / DeleteProfile / ListRulesByProfile / AddRuleWithProfile / AddProxyGroupWithProfile / SetRuleProfile / SetProxyGroupProfile / MoveRulesToProfile / MoveRulesBySourceToProfile / MoveGroupsToProfile / CreateSubTokenWithProfile 等；profileSelectCols 用子查询实时统计 rule_count / group_count |
+| internal/store/rules_batch.go | 批量导入按 profile_id 落库，刷新时间戳的 UPDATE 也带 profile_id，避免跨方案误刷 |
+| internal/subforge/import.go | 新增 ImportRulesToProfile(ctx, profileID, source, rules, providers, createGroups)：分组按方案取，createGroups=true 时对缺失目标调 AddProxyGroupWithProfile(profileID, name, "select", ".", "", 0, 0) 并累加 ImportResult.GroupsCreated；存量规则 enabled=false 不变 |
+| internal/subforge/profiles.go（新） | 15 个同名包装，供 API 层调用 |
+
+迁移用一个真实旧库验证：TestLegacySchemaMigrationAddsProfileIDAndRebuildsIndex 断言旧 schema 升级后三表有 profile_id、唯一索引变成三列。
+
+### 14.3 API 层（T2，free 队友交付，Lead 复核 + 补测试）
+
+| 接口 | 行为 |
+| --- | --- |
+| GET/POST /api/profiles | 列表 / 新建（空名 400，重名 409「方案名称 “X” 已存在」，201 返回 {"profile":…}） |
+| GET/PUT/DELETE /api/profiles/{id} | 单条读改删；删除前查 rule_count/group_count，非空 409「方案 “X” 下还有 N 条规则、M 个分组，请先移动或删除」；不存在 404 |
+| GET /api/rules?profile_id= 、GET /api/groups?profile_id= | 按方案过滤；非法 id 400「profile_id 无效」 |
+| POST /api/rules/bulk | 带 profile_id 时语义是移动到该方案（MoveRulesToProfile / 按 source 的 MoveRulesBySourceToProfile），目标方案已有同来源同去重键 → 409；delete 与 profile_id 同时给 → 400 |
+| POST /api/groups/bulk | 把 ids 里的分组移到 profile_id |
+| POST /api/airports/{id}/import-rules | 可选 body {profile_id, create_groups}；不带 body 保持旧行为（全局池 + 只统计缺失分组） |
+| 令牌 POST/PUT | 新增 profile_id；0 = 解绑；列表/详情回填 profile_name |
+| /subscribe | 方案解析优先级：query profile > 令牌 profile_id > 全局；方案不存在 404「令牌绑定的订阅方案 N 不存在」，方案已停用 400「订阅方案 “X” 已停用」；分组与规则只取该方案 |
+
+测试：internal/api/profiles_test.go（新，29,303 字节，7 个端到端用例：CRUD / 规则分组作用域 / 令牌绑定 / 导入到方案 / 移动冲突 409 / 订阅隔离 / 错误助手）。写测试期间抓到并修掉一个真 bug：PUT /api/rules/{不存在 id} 带 profile_id 原本返回 500 而不是 404（internal/subforge/profiles.go 把 sql.ErrNoRows 翻译成中文文案后不再包装，API 层 errors.Is 判不到），已在 internal/api/subscription.go 的两个 PUT handler 里加存在性预检。
+
+### 14.4 前端（T3a / T3b，free 队友交付）
+
+- 新增 /profiles 页面（web/src/pages/ProfilesPage.vue，317 行）：列表 + 新建/编辑/删除弹窗，字段 名称/说明/模板/管线/启用/顺序；导航「输出」组在「订阅」前插入「方案」；
+- 规则页：顶部「方案筛选」（全部方案 = 不带过滤；未分配 = 旧全局池），行多选后「移动到方案」弹窗；候选页签同样跟随筛选；
+- 分组页：方案列 + 弹窗里方案下拉；
+- 订阅页令牌弹窗：方案下拉；新建分支改为一次提交全部字段（修复第四轮 D-25「新建令牌丢定制字段」），真机已验证新建时填的模板 URL 直接落库；
+- 机场页「导入规则」改为弹窗：选方案 + 「自动创建缺失的目标分组」勾选。
+
+前端测试：825 tests 通过，语句/函数/行 100%、分支 96.63%，vue-tsc + vite build 成功（index-CRRRHBQz.js 655.07 kB）。
+
+### 14.5 在网页上跑通的端到端流程（本地真实网页 + 真实后端）
+
+环境：本轮源码构建的 .tmp/ux-e2e/profiles/subforge.exe（86,866,944 字节），serve -listen 127.0.0.1:25611 -token vtok；上游 fixture 0.0.0.0:25630（45 节点 + 9,639 条 seed 规则）。所有页面操作经 CDP 真鼠标/键盘事件，订阅断言直接读 HTTP 响应。
+
+| # | 页面 | 操作 | 结果（网页/接口证据） |
+| --- | --- | --- | --- |
+| 1 | /profiles | 新建「方案甲」「方案乙」 | 列表出现两行，GET /api/profiles → id 1/2；截图 p21-00..02 |
+| 2 | /airports | 行内「导入规则」→ 选方案甲 → 确认 | toast「已导入规则：新增 9639，跳过 0」；GET /api/rules 9,639 条且 profile_id=1 全部命中；截图 p21-03..05、p22-01 |
+| 3 | /rules | 方案筛选=方案甲 → 「筛选命中 9638 条」（1 条此前被移到方案乙）→ 依次勾 3 行（已选 1/2/3 条）→ 批量启用 | toast「已启用 3 条」；接口复核方案甲 enabled=3（seed-0002/0003/0004）；截图 p21d-02..04 |
+| 4 | /rules | 再勾 1 条 → 批量「移动到方案」→ 方案乙 | toast「已移动 1 条规则」；接口复核该规则 profile_id=2；截图 p21-06..08 |
+| 5 | /groups | 新建分组「🅱 方案乙分组」，正则 .，方案=方案乙 | 接口 {"id":1,…,"profile_id":2,"profile_name":"方案乙"}；截图 p21b-01..03 |
+| 6 | /groups | 编辑该分组，方案改「方案甲」保存 | 接口 profile_id=1、profile_name=方案甲；截图 p21d-01 |
+| 7 | /subscriptions | 新建 tokA（验证甲 / 方案甲）、tokB（验证乙 / 方案乙，高级选项填 Full.ini raw URL） | GET /api/tokens：tokA profile_id=1、tokB profile_id=2 且 config 已落库（新建即生效，D-25 修复的回归验证）；截图 p21b-04..06、p21e-01/02 |
+| 8 | 接口 | GET /subscribe?token=tokA / token=tokB（UA=clash.meta） | 见 14.6 隔离表 |
+| 9 | /profiles | 编辑方案乙，关「启用」保存 → 拉 tokB 订阅 → 再打开启用 | 关：400 {"error":"订阅方案 “方案乙” 已停用"}；开：200 恢复 1,130 条规则 |
+| 10 | /rules | 方案筛选=方案甲 → 「导入候选」→ 点「启用本机场全部」 | 发现跨方案泄漏缺陷 D-34，见 14.7；测试后已用接口把状态复原（方案甲 enabled=3、方案乙=0） |
+
+### 14.6 订阅隔离实测数字（同一批 45 节点 + 2 条自建节点）
+
+| 令牌 | 绑定方案 | 模板 config | 响应字节 | 节点 | 分组 | 规则行 | 泄漏 seed 规则 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 修复前（§13.3 远端老实例） | — | — | shouhou 485,858 / fullini 525,700 | 47 | 7（DB） | 10,393 / 11,509 | fullini 被注入 10,393 条 |
+| tokA（验证甲） | 方案甲 | 空 | 7,451 | 45 | 1（方案甲分组） | 3 | 0 |
+| tokB（验证乙） | 方案乙 | Full.ini | 140,812 | 45 | 71（模板分组） | 1,130 | 0 |
+
+- tokB 的 1,130 条规则目标保持模板原样（🎯 全球直连 1,017、no-resolve 41 等），没有出现 tokA 的 seed 规则，也没有出现方案甲的分组 → 两套订阅互不注入，§13.3 的污染问题在方案维度上解决。
+- 两个订阅的 subscription-userinfo 都来自同一机场：upload=291363609; download=5292093876; total=107374182400; expire=1794477630 → 节点/流量仍共用。
+
+### 14.7 本轮新缺陷（编号接 §13.4 的 D-25…D-33）
+
+| 编号 | 级别 | 缺陷 | 证据 / 位置 |
+| --- | --- | --- | --- |
+| D-34 | P1 | 「启用本机场全部」无视方案筛选，跨方案启用规则：候选列表按方案过滤，但按钮内部调 endpoints.listRules()（无 profile 过滤）取全库 airport: 规则再批量启用。实测在方案甲视图点击后，方案乙那条规则也被启用，泄漏进 tokB 订阅（tokB 规则 1,130→1,131 且出现 seed-0001），同时 tokA 规则 3→3,965（8s）/5,385（中止前）。 | web/src/pages/RulesPage.vue:335-346 enableAllAirport vs 候选列表 fetchRules()（:51-54 带 profileFilter）；证据 .tmp/ux-e2e/profiles/p22-evidence.json、截图 p22-01/02 |
+| D-35 | P2 | 「启用本机场全部」无任何进度反馈、批量非原子：点击后按钮不变、8 秒内无 toast、页面无变化；后端逐条 PUT，9,638 条要几十秒，中途关页面就停在 5,385 条半状态，用户无法知道完成没有。对比「批量启用」有 bulkBusy 状态。 | 同上；p22-evidence.json 的 after / toast:"" |
+| D-36 | P2 | 方案里一旦建 DB 分组，INI 模板的 56/71 个分组会被整体替换：internal/convert/chain.go:29 的 p.Groups = base.Groups，然后 ruletarget 把找不到目标的模板规则改写到唯一分组。实测方案乙建 1 个分组后 tokB 从 140,866 字节/71 组/目标原样，变成 67,902 字节/1 组、1,131 条规则全部指向「🅱 方案乙分组」；把分组移回方案甲后恢复正常。⇒ 「模板方案」只能零分组使用，属结构性脚枪。 | 截图 p21b-03 与 §14.6 数据对比；internal/convert/chain.go:29-54 |
+| D-37 | P2 | 方案列表「顺序」列同样直显 19 位纳秒时间戳（与 D-29 自建节点同类）：留空新建会回退 time.Now().UnixNano()，UI 原样展示 1792560256294729000。 | internal/store/profiles.go 的 AddProfile sort_order 回退；截图 p21-02 |
+| D-38 | P3 | 机场导入规则弹窗根节点没有 testid：其余表单/按钮都有 testid，弹窗根没有，只能靠等 import-rules-profile 出现来探测；对 E2E 与可访问性都不友好。 | web/src/pages/AirportsPage.vue:474-491 |
+| D-39 | P3 | 分组页所有文本字段共用 data-testid="field-text"（ResourcePage.vue 按字段顺序渲染同一 testid），无法按 testid 定位「名称/匹配正则」等具体字段，只能退回 label 的 for 属性。 | web/src/components/ResourcePage.vue |
+| D-40 | P2 | 「按来源管理规则」仍然缺：本轮只做了按方案筛选；规则页仍无按 source（哪个机场）筛选、也没有「停用/删除本机场全部」，GET /api/rules 仍全量返回（9,639 条时响应体约 3.8 MB）。用户原话「导入机场规则一次性有很多且后续不好管理」只解决了一半（方案隔离），来源维度治理未做。 | internal/api/subscription.go:368-416 全量列表；RulesPage.vue 无 source 过滤控件 |
+
+### 14.8 测试与门禁（Lead 亲跑，原始命令输出）
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| Go 全量 | go test ./... -count=1 | 所有包 ok，ALL_EXIT=0 |
+| Go 覆盖率门禁 | coveragegate -min 80 -min-func 100 | 语句 91.0%（9,199/10,106）、函数 939/939 = 100%，GATE_EXIT=0 |
+| 前端测试+覆盖率 | npm run coverage | 825 tests，语句/函数/行 100%、分支 96.63%，COV_EXIT=0 |
+| 前端构建 | npm run build | vue-tsc + vite build 成功，BUILD_EXIT=0 |
+| 真机验收 | 本地 serve + CDP 网页操作 | §14.5 十步全部完成；订阅数字 §14.6 |
+
+队友自测只作线索：T1/T1b/T2/T3a/T3b 的报告与心跳都在 .tmp/ux-e2e/profiles/，上述 Go/前端/真机结论全部由 Lead 在本机复跑后记录。
+
+### 14.9 未完成 / 不能下的结论（诚实边界）
+
+1. 远端 http://192.168.8.102:25500/ 仍是 v0.1.8（bddbe641），没有 Profile 功能：本轮所有网页验证都在本地 127.0.0.1:25611。要在用户那台机器上点出「方案」页，必须先部署本轮的新二进制——22 端口开放但没有凭据，我无法部署。
+2. 本地上游是 fixture（45 节点 / 9,639 条 seed-*.test 规则），不是守候真实机场；远端 10,393 条规则、29 个目标分组的真实映射没有在本地复现。
+3. 「INI 或机场规则二选一」是通过两个方案 + 两个令牌实现，不是令牌上的单选开关；同一令牌内仍是「模板规则 + 方案规则」叠加（方案规则为空时不注入）。
+4. D-34 跨方案泄漏未修：本轮只发现、取证并复原状态。在修复前，任何方案视图里点「启用本机场全部」都可能污染别的方案。
+5. D-36 模板分组被分组替换未修：属于 ApplyTemplate 的既有语义，改它会牵动 SC-07 之外的转换链路，本轮不动。
+6. 导入时「自动创建缺失分组」只在 API 与单测里验证（groups_created），网页导入弹窗里没有勾选验证。
+7. 本地曾出现 tokB 连续 502「拉取 sub.yaml: context deadline exceeded」：直连同一 fixture URL 只需 257ms，重启实例即恢复，归因为 fixture 长连接卡死（环境故障），不是产品缺陷；顺带验证了模板错误归因准确（超时/404 文本被当 INI 解析都带模板路径与具体原因）。
+8. 未跑并发/压力测试；/api/rules 全量返回在 9,639 条时约 3.8 MB，前端分页但服务端不分页。
+
+### 14.10 第五轮评分（主观，仅基于本轮证据）
+
+| 维度 | 评分 | 理由 |
+| --- | --- | --- |
+| 数据模型 | 8/10 | 方案 + 三表 profile_id + 按方案重建唯一索引，迁移有旧库用例 |
+| API 设计 | 8/10 | CRUD/过滤/移动/导入/令牌绑定/订阅解析齐全，错误码分层清楚；扣分是规则列表仍全量 |
+| 前端完成度 | 7/10 | 方案页、筛选、移动、导入弹窗、令牌方案选择都在；扣分是重复 testid、无进度、导入弹窗无 testid |
+| 隔离有效性 | 8/10 | 两套订阅实测互不注入（tokA 3 条 vs tokB 1,130 条），方案停用后订阅 400；扣分是 D-34 泄漏入口 |
+| 万条规则可管理性 | 6/10 | 有方案筛选 + 批量移动，但无按来源筛选/整源停用删除，批量启用无进度 |
+| 综合 | ≈7.2/10 | 比第四轮 6.6 提高：用户核心诉求「规则/分组/导入分开」已可用；但泄漏入口与模板分组语义问题要在下一次修 |
+
+### 14.11 本轮证据索引
+
+- 契约与任务书：.tmp/ux-e2e/profiles/CONTRACT.md、TASK-T1-data-core.md、TASK-T2-api-core.md、TASK-T3a-web-profiles.md、TASK-T3b-web-integration.md；
+- 队友报告：.tmp/ux-e2e/profiles/{t1b-subforge-test-report.md,t3a-web-free-report.md,t3b-web-free-report.md}；
+- 网页脚本：.tmp/ux-e2e/profiles/step20*.mjs … step22-enable-all-leak.mjs、restore-state.mjs、seed-airport.mjs、verify-profiles.mjs；
+- 截图：.tmp/ux-e2e/profiles/shots/p20-*、p21-*、p21b-*、p21d-*、p21e-*、p22-*；
+- 数据快照：.tmp/ux-e2e/profiles/{p22-evidence.json,final-state.json}、cover.out。
+

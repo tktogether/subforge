@@ -14,10 +14,12 @@ import (
 
 // ImportResult 汇总一次订阅规则导入的结果。
 type ImportResult struct {
-	RulesAdded     int      `json:"rules_added"`
-	RulesSkipped   int      `json:"rules_skipped"`
-	ProvidersAdded int      `json:"providers_added"`
-	Warnings       []string `json:"warnings"`
+	RulesAdded     int `json:"rules_added"`
+	RulesSkipped   int `json:"rules_skipped"`
+	ProvidersAdded int `json:"providers_added"`
+	// GroupsCreated 是本次导入自动新建的目标分组个数（仅 createGroups=true 时可能非 0）。
+	GroupsCreated int      `json:"groups_created"`
+	Warnings      []string `json:"warnings"`
 }
 
 // NormalizeRuleOriginKey 把一行规则规范化为去重键。
@@ -43,12 +45,33 @@ func isBuiltinPolicy(name string) bool {
 // ImportRules 把解析出来的规则行与规则集写入候选队列。
 // source 形如 "airport:<机场名>"；providers 用 UpsertRuleProvider 写入，enabled 恒为 false。
 // 导入的规则一律 enabled=0（候选队列，不自动生效）。
+//
+// 等价于 ImportRulesToProfile(ctx, 0, source, rules, providers, false)：导入到「未分配」全局池，
+// 不自动建组，与引入方案前的行为完全一致。
 func (m *Manager) ImportRules(ctx context.Context, source string, rules []string, providers []model.RuleProvider) (ImportResult, error) {
+	return m.ImportRulesToProfile(ctx, 0, source, rules, providers, false)
+}
+
+// ImportRulesToProfile 把解析出来的规则行与规则集导入到指定方案。
+//
+// profileID=0 表示导入到「未分配」全局池（等价旧行为）；profileID>0 表示导入到该方案，
+// 方案不存在直接报错。createGroups=true 时，规则目标（策略名）既不是内核内置出站、
+// 当前方案又没有同名分组，就为该方案自动建一个 select 分组，并把 rule_config 指向新组。
+// providers 不分方案（订阅渲染不使用），仍写全局。
+func (m *Manager) ImportRulesToProfile(ctx context.Context, profileID int64, source string, rules []string, providers []model.RuleProvider, createGroups bool) (ImportResult, error) {
 	result := ImportResult{
 		Warnings: []string{},
 	}
 
-	groups, err := m.ListProxyGroups(ctx)
+	// 方案必须存在（profileID>0 时）；不存在直接失败，不落任何规则。
+	if profileID > 0 {
+		if _, err := m.GetProfile(ctx, profileID); err != nil {
+			return result, err
+		}
+	}
+
+	// 目标分组表按方案取：profileID=0 时等价旧的全局分组池。
+	groups, err := m.ListProxyGroupsByProfile(ctx, profileID)
 	if err != nil {
 		return result, err
 	}
@@ -65,6 +88,7 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 
 	now := time.Now()
 	missingTargets := map[string]int{}
+	createdGroups := map[string]int{}
 	pending := make([]store.ImportedRuleRow, 0, len(rules))
 	for i, line := range rules {
 		trimmed := strings.TrimSpace(line)
@@ -109,10 +133,22 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 			if id, ok := groupIDByName[policyName]; ok {
 				ruleConfig = id
 			} else if !isBuiltinPolicy(policyName) {
-				// 目标分组还没在「分组」页建过：不丢规则，也不逐条刷警告。
-				// 渲染时会按名称把目标映射到已有分组（见 internal/render/ruletarget.go），
-				// 这里只统计一次，最后汇总成一条提示。
-				missingTargets[policyName]++
+				if createGroups {
+					// 自动建组：为该方案补一个 select 分组，规则直接指向新组。
+					g, gErr := m.AddProxyGroupWithProfile(ctx, profileID, policyName, "select", ".", "", 0, 0)
+					if gErr != nil {
+						return result, gErr
+					}
+					groupIDByName[policyName] = g.ID
+					ruleConfig = g.ID
+					result.GroupsCreated++
+					createdGroups[policyName]++
+				} else {
+					// 目标分组还没在「分组」页建过：不丢规则，也不逐条刷警告。
+					// 渲染时会按名称把目标映射到已有分组（见 internal/render/ruletarget.go），
+					// 这里只统计一次，最后汇总成一条提示。
+					missingTargets[policyName]++
+				}
 			}
 		}
 
@@ -126,6 +162,7 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 			Source:     source,
 			Raw:        line,
 			OriginKey:  originKey,
+			ProfileID:  profileID,
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		})
@@ -153,6 +190,21 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 		}
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"%d 条规则的目标分组（如 %s）还没在「分组」页里建，转换时会按名称映射到已有分组、映射不到则指向兜底分组；要精确分流请先建同名分组",
+			total, strings.Join(names, "、")))
+	}
+	if len(createdGroups) > 0 {
+		names := make([]string, 0, len(createdGroups))
+		total := 0
+		for name, n := range createdGroups {
+			names = append(names, name)
+			total += n
+		}
+		sort.Strings(names)
+		if len(names) > 3 {
+			names = append(names[:3], "…")
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"已自动创建 %d 个分组（%s），导入规则的分组目标已指向这些新分组",
 			total, strings.Join(names, "、")))
 	}
 

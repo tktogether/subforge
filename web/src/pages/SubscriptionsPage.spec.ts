@@ -10,6 +10,7 @@ vi.mock('../api/endpoints', async () => {
   return {
     endpoints: {
       listTokens: vi.fn(),
+      listProfiles: vi.fn(),
       createToken: vi.fn(),
       updateToken: vi.fn(),
       targets: vi.fn(),
@@ -41,7 +42,8 @@ interface SubscriptionsPageVm {
   errorTokens: string
   tokenDialog: boolean
   editingToken: { token: string; name: string } | null
-  tokenForm: { token: string; name: string; target: string; pipeline: string; config: string; include: string; exclude: string }
+  tokenForm: { token: string; name: string; target: string; pipeline: string; config: string; include: string; exclude: string; profile_id: number }
+  profiles: { id: number; name: string }[]
   targetOptions: string[]
   loadingTargets: boolean
   preset: string
@@ -71,6 +73,7 @@ describe('SubscriptionsPage', () => {
     vi.mocked(endpoints.previewTraffic).mockResolvedValue({ usage: {} as any, header: '', ok: false } as any)
     vi.mocked(endpoints.refreshAllAirports).mockResolvedValue({ results: [], ok: 0, fail: 0 } as any)
     vi.mocked(endpoints.targets).mockResolvedValue(['clash.meta', 'sing-box'])
+    vi.mocked(endpoints.listProfiles).mockResolvedValue([])
   })
 
   function makeClipboard(writeText: ReturnType<typeof vi.fn>) {
@@ -427,7 +430,7 @@ describe('SubscriptionsPage', () => {
     await nextTick()
     dialogClick(w, 'token-save')
     await flushPromises()
-    expect(endpoints.createToken).toHaveBeenCalledWith({ token: 'newtok', name: 'newname' })
+    expect(endpoints.createToken).toHaveBeenCalledWith({ token: 'newtok', name: 'newname', target: '', pipeline: '', config: '', include: '', exclude: '', profile_id: 0 })
     expect(vm.tokenDialog).toBe(false)
     expect(endpoints.listTokens).toHaveBeenCalledTimes(2)
     expect(notify).toHaveBeenCalledWith('已保存', 'ok')
@@ -731,7 +734,7 @@ describe('SubscriptionsPage', () => {
     const vm = w.vm as unknown as SubscriptionsPageVm
     await flushPromises()
     await openTokenDialog(w, 'edit')
-    expect(vm.tokenForm).toEqual({ token: 'tk1', name: 'n1', target: 'clash.meta', pipeline: 'p1', config: 'c1', include: '香港', exclude: '过期' })
+    expect(vm.tokenForm).toEqual({ token: 'tk1', name: 'n1', target: 'clash.meta', pipeline: 'p1', config: 'c1', include: '香港', exclude: '过期', profile_id: 0 })
     w.unmount()
   })
 
@@ -752,7 +755,7 @@ describe('SubscriptionsPage', () => {
     dialogClick(w, 'token-save')
     await flushPromises()
     expect(endpoints.updateToken).toHaveBeenCalledWith('tk1', {
-      name: 'n1b', target: 'clash.meta', pipeline: '', config: '', include: '香港', exclude: '',
+      name: 'n1b', target: 'clash.meta', pipeline: '', config: '', include: '香港', exclude: '', profile_id: 0,
     })
     expect(endpoints.createToken).not.toHaveBeenCalled()
     expect(vm.tokenDialog).toBe(false)
@@ -773,7 +776,7 @@ describe('SubscriptionsPage', () => {
     dialogClick(w, 'token-save')
     await flushPromises()
     expect(endpoints.updateToken).toHaveBeenCalledWith('tk1', {
-      name: 'n1', target: 'sing-box', pipeline: '', config: '', include: '', exclude: '',
+      name: 'n1', target: 'sing-box', pipeline: '', config: '', include: '', exclude: '', profile_id: 0,
     })
     w.unmount()
   })
@@ -794,14 +797,14 @@ describe('SubscriptionsPage', () => {
     w.unmount()
   })
 
-  it('令牌定制：新建保存仍只发 token+name，不扩散定制字段', async () => {
+  it('令牌定制：新建保存全量发送 token+name+5 个定制字段+profile_id（修复新建丢字段）', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     vi.mocked(endpoints.createToken).mockResolvedValue({ token: 'newtok', name: 'newname' })
     const w = mountSubsPage()
     const vm = w.vm as unknown as SubscriptionsPageVm
     await flushPromises()
     await openTokenDialog(w, 'create')
-    expect(vm.tokenForm).toEqual({ token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '' })
+    expect(vm.tokenForm).toEqual({ token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '', profile_id: 0 })
     dialogSet(w, 'token-field', 'newtok')
     dialogSet(w, 'name-field', 'newname')
     dialogSet(w, 'include-field', '香港')
@@ -810,7 +813,9 @@ describe('SubscriptionsPage', () => {
     await nextTick()
     dialogClick(w, 'token-save')
     await flushPromises()
-    expect(endpoints.createToken).toHaveBeenCalledWith({ token: 'newtok', name: 'newname' })
+    expect(endpoints.createToken).toHaveBeenCalledWith({
+      token: 'newtok', name: 'newname', target: 'sing-box', pipeline: '', config: '', include: '香港', exclude: '', profile_id: 0,
+    })
     expect(endpoints.updateToken).not.toHaveBeenCalled()
     w.unmount()
   })
@@ -878,6 +883,94 @@ describe('SubscriptionsPage', () => {
     expect(endpoints.configs).toHaveBeenCalled()
     expect(vm.pipelineOptions).toEqual(['clean'])
     expect(vm.configOptions).toEqual(['http://x/a.ini'])
+    w.unmount()
+  })
+
+  // ---- 方案（Profile）绑定 ----
+
+  it('方案：页面加载拉取 profiles，弹窗下拉给出「未分配 + 各方案」', async () => {
+    vi.mocked(endpoints.listTokens).mockResolvedValue([])
+    vi.mocked(endpoints.listProfiles).mockResolvedValue([
+      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0 },
+      { id: 2, name: 'B-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 2, rule_count: 0, group_count: 0 },
+    ])
+    const w = mountSubsPage()
+    await flushPromises()
+    expect(endpoints.listProfiles).toHaveBeenCalled()
+    await openTokenDialog(w, 'create')
+    const sel = selectByTestId(w, 'token-profile')
+    expect(sel.props('items')).toEqual([
+      { title: '未分配', value: 0 },
+      { title: 'A-方案', value: 1 },
+      { title: 'B-方案', value: 2 },
+    ])
+    expect(w.find('[data-testid="token-profile-hint"]').text()).toContain('绑定方案后，订阅只使用该方案的规则与分组')
+    w.unmount()
+  })
+
+  it('方案：profiles 拉取失败降级为仅未分配，令牌列表不受影响', async () => {
+    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1' }])
+    vi.mocked(endpoints.listProfiles).mockRejectedValue(new Error('pfail'))
+    const w = mountSubsPage()
+    await flushPromises()
+    expect(w.find('[data-testid="token-row"]').exists()).toBe(true)
+    await openTokenDialog(w, 'create')
+    const sel = selectByTestId(w, 'token-profile')
+    expect(sel.props('items')).toEqual([{ title: '未分配', value: 0 }])
+    w.unmount()
+  })
+
+  it('方案：令牌表格显示方案列，未分配显示「未分配」', async () => {
+    vi.mocked(endpoints.listTokens).mockResolvedValue([
+      { token: 'tk1', name: 'n1', profile_id: 1, profile_name: 'A-方案' },
+      { token: 'tk2', name: 'n2' },
+    ])
+    const w = mountSubsPage()
+    await flushPromises()
+    const cells = w.findAll('[data-testid="token-profile-name"]')
+    expect(cells.length).toBe(2)
+    expect(cells[0].text()).toBe('A-方案')
+    expect(cells[1].text()).toBe('未分配')
+    w.unmount()
+  })
+
+  it('方案：新建令牌可绑定方案，body 带 profile_id 与全部定制字段', async () => {
+    vi.mocked(endpoints.listTokens).mockResolvedValue([])
+    vi.mocked(endpoints.listProfiles).mockResolvedValue([
+      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0 },
+    ])
+    vi.mocked(endpoints.createToken).mockResolvedValue({ token: 'newtok', name: 'newname' })
+    const w = mountSubsPage()
+    await flushPromises()
+    await openTokenDialog(w, 'create')
+    dialogSet(w, 'token-field', 'newtok')
+    dialogSet(w, 'name-field', 'newname')
+    dialogSet(w, 'token-config', 'http://x/a.ini')
+    await nextTick()
+    await selectByTestId(w, 'token-profile').setValue(1)
+    await nextTick()
+    dialogClick(w, 'token-save')
+    await flushPromises()
+    expect(endpoints.createToken).toHaveBeenCalledWith({
+      token: 'newtok', name: 'newname', target: '', pipeline: '', config: 'http://x/a.ini', include: '', exclude: '', profile_id: 1,
+    })
+    w.unmount()
+  })
+
+  it('方案：编辑令牌回填 profile_id 并随保存发出', async () => {
+    vi.mocked(endpoints.listTokens).mockResolvedValue([
+      { token: 'tk1', name: 'n1', profile_id: 1, profile_name: 'A-方案' },
+    ])
+    vi.mocked(endpoints.updateToken).mockResolvedValue({ token: 'tk1', name: 'n1' })
+    const w = mountSubsPage()
+    const vm = w.vm as unknown as SubscriptionsPageVm
+    await flushPromises()
+    await openTokenDialog(w, 'edit')
+    expect(vm.tokenForm.profile_id).toBe(1)
+    expect(selectByTestId(w, 'token-profile').props('modelValue')).toBe(1)
+    dialogClick(w, 'token-save')
+    await flushPromises()
+    expect(endpoints.updateToken).toHaveBeenCalledWith('tk1', expect.objectContaining({ profile_id: 1 }))
     w.unmount()
   })
 

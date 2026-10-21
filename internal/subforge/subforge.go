@@ -214,7 +214,7 @@ type ProxyGroup = store.ProxyGroup
 // regex / url / interval 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, profile_id, created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
 	out := []ProxyGroup{}
 	for rows.Next() {
 		var g ProxyGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.ProfileID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -250,7 +250,7 @@ type Rule = store.Rule
 // rule_param 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, created_at, updated_at FROM rules ORDER BY sort_order, id")
+		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, profile_id, created_at, updated_at FROM rules ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	out := []Rule{}
 	for rows.Next() {
 		var r Rule
-		if err := rows.Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.ProfileID, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -269,16 +269,16 @@ func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 // AddRule 新增规则。
 func (m *Manager) AddRule(ctx context.Context, ruleType, ruleParam string, ruleConfig int64, resolveDNS, enabled bool) (*Rule, error) {
 	res, err := m.db.Raw().ExecContext(ctx,
-		"INSERT INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-		ruleType, ruleParam, ruleConfig, resolveDNS, enabled, time.Now().UnixNano())
+		"INSERT INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, profile_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		ruleType, ruleParam, ruleConfig, resolveDNS, enabled, time.Now().UnixNano(), 0)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
 	var r Rule
 	err = m.db.Raw().QueryRowContext(ctx,
-		"SELECT id, rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, created_at, updated_at FROM rules WHERE id = ?", id).
-		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt)
+		"SELECT id, rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, profile_id, created_at, updated_at FROM rules WHERE id = ?", id).
+		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.SortOrder, &r.ProfileID, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -301,9 +301,9 @@ type SubToken = store.SubToken
 // （沿用现有回落链）。优先级：query 显式参数 > 令牌字段 > 原回落链。
 func (m *Manager) CreateSubToken(ctx context.Context, token, name, target, pipeline, configName, include, exclude string) error {
 	_, err := m.db.Raw().ExecContext(ctx,
-		"INSERT INTO sub_tokens (token, name, target, pipeline, config, include, exclude) "+
-			"VALUES (?, ?, ?, ?, ?, ?, ?)",
-		token, name, target, pipeline, configName, include, exclude)
+		"INSERT INTO sub_tokens (token, name, target, pipeline, config, include, exclude, profile_id) "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		token, name, target, pipeline, configName, include, exclude, 0)
 	return err
 }
 
@@ -312,9 +312,9 @@ func (m *Manager) GetSubToken(ctx context.Context, token string) (*SubToken, err
 	var t SubToken
 	err := m.db.Raw().QueryRowContext(ctx,
 		"SELECT token, COALESCE(name, ''), COALESCE(target, ''), COALESCE(pipeline, ''), "+
-			"COALESCE(config, ''), COALESCE(include, ''), COALESCE(exclude, ''), created_at "+
+			"COALESCE(config, ''), COALESCE(include, ''), COALESCE(exclude, ''), profile_id, created_at "+
 			"FROM sub_tokens WHERE token = ?", token).
-		Scan(&t.Token, &t.Name, &t.Target, &t.Pipeline, &t.Config, &t.Include, &t.Exclude, &t.CreatedAt)
+		Scan(&t.Token, &t.Name, &t.Target, &t.Pipeline, &t.Config, &t.Include, &t.Exclude, &t.ProfileID, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("令牌 %s 不存在", token)
 	}

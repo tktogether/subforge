@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { endpoints, type ProxyGroup, type Rule, type RuleInput, type RuleProvider, type Suggestion } from '../api/endpoints'
+import { computed, onMounted, ref, watch } from 'vue'
+import { endpoints, type Profile, type ProxyGroup, type Rule, type RuleInput, type RuleProvider, type Suggestion } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { useCrud, type CrudResource } from '../composables/useCrud'
@@ -20,11 +20,41 @@ const tab = ref(0)
 // RL-01..RL-08 选择器契约不受影响。
 // ---------------------------------------------------------------------------
 
-// 表格行 = 规则本体 + 后端带出的展示字段（group_name/source）
-type RuleRow = RuleInput & { id?: number; group_name?: string; source?: string }
+// 表格行 = 规则本体 + 后端带出的展示字段（group_name/source/profile_name）
+type RuleRow = RuleInput & { id?: number; group_name?: string; source?: string; profile_name?: string }
+
+// 方案（Profile）筛选：-1 = 全部方案（请求不带 profile_id），0 = 未分配，>0 = 指定方案。
+const profileFilter = ref(-1)
+const profiles = ref<Profile[]>([])
+
+// 方案下拉选项：未分配 + 各方案。
+const profileOptions = computed(() => [
+  { title: '未分配', value: 0 },
+  ...profiles.value.map((p) => ({ title: p.name, value: p.id })),
+])
+
+// 顶部筛选的选项：比方案下拉多一个「全部方案」。
+const profileFilterOptions = computed(() => [
+  { title: '全部方案', value: -1 },
+  ...profileOptions.value,
+])
+
+async function loadProfiles(): Promise<void> {
+  try {
+    profiles.value = await endpoints.listProfiles()
+  } catch {
+    profiles.value = []
+  }
+}
+
+// 按当前方案筛选取规则：-1（全部方案）时不带 profile_id，保持旧的全局行为。
+function fetchRules(): Promise<Rule[]> {
+  const filter = profileFilter.value
+  return filter >= 0 ? endpoints.listRules(filter) : endpoints.listRules()
+}
 
 const rulesResource: CrudResource<RuleRow> = {
-  list: endpoints.listRules,
+  list: fetchRules,
   create: (item) => endpoints.createRule(item),
   update: (item) => endpoints.updateRule(item.id as number, item),
   remove: (item) => endpoints.deleteRule(item.id as number),
@@ -69,6 +99,7 @@ const ruleHeaders = [
   { key: 'resolve_dns', title: '解析DNS' },
   { key: 'enabled', title: '启用' },
   { key: 'source', title: '来源' },
+  { key: 'profile_name', title: '方案' },
   { key: 'actions', title: '操作' },
 ]
 
@@ -106,6 +137,8 @@ function blankRule(): RuleRow {
     rule_config: groupOptions.value.length > 0 ? groupOptions.value[0].value : 0,
     resolve_dns: true,
     enabled: true,
+    // 新建时默认落在当前筛选的方案上；「全部方案」(-1) 视为未分配。
+    profile_id: profileFilter.value >= 0 ? profileFilter.value : 0,
   }
 }
 
@@ -126,7 +159,7 @@ function openRuleCreate(): void {
 }
 
 function openRuleEdit(row: RuleRow): void {
-  ruleDraft.value = { ...row }
+  ruleDraft.value = { ...row, profile_id: row.profile_id ?? 0 }
   editingRule.value = row
   ruleDialog.value = true
 }
@@ -192,6 +225,33 @@ async function bulkDelete(): Promise<void> {
   }
 }
 
+// 批量移动到方案：POST /api/rules/bulk { ids, profile_id } -> { updated }
+const moveDialogOpen = ref(false)
+const moveProfileId = ref(0)
+
+function openMoveDialog(): void {
+  if (selectedRuleIds.value.length === 0) return
+  moveProfileId.value = profileFilter.value >= 0 ? profileFilter.value : 0
+  moveDialogOpen.value = true
+}
+
+async function confirmMove(): Promise<void> {
+  const ids = [...selectedRuleIds.value]
+  if (ids.length === 0) {
+    moveDialogOpen.value = false
+    return
+  }
+  try {
+    const res = await endpoints.moveRules({ ids, profile_id: moveProfileId.value })
+    notify('已移动 ' + (res.updated ?? ids.length) + ' 条规则', 'ok')
+    moveDialogOpen.value = false
+    selectedRuleIds.value = []
+    await loadRules()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  }
+}
+
 // Block 2: rule providers
 const providersLoading = ref(false)
 const providersError = ref('')
@@ -251,7 +311,7 @@ async function loadCandidates(): Promise<void> {
   candidatesLoading.value = true
   candidatesError.value = ''
   try {
-    const all = await endpoints.listRules()
+    const all = await fetchRules()
     candidates.value = all.filter((r) => r.source?.startsWith('airport:') && r.enabled === false)
     selectedIds.value = []
   } catch (err) {
@@ -339,10 +399,17 @@ async function applySuggestions(): Promise<void> {
   }
 }
 
+// 切换方案筛选：重新拉规则与候选（-1 = 全部方案，请求不带 profile_id）。
+watch(profileFilter, () => {
+  void loadRules()
+  void loadCandidates()
+})
+
 onMounted(() => {
   void loadRules()
   void loadProviders()
   void loadGroups()
+  void loadProfiles()
   void loadCandidates()
   void loadSuggestions()
 })
@@ -350,6 +417,21 @@ onMounted(() => {
 
 <template>
   <PageHeader title="规则" subtitle="规则行 / 规则集 / 导入候选 / Rule-Bot 建议" help-key="rules" />
+  <div class="mb-4 d-flex ga-2 align-center flex-wrap">
+    <v-select
+      v-model="profileFilter"
+      :items="profileFilterOptions"
+      item-title="title"
+      item-value="value"
+      label="方案筛选"
+      density="compact"
+      variant="outlined"
+      hide-details
+      style="max-width: 220px"
+      data-testid="rules-profile-filter"
+    ></v-select>
+    <span class="text-caption text-medium-emphasis">全部方案 = 不带过滤；未分配 = 旧的全局池。</span>
+  </div>
   <v-tabs v-model="tab" class="mb-4">
     <v-tab>规则行</v-tab>
     <v-tab>规则集</v-tab>
@@ -391,6 +473,7 @@ onMounted(() => {
         <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-all" @click="ruleEnabledFilter = 'all'">全部</v-btn>
         <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-enabled" @click="ruleEnabledFilter = 'enabled'">已启用</v-btn>
         <v-btn size="small" variant="tonal" data-testid="filter-disabled" @click="ruleEnabledFilter = 'disabled'">已停用</v-btn>
+        <v-btn size="small" variant="tonal" class="mr-2" data-testid="move-profile" :disabled="selectedRuleIds.length === 0" @click="openMoveDialog">批量移动方案</v-btn>
         <v-spacer></v-spacer>
         <span class="text-caption text-medium-emphasis" data-testid="rule-selection-count">筛选命中 {{ filteredRules.length }} 条 · 已选 {{ selectedRuleIds.length }} 条</span>
       </div>
@@ -421,6 +504,7 @@ onMounted(() => {
             <span>{{ value ? '启用' : '停用' }}</span>
           </span>
         </template>
+        <template #item.profile_name="{ item }">{{ item.profile_name ?? '未分配' }}</template>
         <template #item.actions="{ item }">
           <v-btn
             icon="mdi-pencil"
@@ -492,6 +576,18 @@ onMounted(() => {
           <div v-if="fieldExample('rule_config') !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
             示例：{{ fieldExample('rule_config') }}
           </div>
+          <v-select
+            v-model="ruleDraft.profile_id"
+            :items="profileOptions"
+            item-title="title"
+            item-value="value"
+            label="方案"
+            variant="outlined"
+            density="comfortable"
+            class="mb-2"
+            hide-details
+            data-testid="rule-profile"
+          ></v-select>
           <v-switch
             v-model="ruleDraft.resolve_dns"
             label="解析DNS"
@@ -552,6 +648,33 @@ onMounted(() => {
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- 批量移动规则到方案 -->
+    <v-dialog v-model="moveDialogOpen" max-width="480" data-testid="move-profile-dialog">
+      <v-card>
+        <v-card-title>批量移动规则</v-card-title>
+        <v-card-text>
+          <v-select
+            v-model="moveProfileId"
+            :items="profileOptions"
+            item-title="title"
+            item-value="value"
+            label="目标方案"
+            variant="outlined"
+            density="comfortable"
+            class="mb-2"
+            hide-details
+            data-testid="move-profile-select"
+          ></v-select>
+          <div class="text-caption text-medium-emphasis">选「未分配」表示把规则移回旧的全局池。</div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn variant="text" data-testid="move-profile-cancel" @click="moveDialogOpen = false">取消</v-btn>
+          <v-btn color="primary" data-testid="move-profile-confirm" @click="confirmMove">移动</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 
   <!-- Block 2: 规则集 -->
@@ -586,6 +709,7 @@ onMounted(() => {
     <v-alert type="info" variant="tonal" density="comfortable" class="mb-4" data-testid="candidates-note">
       <div>候选 = 从机场导入进来、但还没有启用的规则。启用它们之前不会影响订阅输出。</div>
       <div>本页在前端筛选（服务端无过滤参数）。</div>
+      <div>导入时可在「机场」页选择方案；本页可用上方筛选按方案查看。</div>
     </v-alert>
     <AsyncSection :loading="candidatesLoading" :error="candidatesError" :empty="candidates.length === 0" empty-text="" :empty-state="pageHelp('rules').emptyState" @retry="loadCandidates">
       <div class="mb-2">

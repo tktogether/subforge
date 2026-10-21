@@ -5,6 +5,7 @@ import {
   type Airport,
   type AirportInput,
   type ImportRulesOutcome,
+  type Profile,
   type SubscheckResult,
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
@@ -194,10 +195,50 @@ async function refreshOne(row: AirportRow): Promise<void> {
   }
 }
 
-async function importRules(row: AirportRow): Promise<void> {
+// 方案绑定：导入规则弹窗（契约 §3.6）。profiles 拉取失败降级为「只有未分配」，
+// 不阻塞机场列表与既有导入行为。
+const profiles = ref<Profile[]>([])
+const importDialog = ref(false)
+const importTarget = ref<AirportRow | null>(null)
+const importProfileId = ref(0)
+const importCreateGroups = ref(true)
+
+const importProfileOptions = computed(() => [
+  { title: '未分配', value: 0 },
+  ...profiles.value.map((p) => ({ title: p.name, value: p.id })),
+])
+
+async function loadProfiles(): Promise<void> {
   try {
-    const r = await endpoints.importAirportRules(row.id)
-    notify('已导入规则：新增 ' + r.rules_added + '，跳过 ' + r.rules_skipped, 'ok')
+    profiles.value = await endpoints.listProfiles()
+  } catch {
+    profiles.value = []
+  }
+}
+
+function openImportDialog(row: AirportRow): void {
+  importTarget.value = row
+  importProfileId.value = 0
+  importCreateGroups.value = true
+  importDialog.value = true
+}
+
+async function confirmImportRules(): Promise<void> {
+  const row = importTarget.value
+  importDialog.value = false
+  if (row === null) {
+    return
+  }
+  try {
+    const r = await endpoints.importAirportRules(row.id, {
+      profile_id: importProfileId.value,
+      create_groups: importCreateGroups.value,
+    })
+    let text = '已导入规则：新增 ' + r.rules_added + '，跳过 ' + r.rules_skipped
+    if (r.groups_created && r.groups_created > 0) {
+      text += '，新建分组 ' + r.groups_created
+    }
+    notify(text, 'ok')
     if (r.warnings && r.warnings.length > 0) {
       notify(r.warnings[0], 'info')
     }
@@ -277,6 +318,7 @@ function relativeTime(ts: number): string {
 onMounted(() => {
   void load()
   void loadSettings()
+  void loadProfiles()
   void restoreLastCheck()
 })
 
@@ -349,7 +391,7 @@ async function restoreLastCheck(): Promise<void> {
               <v-btn size="small" variant="text" data-testid="edit" @click="openEdit(item)">编辑</v-btn>
               <v-btn size="small" variant="text" color="error" data-testid="delete" @click="askDelete(item)">删除</v-btn>
               <v-btn size="small" variant="text" data-testid="refresh-traffic" @click="refreshOne(item)">刷新流量</v-btn>
-              <v-btn size="small" variant="text" data-testid="import-rules" @click="importRules(item)">导入规则</v-btn>
+              <v-btn size="small" variant="text" data-testid="import-rules" @click="openImportDialog(item)">导入规则</v-btn>
               <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">测活</v-btn>
             </div>
           </template>
@@ -425,6 +467,25 @@ async function restoreLastCheck(): Promise<void> {
           <v-spacer></v-spacer>
           <v-btn variant="text" @click="confirmOpen = false">取消</v-btn>
           <v-btn color="error" @click="doDelete">删除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="importDialog" max-width="480">
+      <v-card>
+        <v-card-title>导入规则{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
+        <v-card-text>
+          <v-select v-model="importProfileId" :items="importProfileOptions" label="方案" data-testid="import-rules-profile"></v-select>
+          <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组（select，匹配全部节点）"
+            data-testid="import-rules-create-groups" density="compact"></v-checkbox>
+          <div class="text-medium-emphasis" data-testid="import-rules-hint">
+            选择方案后，导入的规则只属于该方案。
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn variant="text" data-testid="import-rules-cancel" @click="importDialog = false">取消</v-btn>
+          <v-btn color="primary" data-testid="import-rules-confirm" @click="confirmImportRules">确认导入</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

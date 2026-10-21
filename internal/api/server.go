@@ -190,10 +190,21 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/groups", func(r chi.Router) {
 		r.Get("/", s.handleAPIGroups)
 		r.Post("/", s.handleAPIGroups)
+		r.Post("/bulk", s.handleAPIGroupsBulk)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPIGroup)
 			r.Put("/", s.handleAPIGroup)
 			r.Delete("/", s.handleAPIGroup)
+		})
+	})
+	// 订阅方案：一套模板 + 规则 + 分组，令牌绑定后彼此隔离。
+	r.Route("/api/profiles", func(r chi.Router) {
+		r.Get("/", s.handleAPIProfiles)
+		r.Post("/", s.handleAPIProfiles)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", s.handleAPIProfile)
+			r.Put("/", s.handleAPIProfile)
+			r.Delete("/", s.handleAPIProfile)
 		})
 	})
 	r.Route("/api/rules", func(r chi.Router) {

@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -264,13 +265,33 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		groups, err := m.ListProxyGroups(r.Context())
+		// profile_id 可选过滤：无参数 → 全部；有参数 → 只看该方案。
+		profileID, filtered, ok := s.parseProfileIDFilter(w, r)
+		if !ok {
+			return
+		}
+		var groups []subforge.ProxyGroup
+		var err error
+		if filtered {
+			groups, err = m.ListProxyGroupsByProfile(r.Context(), profileID)
+		} else {
+			groups, err = m.ListProxyGroups(r.Context())
+		}
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 		if groups == nil {
 			groups = []subforge.ProxyGroup{}
+		}
+		// profile_name 不落库，由 profiles 映射统一回填（未绑定方案时为空串）。
+		names, err := profileNameByID(r.Context(), m)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		for i := range groups {
+			groups[i].ProfileName = names[groups[i].ProfileID]
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
 	case http.MethodPost:
@@ -281,6 +302,7 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			URL       string `json:"url"`
 			Interval  int    `json:"interval"`
 			SortOrder int    `json:"sort_order"`
+			ProfileID int64  `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -290,7 +312,11 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		g, err := m.AddProxyGroup(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder)
+		// profile_id > 0 必须先确认方案存在，避免脏的归属写进库。
+		if !s.profileExists(w, r, m, req.ProfileID) {
+			return
+		}
+		g, err := m.AddProxyGroupWithProfile(r.Context(), req.ProfileID, req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -317,6 +343,10 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return
 		}
+		if err := s.fillGroupProfileName(r.Context(), m, g); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"group": g})
 	case http.MethodPut:
 		var req struct {
@@ -326,6 +356,8 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			URL       string `json:"url"`
 			Interval  int    `json:"interval"`
 			SortOrder int    `json:"sort_order"`
+			// ProfileID 非 nil = 顺带把分组移到该方案；nil = 不动归属。
+			ProfileID *int64 `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -335,12 +367,35 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
+		// 先换归属（0 = 移回未分配池），再覆盖其余字段。先探测存在性：subforge
+		// 层把「不存在」翻译成中文文案后不再包 sql.ErrNoRows，只靠 errors.Is 判会漏成 500。
+		if req.ProfileID != nil {
+			if _, err := m.GetProxyGroup(r.Context(), id); err != nil {
+				s.writeAPIError(w, r, http.StatusNotFound, err)
+				return
+			}
+			if !s.profileExists(w, r, m, *req.ProfileID) {
+				return
+			}
+			if err := m.SetProxyGroupProfile(r.Context(), id, *req.ProfileID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("代理分组 %d 不存在", id))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
 		if err := m.UpdateProxyGroup(r.Context(), id, req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 		g, err := m.GetProxyGroup(r.Context(), id)
 		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := s.fillGroupProfileName(r.Context(), m, g); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -358,11 +413,23 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 
 // --- /api/rules ---
 
-// ruleView 是 GET /api/rules 的响应视图：在 store.Rule 基础上追加 group_name（由 rule_config 经
-// ListProxyGroups 映射得到；映射不上或 rule_config=0 时为空字符串）。
+// ruleView 是 GET /api/rules 的响应视图：在 store.Rule 基础上追加
+// group_name（由 rule_config 经 ListProxyGroups 映射得到；映射不上或 rule_config=0 时为空字符串）
+// 与 profile_name（由 profile_id 经 profiles 映射得到；未绑定方案时省略）。
 type ruleView struct {
 	subforge.Rule
-	GroupName string `json:"group_name"`
+	GroupName   string `json:"group_name"`
+	ProfileName string `json:"profile_name,omitempty"`
+}
+
+// fillGroupProfileName 回填单个分组的 profile_name（未绑定方案时为空串，由 omitempty 抑制）。
+func (s *Server) fillGroupProfileName(ctx context.Context, m *subforge.Manager, g *subforge.ProxyGroup) error {
+	names, err := profileNameByID(ctx, m)
+	if err != nil {
+		return err
+	}
+	g.ProfileName = names[g.ProfileID]
+	return nil
 }
 
 func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
@@ -372,7 +439,18 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := m.ListRules(r.Context())
+		// profile_id 可选过滤：无参数 → 全部；有参数 → 只看该方案。
+		profileID, filtered, ok := s.parseProfileIDFilter(w, r)
+		if !ok {
+			return
+		}
+		var rules []subforge.Rule
+		var err error
+		if filtered {
+			rules, err = m.ListRulesByProfile(r.Context(), profileID)
+		} else {
+			rules, err = m.ListRules(r.Context())
+		}
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -384,9 +462,19 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 				groupNameByID[g.ID] = g.Name
 			}
 		}
+		// 方案名映射：一次查询，循环里只查 map。
+		profileNames, err := profileNameByID(r.Context(), m)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
 		views := make([]ruleView, 0, len(rules))
 		for _, ru := range rules {
-			views = append(views, ruleView{Rule: ru, GroupName: groupNameByID[ru.RuleConfig]})
+			views = append(views, ruleView{
+				Rule:        ru,
+				GroupName:   groupNameByID[ru.RuleConfig],
+				ProfileName: profileNames[ru.ProfileID],
+			})
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"rules": views})
 	case http.MethodPost:
@@ -396,6 +484,7 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 			RuleConfig int64  `json:"rule_config"`
 			ResolveDNS bool   `json:"resolve_dns"`
 			Enabled    bool   `json:"enabled"`
+			ProfileID  int64  `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -404,7 +493,11 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		rule, err := m.AddRule(r.Context(), req.RuleType, req.RuleParam, req.RuleConfig, req.ResolveDNS, req.Enabled)
+		// profile_id > 0 必须先确认方案存在，避免脏的归属写进库。
+		if !s.profileExists(w, r, m, req.ProfileID) {
+			return
+		}
+		rule, err := m.AddRuleWithProfile(r.Context(), req.ProfileID, req.RuleType, req.RuleParam, req.RuleConfig, req.ResolveDNS, req.Enabled)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -439,6 +532,8 @@ func (s *Server) handleAPIRule(w http.ResponseWriter, r *http.Request) {
 			RuleConfig int64  `json:"rule_config"`
 			ResolveDNS bool   `json:"resolve_dns"`
 			Enabled    bool   `json:"enabled"`
+			// ProfileID 非 nil = 顺带把规则移到该方案；nil = 不动归属。
+			ProfileID *int64 `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -446,6 +541,29 @@ func (s *Server) handleAPIRule(w http.ResponseWriter, r *http.Request) {
 		if err := validateRule(req.RuleType, req.RuleParam); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
+		}
+		// 先换归属（0 = 移回未分配池），再覆盖其余字段。先探测存在性：subforge 层
+		// 把「不存在」翻译成中文文案后不再包 sql.ErrNoRows，只靠 errors.Is 判会漏成 500。
+		if req.ProfileID != nil {
+			if _, err := m.GetRule(r.Context(), id); err != nil {
+				s.writeAPIError(w, r, http.StatusNotFound, err)
+				return
+			}
+			if !s.profileExists(w, r, m, *req.ProfileID) {
+				return
+			}
+			if err := m.SetRuleProfile(r.Context(), id, *req.ProfileID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("规则 %d 不存在", id))
+					return
+				}
+				if isDuplicateRuleMoveError(err) {
+					s.writeAPIError(w, r, http.StatusConflict, err)
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		if err := m.UpdateRule(r.Context(), id, req.RuleType, req.RuleParam, req.RuleConfig, req.ResolveDNS, req.Enabled); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -485,16 +603,26 @@ func (s *Server) handleAPITokens(w http.ResponseWriter, r *http.Request) {
 		if tokens == nil {
 			tokens = []subforge.SubToken{}
 		}
+		// profile_name 不落库，由 profiles 映射统一回填（未绑定方案时省略）。
+		names, err := profileNameByID(r.Context(), m)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		for i := range tokens {
+			tokens[i].ProfileName = names[tokens[i].ProfileID]
+		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens})
 	case http.MethodPost:
 		var req struct {
-			Token    string `json:"token"`
-			Name     string `json:"name"`
-			Target   string `json:"target"`
-			Pipeline string `json:"pipeline"`
-			Config   string `json:"config"`
-			Include  string `json:"include"`
-			Exclude  string `json:"exclude"`
+			Token     string `json:"token"`
+			Name      string `json:"name"`
+			Target    string `json:"target"`
+			Pipeline  string `json:"pipeline"`
+			Config    string `json:"config"`
+			Include   string `json:"include"`
+			Exclude   string `json:"exclude"`
+			ProfileID int64  `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -508,13 +636,21 @@ func (s *Server) handleAPITokens(w http.ResponseWriter, r *http.Request) {
 			}
 			req.Token = hex.EncodeToString(buf)
 		}
-		if err := m.CreateSubToken(r.Context(), req.Token, req.Name,
-			req.Target, req.Pipeline, req.Config, req.Include, req.Exclude); err != nil {
+		// profile_id > 0 必须先确认方案存在，避免令牌指向空方案。
+		if !s.profileExists(w, r, m, req.ProfileID) {
+			return
+		}
+		if err := m.CreateSubTokenWithProfile(r.Context(), req.Token, req.Name,
+			req.Target, req.Pipeline, req.Config, req.Include, req.Exclude, req.ProfileID); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 		t, err := m.GetSubToken(r.Context(), req.Token)
 		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := s.fillTokenProfileName(r.Context(), m, t); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -537,6 +673,10 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return
 		}
+		if err := s.fillTokenProfileName(r.Context(), m, t); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"token": t})
 	case http.MethodPut:
 		// 部分更新：JSON 里省略的字段指针为 nil → 不动该列；
@@ -549,17 +689,24 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 			Config   *string `json:"config"`
 			Include  *string `json:"include"`
 			Exclude  *string `json:"exclude"`
+			// ProfileID 非 nil = 改绑方案（0 = 解绑，合法）；nil = 不动归属。
+			ProfileID *int64 `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
+		// profile_id > 0 必须先确认方案存在；0 是解绑，不校验。
+		if req.ProfileID != nil && !s.profileExists(w, r, m, *req.ProfileID) {
+			return
+		}
 		upd := store.SubTokenUpdate{
-			Name:     req.Name,
-			Target:   req.Target,
-			Pipeline: req.Pipeline,
-			Config:   req.Config,
-			Include:  req.Include,
-			Exclude:  req.Exclude,
+			Name:      req.Name,
+			Target:    req.Target,
+			Pipeline:  req.Pipeline,
+			Config:    req.Config,
+			Include:   req.Include,
+			Exclude:   req.Exclude,
+			ProfileID: req.ProfileID,
 		}
 		if err := m.UpdateSubToken(r.Context(), token, upd); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -571,6 +718,10 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 		}
 		t, err := m.GetSubToken(r.Context(), token)
 		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := s.fillTokenProfileName(r.Context(), m, t); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -701,6 +852,22 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 令牌绑定的方案：停用 → 400，不存在 → 404；命中后模板/管线/规则/分组都按方案取数。
+	profileID := subTok.ProfileID
+	var profile *subforge.Profile
+	if profileID > 0 {
+		p, perr := m.GetProfile(r.Context(), profileID)
+		if perr != nil {
+			s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("令牌绑定的订阅方案 %d 不存在", profileID))
+			return
+		}
+		if !p.Enabled {
+			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("订阅方案 “%s” 已停用", p.Name))
+			return
+		}
+		profile = p
+	}
+
 	// 五个定制字段的取值优先级：query 显式参数 > 令牌字段 > 原回落链。
 	// 令牌字段为空串（未定制）时逐字节等价于改动前的行为。
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
@@ -716,6 +883,10 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if pipeline == "" {
 		pipeline = strings.TrimSpace(subTok.Pipeline)
 	}
+	// 令牌未定制时用方案的默认管线（方案层介于令牌与全局配置之间）。
+	if pipeline == "" && profile != nil {
+		pipeline = strings.TrimSpace(profile.Pipeline)
+	}
 	if pipeline == "" {
 		if v, err := m.GetConfig(r.Context(), "subscribe.pipeline"); err == nil {
 			pipeline = strings.TrimSpace(v)
@@ -724,6 +895,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	configName := strings.TrimSpace(r.URL.Query().Get("config"))
 	if configName == "" {
 		configName = strings.TrimSpace(subTok.Config)
+	}
+	// 令牌未定制模板时用方案的默认模板；仍为空且绑定了方案时再查全局配置表。
+	if configName == "" && profile != nil {
+		configName = strings.TrimSpace(profile.Config)
+		if configName == "" {
+			if v, cerr := m.GetConfig(r.Context(), "subscribe.config"); cerr == nil {
+				configName = strings.TrimSpace(v)
+			}
+		}
 	}
 	includeList := splitListQuery(r.URL.Query().Get("include"))
 	if len(includeList) == 0 {
@@ -780,7 +960,13 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. 代理分组：regex 非空时作为成员模式交给引擎按节点名展开。
-	groups, err := m.ListProxyGroups(r.Context())
+	//    令牌绑定方案后只取该方案的分组（旧令牌 profile_id=0 → 全局池，行为不变）。
+	var groups []subforge.ProxyGroup
+	if profileID > 0 {
+		groups, err = m.ListProxyGroupsByProfile(r.Context(), profileID)
+	} else {
+		groups, err = m.ListProxyGroups(r.Context())
+	}
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
@@ -802,7 +988,13 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. 规则：rule_config 指向的 group id → 策略名，0 或找不到 → DIRECT。
-	rules, err := m.ListRules(r.Context())
+	//    令牌绑定方案后只取该方案的规则（旧令牌 profile_id=0 → 全库，行为不变）。
+	var rules []subforge.Rule
+	if profileID > 0 {
+		rules, err = m.ListRulesByProfile(r.Context(), profileID)
+	} else {
+		rules, err = m.ListRules(r.Context())
+	}
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return

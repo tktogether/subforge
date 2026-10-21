@@ -25,6 +25,8 @@ export interface ProxyGroup {
   url: string
   interval: number
   sort_order: number
+  profile_id?: number
+  profile_name?: string
 }
 
 export interface SelfNode {
@@ -47,6 +49,8 @@ export interface Rule {
   raw?: string
   origin_key?: string
   group_name?: string
+  profile_id?: number
+  profile_name?: string
 }
 
 export interface SubToken {
@@ -62,6 +66,8 @@ export interface SubToken {
   include?: string
   exclude?: string
   created_at?: string // RFC3339 字符串；后端 store.SubToken.CreatedAt json tag 为 created_at
+  profile_id?: number
+  profile_name?: string
 }
 
 // PUT /api/tokens/{token} 的 body：与后端 *string 语义对齐——字段缺失=不改动，空串=清空。
@@ -73,6 +79,7 @@ export interface SubTokenUpdate {
   config?: string
   include?: string
   exclude?: string
+  profile_id?: number
 }
 
 export interface HistoryEntry {
@@ -174,6 +181,7 @@ export interface GroupInput {
   regex: string
   url: string
   interval: number
+  profile_id?: number
 }
 
 export interface SelfNodeInput {
@@ -188,6 +196,7 @@ export interface RuleInput {
   rule_config: number
   resolve_dns: boolean
   enabled: boolean
+  profile_id?: number
 }
 
 export interface OkResponse {
@@ -302,7 +311,7 @@ export interface TrafficRefreshResponse {
   imports?: ImportRulesOutcome[]
 }
 export interface ImportRulesResult {
-  rules_added: number; rules_skipped: number; providers_added: number; warnings: string[]
+  rules_added: number; rules_skipped: number; providers_added: number; warnings: string[]; groups_created?: number
 }
 export interface SubscheckResult {
   url: string; ok: boolean; status_code: number; latency: number; bytes: number; err: string
@@ -353,6 +362,29 @@ export interface PipelineInput {
   enabled?: boolean
 }
 
+export interface Profile {
+  id: number
+  name: string
+  description: string
+  config: string
+  pipeline: string
+  enabled: boolean
+  sort_order: number
+  rule_count: number
+  group_count: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ProfileInput {
+  name: string
+  description?: string
+  config?: string
+  pipeline?: string
+  enabled?: boolean
+  sort_order?: number
+}
+
 export const endpoints = {
   stats: (): Promise<Stats> => api.get<Stats>('/api/stats'),
   history: (): Promise<HistoryEntry[]> => api.get<HistoryEntry[]>('/api/history'),
@@ -374,18 +406,18 @@ export const endpoints = {
   updateAirport: (id: number, body: AirportInput): Promise<Airport> => api.put<{ airport: Airport }>('/api/airports/' + id, body).then((r) => r.airport),
   deleteAirport: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/airports/' + id),
 
-  listGroups: (): Promise<ProxyGroup[]> => api.get<{ groups: ProxyGroup[] }>('/api/groups').then((r) => r.groups),
+  listGroups: (profileId?: number): Promise<ProxyGroup[]> => api.get<{ groups: ProxyGroup[] }>('/api/groups', profileId !== undefined ? { query: { profile_id: profileId } } : undefined).then((r) => r.groups),
   createGroup: (body: GroupInput): Promise<ProxyGroup> => api.post<{ group: ProxyGroup }>('/api/groups', body).then((r) => r.group),
   updateGroup: (id: number, body: GroupInput): Promise<ProxyGroup> => api.put<{ group: ProxyGroup }>('/api/groups/' + id, body).then((r) => r.group),
   deleteGroup: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/groups/' + id),
 
-  listRules: (): Promise<Rule[]> => api.get<{ rules: Rule[] }>('/api/rules').then((r) => r.rules),
+  listRules: (profileId?: number): Promise<Rule[]> => api.get<{ rules: Rule[] }>('/api/rules', profileId !== undefined ? { query: { profile_id: profileId } } : undefined).then((r) => r.rules),
   createRule: (body: RuleInput): Promise<Rule> => api.post<{ rule: Rule }>('/api/rules', body).then((r) => r.rule),
   updateRule: (id: number, body: RuleInput): Promise<Rule> => api.put<{ rule: Rule }>('/api/rules/' + id, body).then((r) => r.rule),
   deleteRule: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/rules/' + id),
 
   listTokens: (): Promise<SubToken[]> => api.get<{ tokens: SubToken[] }>('/api/tokens').then((r) => r.tokens),
-  createToken: (body: { token: string; name: string }): Promise<SubToken> => api.post<{ token: SubToken }>('/api/tokens', body).then((r) => r.token),
+  createToken: (body: { token: string; name: string; target?: string; pipeline?: string; config?: string; include?: string; exclude?: string; profile_id?: number }): Promise<SubToken> => api.post<{ token: SubToken }>('/api/tokens', body).then((r) => r.token),
   updateToken: (token: string, body: SubTokenUpdate): Promise<SubToken> =>
     api.put<{ token: SubToken }>('/api/tokens/' + encodeURIComponent(token), body).then((r) => r.token),
   deleteToken: (token: string): Promise<OkResponse> => api.del<OkResponse>('/api/tokens/' + encodeURIComponent(token)),
@@ -412,7 +444,7 @@ export const endpoints = {
   // POST /api/rules/bulk（后端 internal/api/rules_bulk.go）：
   // 批量启停 body { ids: number[], enabled: boolean }（或 { source }）→ 200 { updated: number }
   // 批量删除 body { ids: number[], delete: true } → 200 { deleted: number, updated: number }
-  bulkRules: (body: { ids?: number[]; source?: string; enabled?: boolean; delete?: boolean }): Promise<{ updated?: number; deleted?: number }> =>
+  bulkRules: (body: { ids?: number[]; source?: string; enabled?: boolean; delete?: boolean; profile_id?: number }): Promise<{ updated?: number; deleted?: number }> =>
     api.post<{ updated?: number; deleted?: number }>('/api/rules/bulk', body),
   listSuggestions: (): Promise<Suggestion[]> => api.get<{ suggestions: Suggestion[] }>('/api/suggestions').then((r) => r.suggestions),
   confirmSuggestion: (index: number): Promise<OkResponse> => api.post<OkResponse>('/api/suggestions/' + index + '/confirm', {}),
@@ -440,8 +472,8 @@ export const endpoints = {
     api.post<TrafficRefreshResponse>('/api/airports/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
   refreshAirport: (id: number | string): Promise<{ result: TrafficRefreshResult }> =>
     api.post<{ result: TrafficRefreshResult }>('/api/airports/' + id + '/refresh', {}),
-  importAirportRules: (id: number | string): Promise<ImportRulesResult> =>
-    api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', {}),
+  importAirportRules: (id: number | string, body?: { profile_id?: number; create_groups?: boolean }): Promise<ImportRulesResult> =>
+    api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', body ?? {}),
   checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[] }> =>
     api.post<{ results: SubscheckResult[] }>('/api/airports/check', ids === undefined ? {} : { ids }),
   lastAirportCheck: (): Promise<{ results: SubscheckResult[]; at?: number }> =>
@@ -467,6 +499,15 @@ export const endpoints = {
     api.put<{ channels: AlertChannel[] }>('/api/alert-channels', { channels }),
   testAlertChannel: (index: number): Promise<AlertTestResult> =>
     api.post<AlertTestResult>('/api/alert-channels/test', { index }),
+
+  listProfiles: (): Promise<Profile[]> => api.get<{ profiles: Profile[] }>('/api/profiles').then((r) => r.profiles),
+  createProfile: (body: ProfileInput): Promise<Profile> => api.post<{ profile: Profile }>('/api/profiles', body).then((r) => r.profile),
+  updateProfile: (id: number, body: ProfileInput): Promise<Profile> => api.put<{ profile: Profile }>('/api/profiles/' + id, body).then((r) => r.profile),
+  deleteProfile: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/profiles/' + id),
+  bulkGroups: (body: { ids: number[]; profile_id: number }): Promise<{ updated?: number }> =>
+    api.post<{ updated?: number }>('/api/groups/bulk', body),
+  moveRules: (body: { ids?: number[]; source?: string; profile_id: number }): Promise<{ updated?: number }> =>
+    api.post<{ updated?: number }>('/api/rules/bulk', body),
 
   initRuleManifest: (force = false): Promise<{ path: string; created: boolean }> =>
     api.post<{ path: string; created: boolean }>('/api/rule-sources/init', {}, force ? { query: { force: 1 } } : undefined),

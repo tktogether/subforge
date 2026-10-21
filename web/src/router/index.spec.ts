@@ -12,7 +12,7 @@ describe('navGroups', () => {
   it('拼成 "组名:条目数" 数组等于预期', () => {
     const groups = navGroups()
     const labels = groups.map((group) => `${group.name}:${group.items.length}`)
-    expect(labels).toEqual(['转换:4', '来源:2', '规则:3', '输出:1', '运维:3'])
+    expect(labels).toEqual(['转换:4', '来源:2', '规则:3', '输出:2', '运维:3'])
   })
 
   it('保持首次出现顺序', () => {

@@ -22,6 +22,8 @@ vi.mock('../api/endpoints', () => ({
     rejectSuggestion: vi.fn(),
     applySuggestions: vi.fn(),
     updateRuleProvider: vi.fn(),
+    listProfiles: vi.fn(),
+    moveRules: vi.fn(),
   },
 }))
 
@@ -36,6 +38,8 @@ const confirmSuggestionMock = endpoints.confirmSuggestion as unknown as ReturnTy
 const rejectSuggestionMock = endpoints.rejectSuggestion as unknown as ReturnType<typeof vi.fn>
 const applySuggestionsMock = endpoints.applySuggestions as unknown as ReturnType<typeof vi.fn>
 const updateRuleProviderMock = endpoints.updateRuleProvider as unknown as ReturnType<typeof vi.fn>
+const listProfilesMock = endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>
+const moveRulesMock = endpoints.moveRules as unknown as ReturnType<typeof vi.fn>
 
 describe('RulesPage', () => {
   beforeEach(() => {
@@ -50,6 +54,8 @@ describe('RulesPage', () => {
     rejectSuggestionMock.mockResolvedValue({ ok: true })
     applySuggestionsMock.mockResolvedValue({ applied: 0 })
     updateRuleProviderMock.mockResolvedValue({ ok: true })
+    listProfilesMock.mockResolvedValue([])
+    moveRulesMock.mockResolvedValue({ updated: 0 })
   })
 
   it('onMounted 加载三块数据', async () => {
@@ -429,23 +435,213 @@ describe('RulesPage', () => {
     await flushPromises()
     expect(listGroupsMock).toHaveBeenCalled()
 
-    const selects = w.findAllComponents({ name: 'VSelect' })
-    expect(selects.length).toBe(1)
-    const items = (selects[0].props('items') as { title: string; value: number }[]) ?? []
+    // 方案筛选 + 方案下拉也各是一个 VSelect，按 data-testid 定位「配置」分组下拉
+    const groupSelect = w.findAllComponents({ name: 'VSelect' })
+      .find((s) => s.attributes('data-testid') === 'field-select')
+    expect(groupSelect).toBeTruthy()
+    const items = (groupSelect!.props('items') as { title: string; value: number }[]) ?? []
     expect(items.map((i) => i.title)).toEqual(['无分组（DIRECT）', '#3 HK', '#7 JP'])
     expect(items.map((i) => i.value)).toEqual([0, 3, 7])
 
     await w.find('[data-testid="add"]').trigger('click')
     await flushPromises()
     // blank() 对 select 取第一个 option → 新建默认 0（无分组/DIRECT），不会退化成 ''
-    expect(selects[0].props('modelValue')).toBe(0)
+    expect(groupSelect!.props('modelValue')).toBe(0)
 
-    await selects[0].setValue(3)
+    await groupSelect!.setValue(3)
     await flushPromises()
     await w.find('[data-testid="dialog-submit"]').trigger('click')
     await flushPromises()
     expect(createMock).toHaveBeenCalledTimes(1)
     expect(createMock.mock.calls[0][0].rule_config).toBe(3)
+    w.unmount()
+  })
+
+  // ---------------- 方案（Profile）接入：筛选 / 移动 / 新增编辑带 profile_id ----------------
+
+  it('方案筛选：默认「全部方案」不带 profile_id，切到具体方案时带 profile_id 请求', async () => {
+    listRulesMock.mockResolvedValue([])
+    const w = mountRules()
+    await flushPromises()
+    expect(listRulesMock).toHaveBeenCalledWith()
+    const vm = w.vm as unknown as { profileFilter: number; profileFilterOptions: { title: string; value: number }[]; profileOptions: { title: string; value: number }[] }
+    expect(vm.profileFilter).toBe(-1)
+    expect(vm.profileFilterOptions.map((o) => o.title)).toEqual(['全部方案', '未分配'])
+    expect(vm.profileOptions.map((o) => o.title)).toEqual(['未分配'])
+    vm.profileFilter = 5
+    await flushPromises()
+    expect(listRulesMock).toHaveBeenCalledWith(5)
+    w.unmount()
+  })
+
+  it('方案筛选：加载方案后下拉含各方案；拉取失败降级为只有未分配', async () => {
+    listRulesMock.mockResolvedValue([])
+    listProfilesMock.mockResolvedValueOnce([
+      { id: 4, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 0, rule_count: 0, group_count: 0 },
+    ])
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { profileOptions: { title: string; value: number }[] }
+    expect(vm.profileOptions).toEqual([
+      { title: '未分配', value: 0 },
+      { title: 'A-方案', value: 4 },
+    ])
+    w.unmount()
+    listProfilesMock.mockRejectedValueOnce(new Error('profiles boom'))
+    const w2 = mountRules()
+    await flushPromises()
+    expect((w2.vm as unknown as { profileOptions: { title: string; value: number }[] }).profileOptions).toEqual([{ title: '未分配', value: 0 }])
+    expect(w2.find('[data-testid="rules-profile-filter"]').exists()).toBe(true)
+    w2.unmount()
+  })
+
+  it('批量移动规则到方案：选中后打开弹窗，确认调用 moveRules({ids, profile_id})', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    moveRulesMock.mockResolvedValueOnce({ updated: 2 })
+    const w = mountRules()
+    await flushPromises()
+    const rowBoxes = w.findAll('[data-testid="table"] tbody input[type="checkbox"]')
+    await rowBoxes[0].trigger('click')
+    await rowBoxes[1].trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="move-profile"]').attributes('disabled')).toBeUndefined()
+    await w.find('[data-testid="move-profile"]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as unknown as { moveDialogOpen: boolean; moveProfileId: number; profileFilter: number }
+    expect(vm.moveDialogOpen).toBe(true)
+    expect(vm.moveProfileId).toBe(0)
+    vm.moveProfileId = 6
+    await flushPromises()
+    await w.find('[data-testid="move-profile-confirm"]').trigger('click')
+    await flushPromises()
+    expect(moveRulesMock).toHaveBeenCalledWith({ ids: [1, 2], profile_id: 6 })
+    expect(notifyState.text).toBe('已移动 2 条规则')
+    expect(notifyState.kind).toBe('ok')
+    expect(vm.moveDialogOpen).toBe(false)
+    w.unmount()
+  })
+
+  it('批量移动：无选中时按钮 disabled 且点击不打开弹窗；取消不发请求', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    const w = mountRules()
+    await flushPromises()
+    expect(w.find('[data-testid="move-profile"]').attributes('disabled')).toBeDefined()
+    await w.find('[data-testid="move-profile"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as { moveDialogOpen: boolean }).moveDialogOpen).toBe(false)
+    w.unmount()
+    const w2 = mountRules()
+    await flushPromises()
+    ;(w2.vm as unknown as { openMoveDialog: () => void }).openMoveDialog()
+    await flushPromises()
+    expect((w2.vm as unknown as { moveDialogOpen: boolean }).moveDialogOpen).toBe(false)
+    expect(moveRulesMock).not.toHaveBeenCalled()
+    w2.unmount()
+  })
+
+  it('批量移动：确认时若选择被清空则不发请求并关闭弹窗', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { moveDialogOpen: boolean; selectedRuleIds: number[]; confirmMove: () => Promise<void> }
+    vm.moveDialogOpen = true
+    vm.selectedRuleIds = []
+    await flushPromises()
+    await vm.confirmMove()
+    await flushPromises()
+    expect(moveRulesMock).not.toHaveBeenCalled()
+    expect(vm.moveDialogOpen).toBe(false)
+    w.unmount()
+  })
+
+  it('批量移动失败：错误提示且弹窗保持打开', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    moveRulesMock.mockRejectedValueOnce(new Error('move boom'))
+    notifyState.open = false
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { moveDialogOpen: boolean; selectedRuleIds: number[]; moveProfileId: number; confirmMove: () => Promise<void> }
+    vm.moveDialogOpen = true
+    vm.selectedRuleIds = [1]
+    vm.moveProfileId = 2
+    await flushPromises()
+    await vm.confirmMove()
+    await flushPromises()
+    expect(moveRulesMock).toHaveBeenCalledWith({ ids: [1], profile_id: 2 })
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('move boom')
+    expect(vm.moveDialogOpen).toBe(true)
+    w.unmount()
+  })
+
+  it('新增规则默认带 profile_id（= 当前筛选方案，全部方案视为未分配），提交 body 带 profile_id', async () => {
+    listRulesMock.mockResolvedValue([])
+    const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
+    createMock.mockResolvedValue({ id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 0 })
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { profileFilter: number }
+    vm.profileFilter = 3
+    await flushPromises()
+    await w.find('[data-testid="add"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as { ruleDraft: { profile_id: number } }).ruleDraft.profile_id).toBe(3)
+    await w.find('[data-testid="dialog-submit"]').trigger('click')
+    await flushPromises()
+    expect(createMock.mock.calls[0][0].profile_id).toBe(3)
+    w.unmount()
+  })
+
+  it('新增规则在「全部方案」筛选下默认 profile_id=0', async () => {
+    listRulesMock.mockResolvedValue([])
+    const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
+    createMock.mockResolvedValue({ id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 0 })
+    const w = mountRules()
+    await flushPromises()
+    await w.find('[data-testid="add"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as { ruleDraft: { profile_id: number } }).ruleDraft.profile_id).toBe(0)
+    await w.find('[data-testid="dialog-submit"]').trigger('click')
+    await flushPromises()
+    expect(createMock.mock.calls[0][0].profile_id).toBe(0)
+    w.unmount()
+  })
+
+  it('编辑规则回填 profile_id 并随保存发出', async () => {
+    listRulesMock.mockResolvedValue([{ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 8, profile_name: 'B-方案' }])
+    const updateMock = endpoints.updateRule as unknown as ReturnType<typeof vi.fn>
+    updateMock.mockResolvedValue({ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 8 })
+    const w = mountRules()
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as { ruleDraft: { profile_id: number } }).ruleDraft.profile_id).toBe(8)
+    await w.find('[data-testid="dialog-submit"]').trigger('click')
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(9, expect.objectContaining({ profile_id: 8 }))
+    w.unmount()
+  })
+
+  it('规则表「方案」列：profile_name 显示方案名，缺失显示未分配', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 5, profile_name: 'A-方案' },
+      { id: 2, rule_type: 'DOMAIN', rule_param: 'b.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 2, profile_id: 0 },
+    ])
+    const w = mountRules()
+    await flushPromises()
+    expect(w.text()).toContain('A-方案')
+    expect(w.text()).toContain('未分配')
+    w.unmount()
+  })
+
+  it('导入候选提示文案补充「导入时可在「机场」页选择方案」', async () => {
+    listRulesMock.mockResolvedValue([])
+    const w = mountRules()
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('导入时可在「机场」页选择方案')
     w.unmount()
   })
 
@@ -736,6 +932,50 @@ describe('RulesPage', () => {
     await w.find('[data-testid="bulk-confirm-cancel"]').trigger('click')
     await flushPromises()
     expect(vm.bulkDeleteOpen).toBe(false)
+    w.unmount()
+  })
+
+  it('方案相关 v-model setter：筛选 / 规则弹窗方案 / 移动弹窗目标方案 + 移动取消按钮', async () => {
+    listRulesMock.mockResolvedValue(D09_RULES)
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      profileFilter: number
+      moveDialogOpen: boolean
+      moveProfileId: number
+      ruleDialog: boolean
+      ruleDraft: Record<string, unknown>
+    }
+    const selectByLabel = (label: string) => w.findAllComponents({ name: 'VSelect' })
+      .find((c) => (c.props() as Record<string, unknown>).label === label)
+    // 1) 页面顶部「方案筛选」下拉的 update:modelValue
+    const filterSel = selectByLabel('方案筛选')
+    expect(filterSel).toBeTruthy()
+    await filterSel!.vm.$emit('update:modelValue', 4)
+    await flushPromises()
+    expect(vm.profileFilter).toBe(4)
+    expect(listRulesMock).toHaveBeenCalledWith(4)
+    // 2) 规则弹窗「方案」下拉的 update:modelValue
+    vm.ruleDialog = true
+    await flushPromises()
+    const ruleSel = selectByLabel('方案')
+    expect(ruleSel).toBeTruthy()
+    await ruleSel!.vm.$emit('update:modelValue', 5)
+    await flushPromises()
+    expect(vm.ruleDraft.profile_id).toBe(5)
+    // 3) 批量移动弹窗「目标方案」下拉 + 取消按钮
+    vm.moveDialogOpen = true
+    await flushPromises()
+    const moveSel = selectByLabel('目标方案')
+    expect(moveSel).toBeTruthy()
+    await moveSel!.vm.$emit('update:modelValue', 6)
+    await flushPromises()
+    expect(vm.moveProfileId).toBe(6)
+    const cancelBtn = w.find('[data-testid="move-profile-cancel"]')
+    expect(cancelBtn.exists()).toBe(true)
+    await cancelBtn.trigger('click')
+    await flushPromises()
+    expect(vm.moveDialogOpen).toBe(false)
     w.unmount()
   })
 })

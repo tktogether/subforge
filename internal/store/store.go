@@ -92,16 +92,21 @@ type FetchAudit struct {
 }
 
 // ProxyGroup 是 proxy_groups 表的一行。
+//
+// ProfileID 标识该分组归属的订阅方案，0 = 未分配（旧全局池）。
+// ProfileName 不落库，由 API 层按 ProfileID 填。
 type ProxyGroup struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Regex     string    `json:"regex"`
-	URL       string    `json:"url"`
-	Interval  int       `json:"interval"`
-	SortOrder int       `json:"sort_order"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type"`
+	Regex       string    `json:"regex"`
+	URL         string    `json:"url"`
+	Interval    int       `json:"interval"`
+	SortOrder   int       `json:"sort_order"`
+	ProfileID   int64     `json:"profile_id"`
+	ProfileName string    `json:"profile_name,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // SelfNode 是 self_nodes 表的一行。
@@ -201,10 +206,12 @@ type Rule struct {
 	ResolveDNS bool   `json:"resolve_dns"`
 	Enabled    bool   `json:"enabled"`
 	// —— 上游导入溯源：source 标识来源，raw 保存原始规则行，origin_key 为去重键 ——
-	Source    string    `json:"source"`
-	Raw       string    `json:"raw"`
-	OriginKey string    `json:"origin_key"`
-	SortOrder int       `json:"sort_order"`
+	Source    string `json:"source"`
+	Raw       string `json:"raw"`
+	OriginKey string `json:"origin_key"`
+	SortOrder int    `json:"sort_order"`
+	// ProfileID 标识该规则归属的订阅方案，0 = 未分配（旧全局池）。
+	ProfileID int64     `json:"profile_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -256,14 +263,18 @@ type RuleProvider struct {
 // 空串表示「不定制，沿用现有回落链」。优先级为 query 显式参数 > 令牌字段 > 原回落链，
 // 详见 internal/api/subscription.go handleSubscribe。
 type SubToken struct {
-	Token     string    `json:"token"`
-	Name      string    `json:"name"`
-	Target    string    `json:"target"`
-	Pipeline  string    `json:"pipeline"`
-	Config    string    `json:"config"`
-	Include   string    `json:"include"`
-	Exclude   string    `json:"exclude"`
-	CreatedAt time.Time `json:"created_at"`
+	Token    string `json:"token"`
+	Name     string `json:"name"`
+	Target   string `json:"target"`
+	Pipeline string `json:"pipeline"`
+	Config   string `json:"config"`
+	Include  string `json:"include"`
+	Exclude  string `json:"exclude"`
+	// ProfileID 标识令牌绑定的订阅方案，0 = 未绑定（行为与改动前完全一致）。
+	// ProfileName 不落库，由 API 层按 ProfileID 填。
+	ProfileID   int64     `json:"profile_id"`
+	ProfileName string    `json:"profile_name,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // ListSubTokens 返回所有订阅令牌，按创建时间与令牌排序。
@@ -272,7 +283,7 @@ type SubToken struct {
 func (d *DB) ListSubTokens(ctx context.Context) ([]SubToken, error) {
 	rows, err := d.db.QueryContext(ctx,
 		"SELECT token, COALESCE(name, ''), COALESCE(target, ''), COALESCE(pipeline, ''), "+
-			"COALESCE(config, ''), COALESCE(include, ''), COALESCE(exclude, ''), created_at "+
+			"COALESCE(config, ''), COALESCE(include, ''), COALESCE(exclude, ''), profile_id, created_at "+
 			"FROM sub_tokens ORDER BY created_at, token")
 	if err != nil {
 		return nil, err
@@ -282,7 +293,7 @@ func (d *DB) ListSubTokens(ctx context.Context) ([]SubToken, error) {
 	for rows.Next() {
 		var t SubToken
 		if err := rows.Scan(&t.Token, &t.Name, &t.Target, &t.Pipeline, &t.Config,
-			&t.Include, &t.Exclude, &t.CreatedAt); err != nil {
+			&t.Include, &t.Exclude, &t.ProfileID, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -293,12 +304,13 @@ func (d *DB) ListSubTokens(ctx context.Context) ([]SubToken, error) {
 // SubTokenUpdate 是 UpdateSubToken 的部分更新输入：nil 指针 = 不动该列，
 // 非 nil 指针 = 写入该值（空串 = 清空）。Name 同样按指针判定是否更新。
 type SubTokenUpdate struct {
-	Name     *string
-	Target   *string
-	Pipeline *string
-	Config   *string
-	Include  *string
-	Exclude  *string
+	Name      *string
+	Target    *string
+	Pipeline  *string
+	Config    *string
+	Include   *string
+	Exclude   *string
+	ProfileID *int64
 }
 
 // UpdateSubToken 按 token 部分更新订阅令牌：只 SET 非 nil 字段，nil 字段保持原值。
@@ -307,8 +319,8 @@ type SubTokenUpdate struct {
 //
 // 动态拼 SET 子句：列名是代码内常量（不来自用户输入），值走占位符，无注入面。
 func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate) error {
-	sets := make([]string, 0, 6)
-	args := make([]any, 0, 7)
+	sets := make([]string, 0, 7)
+	args := make([]any, 0, 8)
 	if u.Name != nil {
 		sets = append(sets, "name = ?")
 		args = append(args, *u.Name)
@@ -332,6 +344,10 @@ func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate)
 	if u.Exclude != nil {
 		sets = append(sets, "exclude = ?")
 		args = append(args, *u.Exclude)
+	}
+	if u.ProfileID != nil {
+		sets = append(sets, "profile_id = ?")
+		args = append(args, *u.ProfileID)
 	}
 	if len(sets) == 0 {
 		// 全 nil：仍需校验 token 是否存在，否则空更新会静默成功一个不存在的令牌。
@@ -359,23 +375,18 @@ func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate)
 }
 
 // AddProxyGroup 新增代理分组；sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
+//
+// 旧签名保持不变：分组归属「未分配」（profile_id=0），等价于 AddProxyGroupWithProfile(ctx, 0, …)。
 func (d *DB) AddProxyGroup(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int) (*ProxyGroup, error) {
-	res, err := d.db.ExecContext(ctx,
-		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-		name, gtype, regex, url, interval, resolveSortOrder(sortOrder))
-	if err != nil {
-		return nil, err
-	}
-	id, _ := res.LastInsertId()
-	return d.GetProxyGroup(ctx, id)
+	return d.AddProxyGroupWithProfile(ctx, 0, name, gtype, regex, url, interval, sortOrder)
 }
 
 // GetProxyGroup 按 id 返回代理分组；不存在时返回 sql.ErrNoRows。
 func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 	var g ProxyGroup
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, created_at, updated_at FROM proxy_groups WHERE id = ?", id).
-		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, profile_id, created_at, updated_at FROM proxy_groups WHERE id = ?", id).
+		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.ProfileID, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -406,8 +417,8 @@ func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex,
 func (d *DB) GetRule(ctx context.Context, id int64) (*Rule, error) {
 	var r Rule
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, created_at, updated_at FROM rules WHERE id = ?", id).
-		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt)
+		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, profile_id, created_at, updated_at FROM rules WHERE id = ?", id).
+		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.ProfileID, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -606,6 +617,20 @@ func migrate(db *sql.DB) error {
 			created_at  INTEGER NOT NULL DEFAULT 0,
 			updated_at  INTEGER NOT NULL DEFAULT 0
 		)`,
+		// 订阅方案（Profile）：一个方案 = 一套模板 + 一套规则 + 一套分组。
+		// config 为 INI 模板（远程 URL 或本地路径），空串 = 用默认配置；
+		// pipeline 为默认管线名，空串 = 用全局回落；enabled=0 = 方案停用。
+		`CREATE TABLE IF NOT EXISTS profiles (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			name        TEXT NOT NULL UNIQUE,
+			description TEXT NOT NULL DEFAULT '',
+			config      TEXT NOT NULL DEFAULT '',
+			pipeline    TEXT NOT NULL DEFAULT '',
+			enabled     INTEGER NOT NULL DEFAULT 1,
+			sort_order  INTEGER NOT NULL DEFAULT 0,
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("执行建表: %w", err)
@@ -626,12 +651,24 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("迁移 rules.%s: %w", c.col, err)
 		}
 	}
+	// 方案归属列 profile_id：rules / proxy_groups / sub_tokens 三表统一补齐。
+	// 0 = 未分配（未绑定方案），语义与改动前完全一致，老数据迁移后一律落在 0。
+	for _, t := range []string{"rules", "proxy_groups", "sub_tokens"} {
+		if err := addColumnIfMissing(db, t, "profile_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("迁移 %s.profile_id: %w", t, err)
+		}
+	}
 	// rule_providers 唯一索引：先按 (source, name) 去重，保留最小 id，避免老库重复行导致建索引失败。
 	if _, err := db.Exec("DELETE FROM rule_providers WHERE id NOT IN (SELECT MIN(id) FROM rule_providers GROUP BY source, name)"); err != nil {
 		return fmt.Errorf("去重 rule_providers: %w", err)
 	}
 	// 部分索引：只约束真正带 origin_key 的导入行；手工规则（origin_key=''）不被约束，允许多行共存。
-	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_origin ON rules(source, origin_key) WHERE origin_key <> ''"); err != nil {
+	// 先 DROP 再 CREATE：老库的索引是 (source, origin_key)，光靠 IF NOT EXISTS 会把旧索引留下来，
+	// 导致不同方案的「同来源同去重键」规则无法共存。DROP 每次启动执行，成本可接受。
+	if _, err := db.Exec("DROP INDEX IF EXISTS idx_rules_origin"); err != nil {
+		return fmt.Errorf("删除旧索引 idx_rules_origin: %w", err)
+	}
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_origin ON rules(profile_id, source, origin_key) WHERE origin_key <> ''"); err != nil {
 		return fmt.Errorf("创建 idx_rules_origin: %w", err)
 	}
 	// 同理：只约束带 source 的导入行；手工 provider（source=''）可共存。

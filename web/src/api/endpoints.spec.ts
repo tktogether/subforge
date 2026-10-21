@@ -678,3 +678,166 @@ it('listScripts 解包 .scripts', async () => {
   })
 
 })
+
+// T3a：方案（profile）端点与 profile_id 归属。页面 spec 全 mock endpoints，
+// 这里是真调用点，负责钉住 URL、方法与解包字段。
+describe('endpoints 方案(profile) 与 profile_id 归属', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  function respond(data: unknown) {
+    return { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(data) }
+  }
+
+  it('listProfiles → GET /api/profiles 解出 .profiles', async () => {
+    const profiles = [{ id: 1, name: 'p1', description: '', config: '', pipeline: '', enabled: true, sort_order: 0, rule_count: 2, group_count: 3 }]
+    fetchMock.mockResolvedValue(respond({ profiles }))
+    const r = await endpoints.listProfiles()
+    expect(r).toEqual(profiles)
+    expect(fetchMock).toHaveBeenCalledWith('/api/profiles', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('createProfile(body) → POST /api/profiles 解出 .profile', async () => {
+    const profile = { id: 2, name: 'p2', description: 'd', config: 'c', pipeline: 'pl', enabled: true, sort_order: 1, rule_count: 0, group_count: 0 }
+    const input = { name: 'p2', description: 'd', config: 'c', pipeline: 'pl', enabled: true, sort_order: 1 }
+    fetchMock.mockResolvedValue(respond({ profile }))
+    const r = await endpoints.createProfile(input)
+    expect(r).toEqual(profile)
+    expect(fetchMock).toHaveBeenCalledWith('/api/profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: undefined,
+    })
+  })
+
+  it('updateProfile(3,body) → PUT /api/profiles/3 解出 .profile', async () => {
+    const profile = { id: 3, name: 'p3', description: '', config: '', pipeline: '', enabled: false, sort_order: 2, rule_count: 0, group_count: 0 }
+    const input = { name: 'p3', enabled: false }
+    fetchMock.mockResolvedValue(respond({ profile }))
+    const r = await endpoints.updateProfile(3, input)
+    expect(r).toEqual(profile)
+    expect(fetchMock).toHaveBeenCalledWith('/api/profiles/3', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: undefined,
+    })
+  })
+
+  it('deleteProfile(3) → DELETE /api/profiles/3', async () => {
+    fetchMock.mockResolvedValue(respond({ ok: true }))
+    const r = await endpoints.deleteProfile(3)
+    expect(r).toEqual({ ok: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/profiles/3', expect.objectContaining({ method: 'DELETE' }))
+  })
+
+  it('listGroups(2) → GET /api/groups?profile_id=2', async () => {
+    const groups = [{ id: 1, name: 'g', type: 't', regex: 'r', url: 'u', interval: 1, sort_order: 1, profile_id: 2, profile_name: 'p2' }]
+    fetchMock.mockResolvedValue(respond({ groups }))
+    const r = await endpoints.listGroups(2)
+    expect(r).toEqual(groups)
+    expect(fetchMock).toHaveBeenCalledWith('/api/groups?profile_id=2', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('listGroups() 不带 profile_id → GET /api/groups', async () => {
+    fetchMock.mockResolvedValue(respond({ groups: [] }))
+    await endpoints.listGroups()
+    expect(fetchMock).toHaveBeenCalledWith('/api/groups', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('listRules(2) → GET /api/rules?profile_id=2', async () => {
+    const rules = [{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 2, profile_name: 'p2' }]
+    fetchMock.mockResolvedValue(respond({ rules }))
+    const r = await endpoints.listRules(2)
+    expect(r).toEqual(rules)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules?profile_id=2', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('listRules() 不带 profile_id → GET /api/rules', async () => {
+    fetchMock.mockResolvedValue(respond({ rules: [] }))
+    await endpoints.listRules()
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('bulkGroups({ids,profile_id}) → POST /api/groups/bulk 原样透传', async () => {
+    const body = { ids: [1, 2], profile_id: 4 }
+    fetchMock.mockResolvedValue(respond({ updated: 2 }))
+    const r = await endpoints.bulkGroups(body)
+    expect(r).toEqual({ updated: 2 })
+    expect(fetchMock).toHaveBeenCalledWith('/api/groups/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: undefined,
+    })
+  })
+
+  it('moveRules({ids,source,profile_id}) → POST /api/rules/bulk 原样透传', async () => {
+    const body = { ids: [1, 2], source: 'airport:7', profile_id: 4 }
+    fetchMock.mockResolvedValue(respond({ updated: 2 }))
+    const r = await endpoints.moveRules(body)
+    expect(r).toEqual({ updated: 2 })
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: undefined,
+    })
+  })
+
+  it('bulkRules 带 profile_id 时原样透传（移动模式）', async () => {
+    const body = { ids: [5], source: '', enabled: true, profile_id: 4 }
+    fetchMock.mockResolvedValue(respond({ updated: 1 }))
+    const r = await endpoints.bulkRules(body)
+    expect(r).toEqual({ updated: 1 })
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual(body)
+  })
+
+  it('importAirportRules(4,{profile_id}) → POST /api/airports/4/import-rules body 带 profile_id', async () => {
+    const body = { profile_id: 4, create_groups: true }
+    fetchMock.mockResolvedValue(respond({ rules_added: 1, rules_skipped: 0, providers_added: 0, warnings: [], groups_created: 2 }))
+    const r = await endpoints.importAirportRules(4, body)
+    expect(r.groups_created).toBe(2)
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/4/import-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: undefined,
+    })
+  })
+
+  it('importAirportRules(4) 不传 body 时发 {}', async () => {
+    fetchMock.mockResolvedValue(respond({ rules_added: 0, rules_skipped: 0, providers_added: 0, warnings: [] }))
+    const r = await endpoints.importAirportRules(4)
+    expect(r.rules_added).toBe(0)
+    const call = fetchMock.mock.calls[0]
+    expect(call[0]).toBe('/api/airports/4/import-rules')
+    expect(JSON.parse(call[1].body as string)).toEqual({})
+  })
+
+  it('createToken 带完整字段（target/pipeline/config/include/exclude/profile_id）原样 POST', async () => {
+    const token = { token: 't2', name: 'n2', target: 'mihomo', pipeline: 'p', config: 'c', include: 'i', exclude: 'e', profile_id: 3 }
+    const input = { token: 't2', name: 'n2', target: 'mihomo', pipeline: 'p', config: 'c', include: 'i', exclude: 'e', profile_id: 3 }
+    fetchMock.mockResolvedValue(respond({ token }))
+    const r = await endpoints.createToken(input)
+    expect(r).toEqual(token)
+    expect(fetchMock).toHaveBeenCalledWith('/api/tokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: undefined,
+    })
+  })
+})
+
