@@ -892,3 +892,130 @@ v2 的数据语义：
 - 截图：.tmp/ux-e2e/profiles2/shots/p30-01..10（含 p30-02a-layer-editor.png、p30-03-rules-source-filter.png、p30-06-groups-source-column.png）；
 - 覆盖率：.tmp/ux-e2e/profiles2/cover-v2.out；
 - 数据目录：.tmp/ux-e2e/profiles2/data（本轮本地实例）。
+
+## 16. 第七轮：D-41 / D-42 / D-43 + 规则源产物 → 订阅通路（2026-10-21 夜，本地实例 + 无头浏览器真机）
+
+### 16.1 本轮目标（用户原话）
+
+User said (m05977): "② 先修 D-41/D-42（整批按钮入口）；③ 继续做「规则源产物 → 订阅」通路。"；User said (m05986): "还有D43"。
+
+范围：D-41（规则页整批按钮被候选空态闸门藏住）、D-42（切「导入候选」tab 不刷新）、D-43（方案页两个层编辑器 testid 重复）、D-33（规则源产物接入订阅，上一轮 §15 遗留的最大缺口）。
+
+### 16.2 派发方式：teammate（名字含 free）+ 共享任务
+
+沿用上一轮结论：**spawn_teammate 没有 provider/model 参数，名字里带 `free` 才会被路由到 llmio/free 免费模型**（m01464 用户要求 + 上一轮实测）。本轮四个队友全部按此命名，`list_agents` 运行期返回 `model: "free"`（失联后转 inactive 才会显示 deepseek-flash，底层路由仍未完全确证）。
+
+| 共享任务 | 内容 | 执行者 | 写范围 | 结果 |
+| --- | --- | --- | --- | --- |
+| task-25 | T-A 数据层：`profiles.rule_sources` + `RuleSourceRules` | be-a-free | internal/store/**、internal/subforge/** | 完成，Lead 复跑通过 |
+| task-26 | T-C 方案页：规则源绑定 + 层编辑器 testid 去重 | web-c-free | ProfilesPage.vue/spec、endpoints.ts | 完成，Lead 复跑通过 |
+| task-27 | T-D 规则页：整批按钮可见性 + 切 tab 刷新 | web-d-free | RulesPage.vue/spec | 完成，Lead 复跑通过 |
+| task-28 | T-B API/订阅：rule_sources 读写 + 订阅注入 | be-b-free | api/profiles.go、api/subscription.go、convert/chain.go | 完成，Lead 复跑通过 |
+| task-29 | T-E Lead 独立验收 + 探针 + 提交 + 本节 | lead | — | 完成 |
+
+流程偏差（记下来，不影响结论）：**task-28 由 be-b-free 自己置为 completed**，违反「卡状态由 Lead 在验收时点独占操作」的约定。Lead 随后用 `team_task_get` 读原始状态 + 自己复跑全部命令复核，未采信队友自测结论。
+
+### 16.3 代码改动（提交 `9bd9eef` + `5b684d4`）
+
+`git diff --stat`：16 个文件 +644/−56；另新增 3 个测试文件共 739 行。
+
+| 文件 | 关键改动 |
+| --- | --- |
+| internal/store/store.go | migrate 新增 `profiles.rule_sources TEXT NOT NULL DEFAULT ''`（:742-747，走 addColumnIfMissing） |
+| internal/store/profiles.go | `Profile.RuleSources`、select/scan、`SetProfileRuleSources`（:246，只更新该列+updated_at，0 行→sql.ErrNoRows） |
+| internal/subforge/profiles.go | Manager 包装 `SetProfileRuleSources` |
+| internal/subforge/rulesources.go | `Manager.RuleSourceRules`（:346）：按来源名读清单当前产物（yaml/text），FINAL/MATCH 丢弃并 warning，去重保序，永不返回 error |
+| internal/api/profiles.go | POST/PUT/GET 读写 rule_sources；上限 `maxRuleSources = 20`（:117）；响应恒为数组（null→[]）；**不校验来源是否存在**（manifest 是文件、可随时变） |
+| internal/api/subscription.go | 方案绑定规则源且产物存在 → 注入订阅（:1011-1012）；`DisableTemplateRules` 追加 `\|\| len(sourceRules) > 0`（:1032）；告警进 `TemplateWarnings`（:1034） |
+| internal/convert/chain.go | 模板告警改追加语义（base 在前）；文案补「或规则源产物已替换模板规则」（:67） |
+| web/src/pages/ProfilesPage.vue | `profile-rule-sources` 多选（:450）+ 列表列 `profile-rule-sources-text-<id>`（:378）；层编辑器 testid 加 rule-/group- 前缀（D-43） |
+| web/src/pages/RulesPage.vue | D-41 工具条移出 AsyncSection（:703）+ `candidates-empty-hint`；D-42 `watch(tab)`（:431）切到导入候选时重新拉取 |
+| 新增测试 | store/rule_sources_test.go（200 行）、subforge/rule_source_rules_test.go（257 行）、api/subscribe_rule_sources_test.go（282 行） |
+
+### 16.4 行为契约（这一轮真正变了什么）
+
+1. **方案 = 模板 + 规则层 + 分组层 + 绑定规则源**。绑定值是规则源**名字**（规则源页的 manifest 条目），不是产物路径；订阅时按「清单当前版本」现读文件，所以**规则源更新一次即生效**，不用改方案。
+2. **绑定规则源会挤掉模板规则**：`DisableTemplateRules = !hasLayer("template") || len(sourceRules) > 0`（subscription.go:1032），语义是「产物里的规则已经替代了模板规则」；convert 层的提示文案同步改成「模板规则已跳过：订阅方案未启用 template 层，或规则源产物已替换模板规则」。
+3. **产物里的 FINAL/MATCH 会被丢掉并记 warning**（RuleSourceRules），避免产物自带的兜底规则吃掉后面所有规则。
+4. **绑定不存在的来源名不会在保存时报错**，只会在生成订阅时产生 warning；而 warning 目前**不进响应体**（见 16.7 D-45），所以写错名字的用户看不到任何提示。
+5. D-43 只改`data-testid`前缀（`rule-layer-*` / `group-layer-*`），真实用户界面无变化，属可测性缺陷。
+6. D-41/D-42 只改渲染位置与刷新时机：候选为空时三枚整批按钮仍在，切回 tab 会重新拉取。
+
+### 16.5 Lead 独立复跑（原始输出，提交前执行的最后一版）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| gofmt | `gofmt -l cmd internal pkg` | 输出为空 |
+| 构建 | `go build ./...` | BUILD_EXIT=0 |
+| vet | `go vet ./internal/api ./internal/convert ./internal/store ./internal/subforge` | VET_EXIT=0 |
+| 后端四包 | `go test ./internal/api ./internal/convert ./internal/store ./internal/subforge -count=1` | 全 ok（api 21.196s / convert 2.140s / store 2.183s / subforge 5.894s），TEST_EXIT=0 |
+| 类型检查 | `cd web; npx vue-tsc --noEmit` | TSC_EXIT=0 |
+| 前端测试 | `npx vitest run --coverage` | 40 files / 840 tests passed，All files 100 stmts / 96.72 branch / 100 funcs / 100 lines，COV_EXIT=0 |
+| 覆盖率门禁（CI 口径） | `go test -coverprofile=... -covermode=atomic ./internal/...` + `go run ./internal/tools/coveragegate -profile=... -min 80 -min-func 100` | 语句 91.2%（9530/10454）≥80%，函数 966/966=100%，GATE_EXIT=0 |
+
+### 16.6 无头浏览器探针（真机 25/25 PASS）
+
+- 实例：本地 `127.0.0.1:25641`（全新数据目录 `.tmp/ux-e2e/local/data-w7`），上游 fixture `0.0.0.0:25630`（45 节点订阅 / 9,639 条 seed 规则 / 4 行规则源产物），无头 Chrome 155，全部操作用 CDP 真实鼠标/键盘事件。
+- 脚本：`.tmp/ux-e2e/fix/probe-wave7.mjs`；结果：`.tmp/ux-e2e/fix/probe-wave7-result.json`（`ok: true`，25 steps）。
+
+| # | 步骤 | 实测证据 |
+| --- | --- | --- |
+| 1-5 | 健康检查 / 空库 / 建机场 / 刷新 / 导入规则 | 201、200（nodes 字段 null 但 45 节点已落库）、导入 `rules_added=9639` |
+| 6 | 点「初始化清单」（新库无 manifest.yaml） | manifest-exists 出现 |
+| 7-9 | 规则源页新增 probe-src（指向 fixture /src.yaml）→ 按行定位「更新」真实点击 | 行内「当前版本」由「暂无当前版本」变为 `probe-src-20261021-111128.yaml` |
+| 10 | /api/rule-sources 复核 | latest/versions 均为该文件 |
+| 11 | 方案页多选规则源，校验 chip 真出现 | chips=[`probe-src`] |
+| 12 | D-43 testid 断言 | rule-layer-row-custom/group-layer-row-custom/rule-layer-toggle-template/group-layer-toggle-template 全在，旧 `layer-row-custom` 已不存在 |
+| 13-15 | 保存方案 → 建令牌（绑定 probe-profile） | `rule_sources: ["probe-src"]`；token 生成、profile 绑定 |
+| 16-18 | GET /subscribe 正文断言 | 200，8,036 字节；含 probe-a.example / probe-b.example / probe-ad；不含 `MATCH,DIRECT` |
+| 19-21 | 规则页选来源 `airport:探针机场` → 导入候选 → 点「启用本来源全部」 | 筛选值真生效（按钮 disabled=false）；9,639 条候选排空 |
+| 22 | D-41 空态后按钮仍在 | enable/disable/delete-source-all 三枚 visible=true，`candidates-empty-hint` 出现 |
+| 23 | D-42 切走再切回「导入候选」 | 包了一层 window.fetch，回切后 `__sfCalls=1`（确实重新拉取） |
+| 24-25 | 页面无错误 | pageErrors=[]、consoleErrors=[] |
+
+**8 次运行、前 7 次失败，全部是探针自身问题（没有一次是产品功能挡住）**，按发生顺序记录真因与修法：
+
+| # | 失败现象 | 真因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | 新增规则源 404「规则源清单不存在」 | 全新库没有 manifest.yaml，页面提供的是「初始化清单」主色按钮 | 探针先判 manifest-hint 并点 init-manifest |
+| 2 | 点「更新」后服务端零请求 | 新增对话框关闭过渡未结束，点在了遮罩上 | 等 add-name 消失再点 |
+| 3 | 等不到 `version-item` | 版本列表在默认折叠的「<来源> 的版本」面板里 | 改断言表格「当前版本」列不再显示「暂无当前版本」 |
+| 4 | 方案对话框被关掉 | 多选下拉仍开着时按 Escape，连整个对话框一起关 | 改为点对话框内「名称」输入框收菜单 |
+| 5 | 保存后 rule_sources 为空数组 | 下拉展开动画未结束就点选项，点在了 scrim 上，选中态没写入 | 等菜单出现后 sleep 400ms 再点，并断言 chip 真出现 |
+| 6 | 候选明明清空却拿不到空态提示 | AsyncSection 先卸载表格、空态提示稍后才渲染，按「行数=0」提前判断 | 改为等 `candidates-empty-hint` 出现 |
+| 7 | 点「启用本来源全部」零请求（日志无 /api/rules/bulk） | 来源筛选下拉同样受展开动画影响，筛选值没生效，按钮仍是禁用态 | 同样 sleep 400ms，并断言按钮 disabled=false 后再点 |
+
+截图：`.tmp/ux-e2e/fix/shots-wave7/01-add-source-dialog.png、02-rule-sources.png、03-profile-dialog.png、04-token-dialog.png、05-subscriptions.png、06-subscribe-url-page.png、07-rules-empty-candidates.png、08-rules-tab-return.png`。
+
+### 16.7 本轮新观察（未修，编号接 §15 的 D-43）
+
+| 编号 | 级别 | 现象 | 证据 |
+| --- | --- | --- | --- |
+| D-44 | P3 | **「导入候选」表不受来源筛选影响**：`loadCandidates` 拉全量规则后只按 `airport:` 前缀 + `enabled=false` 过滤，选了某个机场来源也仍显示所有机场的候选；而空态文案写的是「该来源当前没有候选」，文案与行为不一致。 | `web/src/pages/RulesPage.vue:303-315`；探针里选 `airport:探针机场` 后候选仍是全量（9,639 条分页 10/页） |
+| D-45 | P3 | **规则源替换模板规则的告警看不到**：`sourceWarns` 经 `convert.Params.TemplateWarnings` 汇入 `result.Warnings`，但 handleSubscribe 只把 `result.Failures` 写日志，warning 不进响应体也不进页面；再叠加「绑定时不校验来源存在」，写错来源名的用户会静默拿到不含产物规则的订阅。 | `internal/api/subscription.go:1034`；仓库既有行为，本轮未改 |
+| D-46 | P3 | **新库新增规则源要先点「初始化清单」**（否则 404），页面有引导按钮与文案，但第一次用的人（和自动化脚本）会卡一步。建议：新增规则源时若 manifest 不存在，服务端自动用默认清单初始化。 | 探针第 1 次失败；`internal/api/rule_sources.go` 的 404 文案「请先生成默认清单」 |
+
+### 16.8 诚实边界（本轮不能下的结论）
+
+1. **远端 `192.168.8.102:25500` 仍是 v0.1.8（commit bddbe641）**，没有本轮任何功能；本轮所有真机证据都来自本地构建的实例，远端网页无法演示规则源绑定与整批按钮。
+2. 探针只验证了 **4 条**产物规则的内联；规则源产物按现状是「整份内联进订阅」，万条量级会让订阅体积线性增长。本轮**没有**做 rule-provider 外链方案，也**没有**压测。§15.6 第 5 条「/api/rules 全量返回 3.5MB+」仍是性能风险（本轮导入 9,639 条时单次 /api/rules 响应 3,755,089 字节）。
+3. 整批操作只自动化了「启用本来源全部」+ 三枚按钮的可见性；**「停用/删除本来源全部」未在探针里真点**（删除的二次确认对话框未自动化），这两条只有单元测试覆盖。
+4. 未跑并发/压力；未验证多方案并存时的规则总量上限；未做跨浏览器验证（只有 Chrome 155）。
+5. 7 次探针失败全是脚本时序问题，但其中 3 处（对话框关闭过渡、v-select 菜单展开动画、折叠面板）是**页面真实的交互特性**——对真实用户无碍，对自动化是坑，建议后端/前端以后给关键按钮加稳定 testid 或给菜单加 data 状态。
+
+### 16.9 评分（仅基于本轮证据）
+
+| 维度 | 评分 | 理由 |
+| --- | --- | --- |
+| 功能完整度 | 8/10 | 规则源产物真的进了订阅（真机断言），方案绑定、多选、列展示、模板规则让位都通；扣分是告警不可见（D-45）与万条量级未做外链方案 |
+| 可测性 | 8.5/10 | D-43 去重后两个编辑器可独立定位；D-41 加了 `candidates-empty-hint`；扣分是候选表未按来源过滤导致断言语义含糊（D-44） |
+| 交互严谨性 | 7.5/10 | D-41/D-42 修完后整批入口在空态仍可达、切 tab 会刷新，这是本轮最实在的体验修复；扣分是新库初始化清单这一步（D-46） |
+| 测试与门禁 | 9/10 | 840 前端用例、后端四包全绿、覆盖率门禁 91.2%/函数 100% 全过；扣分是整批停用/删除缺真机覆盖 |
+| 综合 | 8/10 | 比第六轮 7.8 略升：补上了「规则源 → 订阅」这条一直断着的通路，同时把规则页最烦的两个入口问题修了；剩下的都是可见性/文案/规模化问题 |
+
+### 16.10 本轮证据索引
+
+- 计划与任务书：`.tmp/ux-e2e/fix/PLAN-WAVE7.md`、`TASK-W7-A.md`、`TASK-W7-B.md`、`TASK-W7-C.md`、`TASK-W7-D.md`
+- 探针与结果：`.tmp/ux-e2e/fix/probe-wave7.mjs`、`probe-wave7-result.json`、截图 `shots-wave7/01..08 (+99-final)`
+- 覆盖率：`.tmp/ux-e2e/fix/cover-w7.out`；实例数据：`.tmp/ux-e2e/local/data-w7`（探针后即删，可复现）
+- 提交：`9bd9eef`（feat profiles 规则源绑定）、`5b684d4`（fix web D-41/D-42）、本节的 docs 提交
