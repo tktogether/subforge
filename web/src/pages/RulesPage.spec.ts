@@ -122,6 +122,10 @@ describe('RulesPage', () => {
     const allBtn = w.find('[data-testid="enable-source-all"]')
     await enableBtn?.trigger('click')
     await flushPromises()
+    // 启用后整批刷新会重置选择，重新勾选，使「禁用选中」按钮可点击，覆盖其点击处理函数（D-41/D-42）
+    const checkboxes2 = w.findAll('input[type="checkbox"]')
+    if (checkboxes2.length) await checkboxes2[0].setValue(true)
+    await flushPromises()
     await disableBtn?.trigger('click')
     await flushPromises()
     await allBtn?.trigger('click')
@@ -1045,6 +1049,101 @@ describe('RulesPage', () => {
     await cancelBtn.trigger('click')
     await flushPromises()
     expect(vm.sourceDeleteOpen).toBe(false)
+    w.unmount()
+  })
+
+  // ---------------- D-41 / D-42：导入候选工具条可见性 + 切 tab 刷新 ----------------
+
+  const D41_RULES = [
+    { id: 31, rule_type: 'DOMAIN', rule_param: 'a.example', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:aaa' },
+    { id: 32, rule_type: 'DOMAIN-SUFFIX', rule_param: 'b.example', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 2, source: 'airport:aaa' },
+  ]
+
+  it('D-41 空候选时整批按钮仍可见可点（不被 AsyncSection 空态藏住）', async () => {
+    // 该来源的规则全部 enabled=true → 候选为空（用户正需要整批停用/启用/删除来撤回）
+    listRulesMock.mockResolvedValue(D41_RULES)
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceFilter: string | null }
+    vm.sourceFilter = 'airport:aaa'
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    // 前提：候选确实为空
+    expect((w.vm as unknown as { candidates: unknown[] }).candidates).toEqual([])
+
+    const enableAll = w.find('[data-testid="enable-source-all"]')
+    const disableAll = w.find('[data-testid="disable-source-all"]')
+    const deleteAll = w.find('[data-testid="delete-source-all"]')
+    expect(enableAll.exists()).toBe(true)
+    expect(disableAll.exists()).toBe(true)
+    expect(deleteAll.exists()).toBe(true)
+    // 可见（不再是空态里消失的一整块）
+    expect(enableAll.isVisible()).toBe(true)
+    expect(disableAll.isVisible()).toBe(true)
+    expect(deleteAll.isVisible()).toBe(true)
+    // 选中具体来源后整批按钮可用（未 disabled）
+    expect(enableAll.attributes('disabled')).toBeUndefined()
+    expect(disableAll.attributes('disabled')).toBeUndefined()
+    expect(deleteAll.attributes('disabled')).toBeUndefined()
+    // 空态提示出现，告诉用户仍可用整批按钮
+    const hint = w.find('[data-testid="candidates-empty-hint"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.isVisible()).toBe(true)
+    expect(hint.text()).toContain('整批按钮')
+    // 整批删除入口仍然能打开二次确认（用户有撤回路径）
+    await deleteAll.trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as { sourceDeleteOpen: boolean }).sourceDeleteOpen).toBe(true)
+    expect(w.find('[data-testid="confirm-source-delete-text"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('D-41 回归：候选非空时工具条与候选表都可见', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 41, rule_type: 'DOMAIN', rule_param: 'c.example', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:aaa' },
+    ])
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceFilter: string | null }
+    vm.sourceFilter = 'airport:aaa'
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    expect((w.vm as unknown as { candidates: unknown[] }).candidates.length).toBe(1)
+    expect(w.find('[data-testid="enable-source-all"]').isVisible()).toBe(true)
+    expect(w.find('[data-testid="disable-source-all"]').isVisible()).toBe(true)
+    expect(w.find('[data-testid="delete-source-all"]').isVisible()).toBe(true)
+    expect(w.find('[data-testid="enable-selected"]').isVisible()).toBe(true)
+    expect(w.find('[data-testid="disable-selected"]').isVisible()).toBe(true)
+    expect(w.find('[data-testid="candidates-table"]').exists()).toBe(true)
+    // 候选非空时不再显示空态提示
+    expect(w.find('[data-testid="candidates-empty-hint"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('D-42 切到「导入候选」tab 时重新拉取候选', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 51, rule_type: 'DOMAIN', rule_param: 'd.example', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:aaa' },
+    ])
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceFilter: string | null; tab: number }
+    vm.sourceFilter = 'airport:aaa'
+    await flushPromises()
+    // 清空调用记录，只观察「切 tab」这一次触发的请求
+    listRulesMock.mockClear()
+    vm.tab = 2
+    await flushPromises()
+    expect(listRulesMock).toHaveBeenCalled()
+    expect(listRulesMock).toHaveBeenCalledWith({ source: 'airport:aaa', sourcePrefix: false })
+    // 切到其它 tab 不再拉候选
+    listRulesMock.mockClear()
+    vm.tab = 1
+    await flushPromises()
+    expect(listRulesMock).not.toHaveBeenCalled()
     w.unmount()
   })
 })

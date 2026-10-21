@@ -426,6 +426,12 @@ watch(sourceFilter, () => {
   void loadCandidates()
 })
 
+// D-42：切到「导入候选」tab 时重新拉取候选。后台导入 / 其它页面改动规则后，
+// 切回该 tab 即可看到最新候选，不依赖 sourceFilter 变化或刷新页面。
+watch(tab, (val) => {
+  if (val === 2) void loadCandidates()
+})
+
 onMounted(() => {
   void loadRules()
   void loadProviders()
@@ -692,15 +698,18 @@ onMounted(() => {
       <div>列表随上方「来源筛选」从服务端取数；选中某个来源后可整批启用/停用/删除。</div>
       <div>导入的规则来源固定为本机场（airport:&lt;机场名&gt;），在「机场」页重新导入才会改变归属。</div>
     </v-alert>
+    <!-- D-41：工具条移出 AsyncSection —— 候选为空时（该来源已全部启用/停用），
+         用户仍需要「整批停用/启用/删除」的入口，不能随空态一起消失。 -->
+    <div class="mb-2 d-flex ga-2 align-center flex-wrap">
+      <v-btn size="small" color="primary" class="mr-2" data-testid="enable-selected" @click="enableSelected(true)">启用选中</v-btn>
+      <v-btn size="small" variant="tonal" class="mr-2" data-testid="disable-selected" :disabled="selectedIds.length === 0" @click="enableSelected(false)">禁用选中</v-btn>
+      <v-btn size="small" color="success" class="mr-2" data-testid="enable-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="sourceEnableAll(true)">启用本来源全部</v-btn>
+      <v-btn size="small" variant="tonal" class="mr-2" data-testid="disable-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="sourceEnableAll(false)">停用本来源全部</v-btn>
+      <v-btn size="small" color="error" data-testid="delete-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="openSourceDelete">删除本来源全部</v-btn>
+      <span v-if="!sourceReady" class="text-caption text-medium-emphasis" data-testid="source-batch-hint">整批按钮需要先在上方「来源筛选」选中具体来源（自定义/全部来源不适用）。</span>
+      <span v-else-if="candidates.length === 0" class="text-caption text-medium-emphasis" data-testid="candidates-empty-hint">该来源当前没有候选（可能已全部启用/停用），可用上方整批按钮操作。</span>
+    </div>
     <AsyncSection :loading="candidatesLoading" :error="candidatesError" :empty="candidates.length === 0" empty-text="" :empty-state="pageHelp('rules').emptyState" @retry="loadCandidates">
-      <div class="mb-2 d-flex ga-2 align-center flex-wrap">
-        <v-btn size="small" color="primary" class="mr-2" data-testid="enable-selected" @click="enableSelected(true)">启用选中</v-btn>
-        <v-btn size="small" variant="tonal" class="mr-2" data-testid="disable-selected" :disabled="selectedIds.length === 0" @click="enableSelected(false)">禁用选中</v-btn>
-        <v-btn size="small" color="success" class="mr-2" data-testid="enable-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="sourceEnableAll(true)">启用本来源全部</v-btn>
-        <v-btn size="small" variant="tonal" class="mr-2" data-testid="disable-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="sourceEnableAll(false)">停用本来源全部</v-btn>
-        <v-btn size="small" color="error" data-testid="delete-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="openSourceDelete">删除本来源全部</v-btn>
-        <span v-if="!sourceReady" class="text-caption text-medium-emphasis" data-testid="source-batch-hint">整批按钮需要先在上方「来源筛选」选中具体来源（自定义/全部来源不适用）。</span>
-      </div>
       <v-data-table :items="candidates" :headers="candidateHeaders" show-select v-model="selectedIds" item-value="id" density="comfortable" data-testid="candidates-table">
         <template #item.rule_config="{ item }">
           <span :class="item.rule_config === 0 ? 'text-error font-weight-bold' : ''">
