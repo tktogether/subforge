@@ -590,3 +590,38 @@ func TestFetch_RedirectLimit(t *testing.T) {
 		t.Fatalf("重定向应被跟随到上限才失败，实际访问 %d 次", n)
 	}
 }
+
+// TestFetchFrom_SniffFailure_NoRetry 钉住「内容形态无法识别」不可重试。
+// 嗅探是纯函数：同一份字节重试多少次结果都一样。曾经它按普通错误重试，
+// 单条 ruleset 引用白等 3 次退避，INI 模板一次展开几十个引用就会撞上 API
+// 的 60s 请求上限，把尾部规则静默截断（见 internal/ini_rules/parse.go 的
+// ruleset 展开）。这里同时钉住：失败仍要保留原文，交给上层自行判断。
+func TestFetchFrom_SniffFailure_NoRetry(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("DOMAIN-SUFFIX,ref-0.example\n"))
+	}))
+	defer srv.Close()
+
+	cfg := fastCfg()
+	cfg.Retries = 3 // 若被当作可重试错误，这里会访问 4 次
+	f := New(WithConfig(cfg))
+	res := f.FetchFrom(context.Background(), Source{URL: srv.URL + "/r/0.txt"})
+	if res.Err == nil {
+		t.Fatal("规则文本不是订阅内容形态，应识别失败并报错")
+	}
+	var pe *PermanentError
+	if !errors.As(res.Err, &pe) {
+		t.Fatalf("嗅探失败应标记为 PermanentError，实际: %v", res.Err)
+	}
+	if !strings.Contains(res.Err.Error(), "内容形态无法识别") {
+		t.Fatalf("错误消息应保留识别失败原文，实际: %v", res.Err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("嗅探失败不应重试，实际请求 %d 次", got)
+	}
+	if string(res.Content) != "DOMAIN-SUFFIX,ref-0.example\n" {
+		t.Fatalf("嗅探失败也要保留原文，实际 %q", string(res.Content))
+	}
+}

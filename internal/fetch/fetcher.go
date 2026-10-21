@@ -273,7 +273,11 @@ func (f *Fetcher) finish(src Source, body []byte, fromCache bool, resp *http.Res
 	res.Sniff = sniff
 	if err != nil {
 		res.Err = fmt.Errorf("内容形态无法识别: %w", err)
-		return res, res.Err
+		// 形态识别是纯函数：同一份字节重试多少次结果都一样。当作可重试错误会让
+		// 每条失败来源多背 (Retries) 次退避；INI 模板一次要拉几十个 ruleset 引用，
+		// 累计会撞上 API 的 60s 请求上限，把尾部引用静默截断。因此标记为不可重试，
+		// 原文仍保留在 Result.Content，交给上层（如 INI 展开）按既有口径处理。
+		return res, &PermanentError{Reason: res.Err.Error()}
 	}
 	return res, nil
 }
