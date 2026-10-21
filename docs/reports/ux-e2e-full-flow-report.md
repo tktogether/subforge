@@ -859,6 +859,8 @@ v2 的数据语义：
 | 前端 | `cd web; npm run coverage; npm run build` | 覆盖率 All files 100 stmts / 100 funcs / 100 lines（branch≈96.7）；BUILD_EXIT=0（index-3fgHODl_.js 655.07 kB，dist 已重建） |
 | 真机 | 47 条 API 断言 + 30 条网页断言 | 77/77 PASS |
 
+推送后 CI（GitHub Actions run 39570613038，commit 2347702）completed / success：web、test(ubuntu-latest)、test(windows-latest)、coverage、cross-build、benchmark、docker-build 全绿，condition-audit(manual) skipped。
+
 测试补写说明：T2（api 层）队友认领后 50 多分钟零落盘，Lead 收回写入权并亲自完成 `internal/api` 全部非测试代码 + `internal/api/profiles_test.go` 的 v2 重写（9 个 Test 覆盖 CRUD/层校验/来源过滤/跨来源 409/令牌绑定/订阅层拼装//api/convert 层参数/helper 单测），顺带修了两个真实 404 缺陷（PUT /api/groups 与 PUT /api/rules 不存在 id 时返回 500：subforge 层把 sql.ErrNoRows 翻成中文文案后不再包装，handler 判不到）。
 
 ### 15.6 未完成 / 不能下的结论（诚实边界）
