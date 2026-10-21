@@ -32,6 +32,7 @@ type profileBody struct {
 	SortOrder   int       `json:"sort_order"`
 	RuleLayers  *[]string `json:"rule_layers"`
 	GroupLayers *[]string `json:"group_layers"`
+	RuleSources *[]string `json:"rule_sources"`
 }
 
 // 合法层键。规则层与分组层共用一套键。
@@ -112,6 +113,46 @@ func (s *Server) validateProfileLayers(w http.ResponseWriter, r *http.Request, b
 	return ruleLayers, groupLayers, true
 }
 
+// maxRuleSources 是单个方案可绑定的规则源数量上限（契约 §1.2）。
+const maxRuleSources = 20
+
+// normalizeRuleSources 归一化方案绑定的规则源名：trim、丢空、去重保序、最多
+// maxRuleSources 个。不校验「源是否存在」：manifest 是文件、随时可变，
+// 存在性在订阅组装时以 warning 暴露（RuleSourceRules）。
+func normalizeRuleSources(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, name := range raw {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if len(out) > maxRuleSources {
+		out = out[:maxRuleSources]
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// normalizeProfileSourcesForJSON 保证响应里的 rule_sources 一定是数组：
+// 未绑定（nil）时输出 []，前端多选控件才能按数组统一处理，而不是 null。
+func normalizeProfileSourcesForJSON(p *subforge.Profile) {
+	if p == nil {
+		return
+	}
+	if p.RuleSources == nil {
+		p.RuleSources = []string{}
+	}
+}
+
 // profileNameByID 读出全部方案的 id→名称映射，用于回填令牌的 profile_name。
 func profileNameByID(ctx context.Context, m *subforge.Manager) (map[int64]string, error) {
 	profiles, err := m.ListProfiles(ctx)
@@ -177,6 +218,9 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 		if profiles == nil {
 			profiles = []subforge.Profile{}
 		}
+		for i := range profiles {
+			normalizeProfileSourcesForJSON(&profiles[i])
+		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles})
 	case http.MethodPost:
 		var body profileBody
@@ -197,6 +241,12 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 		if body.Enabled != nil {
 			enabled = *body.Enabled
 		}
+		// 规则源与层一样是「给了才写」：nil=不绑定，空数组=绑定空列表。
+		ruleSourcesProvided := body.RuleSources != nil
+		var normalizedRuleSources []string
+		if ruleSourcesProvided {
+			normalizedRuleSources = normalizeRuleSources(*body.RuleSources)
+		}
 		p, err := m.AddProfile(r.Context(), name, body.Description, body.Config, body.Pipeline, enabled, body.SortOrder)
 		if err != nil {
 			if isUniqueConstraintError(err) {
@@ -209,13 +259,30 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 		// 层配置单独写：AddProfile 只负责基本列，避免把「层」塞进多个函数签名。
 		if ruleLayers != nil || groupLayers != nil {
 			if err := m.SetProfileLayers(r.Context(), p.ID, ruleLayers, groupLayers); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", p.ID))
+					return
+				}
 				s.writeAPIError(w, r, http.StatusInternalServerError, err)
 				return
 			}
+		}
+		if ruleSourcesProvided {
+			if err := m.SetProfileRuleSources(r.Context(), p.ID, normalizedRuleSources); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", p.ID))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if ruleLayers != nil || groupLayers != nil || ruleSourcesProvided {
 			if fresh, err := m.GetProfile(r.Context(), p.ID); err == nil {
 				p = fresh
 			}
 		}
+		normalizeProfileSourcesForJSON(p)
 		s.writeJSON(w, http.StatusCreated, map[string]any{"profile": p})
 	default:
 		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/POST"))
@@ -239,6 +306,7 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return
 		}
+		normalizeProfileSourcesForJSON(p)
 		s.writeJSON(w, http.StatusOK, map[string]any{"profile": p})
 	case http.MethodPut:
 		var body profileBody
@@ -261,6 +329,12 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.Enabled != nil {
 			enabled = *body.Enabled
+		}
+		// 规则源与层一样是「给了才写」：nil=保持原绑定，空数组=清空绑定。
+		ruleSourcesProvided := body.RuleSources != nil
+		var normalizedRuleSources []string
+		if ruleSourcesProvided {
+			normalizedRuleSources = normalizeRuleSources(*body.RuleSources)
 		}
 		err := m.UpdateProfile(r.Context(), id, name, body.Description, body.Config, body.Pipeline, enabled, body.SortOrder)
 		if err != nil {
@@ -285,11 +359,23 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// 只带 rule_sources 的请求不能顺手清掉层：层有自己的 nil 语义，没给就保持原值。
+		if ruleSourcesProvided {
+			if err := m.SetProfileRuleSources(r.Context(), id, normalizedRuleSources); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
 		p, err := m.GetProfile(r.Context(), id)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
+		normalizeProfileSourcesForJSON(p)
 		s.writeJSON(w, http.StatusOK, map[string]any{"profile": p})
 	case http.MethodDelete:
 		// 删除前只拦「还有令牌绑着」：v2 的规则/分组是全局库，方案里没有内容可清，

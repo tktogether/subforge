@@ -43,6 +43,7 @@ type profileJSON struct {
 	SortOrder   int      `json:"sort_order"`
 	RuleLayers  []string `json:"rule_layers"`
 	GroupLayers []string `json:"group_layers"`
+	RuleSources []string `json:"rule_sources"`
 	RuleCount   int      `json:"rule_count"`
 	GroupCount  int      `json:"group_count"`
 }

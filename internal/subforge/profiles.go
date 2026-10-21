@@ -98,6 +98,12 @@ func (m *Manager) AddProxyGroupWithSource(ctx context.Context, name, gtype, rege
 	return m.db.AddProxyGroupWithSource(ctx, name, gtype, regex, url, interval, sortOrder, source)
 }
 
+// SetProfileRuleSources 设置方案绑定的规则源名；空切片 = 未绑定。
+// 目标方案不存在时返回 sql.ErrNoRows。
+func (m *Manager) SetProfileRuleSources(ctx context.Context, id int64, sources []string) error {
+	return m.db.SetProfileRuleSources(ctx, id, sources)
+}
+
 // --- 方案层（rule_layers / group_layers） ---
 
 // SetProfileLayers 设置方案启用的规则层与分组层及其顺序。

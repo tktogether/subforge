@@ -366,6 +366,8 @@ export interface Profile {
   enabled: boolean
   sort_order: number
   rule_layers: string[]
+  // 规则源（D-33）：方案绑定的规则源名；未绑定 = []（后端返回空数组，不是 null）。
+  rule_sources: string[]
   group_layers: string[]
   rule_count: number
   group_count: number
@@ -381,6 +383,8 @@ export interface ProfileInput {
   enabled?: boolean
   sort_order?: number
   rule_layers?: string[]
+  // 规则源（D-33）：绑定到方案的规则源名；缺省 = 不改（PUT），[] = 清空。
+  rule_sources?: string[]
   group_layers?: string[]
 }
 

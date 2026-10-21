@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/tktogether/subforge/internal/manifest"
 )
 
@@ -336,6 +338,104 @@ func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, erro
 		out = append(out, status)
 	}
 	return out, nil
+}
+
+// RuleSourceRules 读取给定规则源名们「当前版本」产物，并把产物解析成订阅用的规则行。
+// 它永远不返回 error：任何失败都降级为一条 warning，并在 rules 中跳过该源。
+// rules 按 names 顺序拼接（每个源内按产物顺序），warnings 同样按 names 顺序。
+func (m *Manager) RuleSourceRules(ctx context.Context, names []string) (rules []string, warnings []string) {
+	// 1) trim + 去重保序，丢弃空串；全空 -> 直接返回。
+	ordered := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		ordered = append(ordered, n)
+	}
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+
+	// 2) 读取全部规则源清单；清单读取失败整体降级。
+	sources, err := m.ListRuleSources(ctx)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("读取规则源清单失败：%v", err)}
+	}
+
+	// 3) 建 name -> RuleSourceStatus 映射。
+	byName := make(map[string]RuleSourceStatus, len(sources))
+	for _, st := range sources {
+		byName[st.Name] = st
+	}
+
+	// 4~5) 逐名解析产物。
+	for _, name := range ordered {
+		status, ok := byName[name]
+		if !ok {
+			warnings = append(warnings, fmt.Sprintf("规则源 %s 不存在，已跳过", name))
+			continue
+		}
+		if strings.TrimSpace(status.Latest) == "" {
+			warnings = append(warnings, fmt.Sprintf("规则源 %s 还没有产物（先在规则源页执行更新），已跳过", name))
+			continue
+		}
+
+		versionPath := filepath.Join(status.Dir, status.Latest)
+		b, rerr := os.ReadFile(versionPath)
+		if rerr != nil {
+			warnings = append(warnings, fmt.Sprintf("读取规则源 %s 的产物失败：%v，已跳过", name, rerr))
+			continue
+		}
+
+		ext := strings.ToLower(filepath.Ext(status.Latest))
+		var lines []string
+		switch ext {
+		case ".yaml", ".yml":
+			var doc struct {
+				Rules []string `yaml:"rules"`
+			}
+			if yerr := yaml.Unmarshal(b, &doc); yerr != nil || len(doc.Rules) == 0 {
+				warnings = append(warnings, fmt.Sprintf("规则源 %s 的产物里没有 rules 列表，已跳过", name))
+				continue
+			}
+			lines = doc.Rules
+		case ".txt", ".text":
+			lines = strings.Split(string(b), "\n")
+		default:
+			warnings = append(warnings, fmt.Sprintf("规则源 %s 的产物格式 %s 不支持内联到订阅，已跳过（请把规则源输出格式设为 yaml 或 text）", name, ext))
+			continue
+		}
+
+		// 5) 逐行清洗；统计并丢弃 FINAL/MATCH 兜底规则。
+		kept := make([]string, 0, len(lines))
+		dropped := 0
+		for _, raw := range lines {
+			rule := strings.TrimSpace(raw)
+			if rule == "" {
+				continue
+			}
+			if ext == ".txt" || ext == ".text" {
+				if strings.HasPrefix(rule, "#") {
+					continue
+				}
+			}
+			head := strings.ToUpper(strings.TrimSpace(strings.SplitN(rule, ",", 2)[0]))
+			if head == "FINAL" || head == "MATCH" {
+				dropped++
+				continue
+			}
+			kept = append(kept, rule)
+		}
+		if dropped > 0 {
+			warnings = append(warnings, fmt.Sprintf("规则源 %s 含 %d 条 FINAL/MATCH 兜底规则，已忽略", name, dropped))
+		}
+		rules = append(rules, kept...)
+	}
+
+	return rules, warnings
 }
 
 // UpdateRuleSources 执行一次全量更新，返回每个源的结果。

@@ -334,6 +334,48 @@ func TestApplyTemplate_DisableTemplateRules(t *testing.T) {
 	}
 }
 
+// TestApplyTemplateKeepsBaseTemplateWarnings 调用方已攒的告警不能被模板层覆盖掉：
+// 订阅侧会先塞「已用规则源产物替换模板规则：注入 N 条」这类提示，
+// 直接赋值成 sem.Warnings 会让用户在控制台看不到产物没生效的原因。
+func TestApplyTemplateKeepsBaseTemplateWarnings(t *testing.T) {
+	sem := config.Semantics{
+		Params: map[string][]string{},
+	}
+	base := Params{
+		Raw:              map[string][]string{},
+		TemplateWarnings: []string{"已用规则源产物替换模板规则：注入 2 条"},
+	}
+	p, err := ApplyTemplate(sem, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsWarning(p.TemplateWarnings, "已用规则源产物替换模板规则：注入 2 条") {
+		t.Fatalf("TemplateWarnings = %v，期望保留调用方已攒的告警", p.TemplateWarnings)
+	}
+	if len(p.TemplateWarnings) != 1 {
+		t.Fatalf("TemplateWarnings = %v，期望只有调用方那一条（模板本次没有告警）", p.TemplateWarnings)
+	}
+
+	// 模板层规则被停用时，告警文案要说明「被规则源产物替换」这条真实路径，
+	// 而不只是「方案未启用 template 层」。
+	sem2 := config.Semantics{Params: map[string][]string{}}
+	base2 := Params{
+		Raw:                  map[string][]string{},
+		DisableTemplateRules: true,
+		TemplateWarnings:     []string{"caller-warn"},
+	}
+	p2, err := ApplyTemplate(sem2, base2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsWarning(p2.TemplateWarnings, "caller-warn") {
+		t.Fatalf("TemplateWarnings = %v，期望保留 caller-warn", p2.TemplateWarnings)
+	}
+	if !containsWarning(p2.TemplateWarnings, "模板规则已跳过") {
+		t.Fatalf("TemplateWarnings = %v，期望含「模板规则已跳过」", p2.TemplateWarnings)
+	}
+}
+
 // containsWarning 判断告警里是否有包含子串的一条。
 func containsWarning(warns []string, sub string) bool {
 	for _, w := range warns {

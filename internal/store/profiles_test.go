@@ -470,11 +470,11 @@ func TestLegacyV018SchemaMigratesToV2(t *testing.T) {
 			t.Errorf("%s 不应有 profile_id，实际列：%v", tbl, cols)
 		}
 	}
-	// ②proxy_groups 补 source，profiles 补 rule_layers/group_layers
+	// ②proxy_groups 补 source，profiles 补 rule_layers/group_layers/rule_sources
 	if !tableColumns(t, d, "proxy_groups")["source"] {
 		t.Error("proxy_groups 缺少 source 列")
 	}
-	for _, col := range []string{"rule_layers", "group_layers"} {
+	for _, col := range []string{"rule_layers", "group_layers", "rule_sources"} {
 		if !tableColumns(t, d, "profiles")[col] {
 			t.Errorf("profiles 缺少 %s 列", col)
 		}

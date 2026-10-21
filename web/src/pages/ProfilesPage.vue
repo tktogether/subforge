@@ -20,6 +20,8 @@ interface LayerRow {
 // 层编辑器配置：规则层锁定 template 恒在末位，分组层可自由排序。
 interface LayerEditorConfig {
   testid: string
+  // 编辑器前缀（D-43）：行级 testid 拼上它，区分规则层/分组层，避免页面上出现重复 testid。
+  prefix: 'rule' | 'group'
   caption: string
   hint: string
   rows: LayerRow[]
@@ -47,6 +49,7 @@ const EMPTY_PROFILE: Profile = {
   enabled: true,
   sort_order: 0,
   rule_layers: [...LAYER_KEYS],
+  rule_sources: [],
   group_layers: [...LAYER_KEYS],
   rule_count: 0,
   group_count: 0,
@@ -55,6 +58,9 @@ const EMPTY_PROFILE: Profile = {
 const profiles = ref<Profile[]>([])
 const loading = ref(false)
 const error = ref('')
+
+// 规则源选项（D-33）：方案可绑定规则源；选项来自 GET /api/rule-sources 的 sources[].name。
+const ruleSourceOptions = ref<string[]>([])
 
 // editingId === 0 表示「新建」，否则为被编辑方案的 id。
 const editingId = ref(0)
@@ -66,6 +72,8 @@ const draft = ref({
   pipeline: '',
   enabled: true,
   sort_order: 0,
+  // 规则源（D-33）：方案绑定的规则源名列表；空 = 未绑定。
+  rule_sources: [] as string[],
 })
 
 // 两个层编辑器的行状态（顺序即优先级）。
@@ -81,6 +89,7 @@ const headers = [
   { key: 'pipeline', title: '管线' },
   { key: 'rule_layers', title: '规则层' },
   { key: 'group_layers', title: '分组层' },
+  { key: 'rule_sources', title: '规则源', sortable: false },
   { key: 'enabled', title: '启用' },
   { key: 'sort_order', title: '顺序' },
   { key: 'actions', title: '操作' },
@@ -148,6 +157,7 @@ function moveGroupLayer(index: number, delta: number): void {
 const layerEditors = computed<LayerEditorConfig[]>(() => [
   {
     testid: 'profile-rule-layers',
+    prefix: 'rule',
     caption: '规则层',
     hint: '规则层 = 按顺序拼接，先出现者优先；模板规则始终最后（MATCH/FINAL）。',
     rows: ruleLayers.value,
@@ -157,6 +167,7 @@ const layerEditors = computed<LayerEditorConfig[]>(() => [
   },
   {
     testid: 'profile-group-layers',
+    prefix: 'group',
     caption: '分组层',
     hint: '分组层 = 同名分组先出现者胜出；模板层 = INI 模板里的分组。',
     rows: groupLayers.value,
@@ -175,6 +186,17 @@ async function load(): Promise<void> {
     error.value = errorMessage(err)
   } finally {
     loading.value = false
+  }
+}
+
+// 规则源清单（D-33）：加载失败只降级成空选项，不影响方案页主功能（仍可编辑/保存其它字段）。
+async function loadRuleSourceOptions(): Promise<void> {
+  try {
+    const res: { sources?: { name: string }[] } = await endpoints.listRuleSources()
+    ruleSourceOptions.value = (res.sources ?? []).map((s) => s.name)
+  } catch {
+    // 规则源清单加载失败不阻断方案编辑：保留空选项，用户仍可保存其它字段
+    ruleSourceOptions.value = []
   }
 }
 
@@ -214,9 +236,12 @@ function openCreate(): void {
     pipeline: '',
     enabled: true,
     sort_order: 0,
+    rule_sources: [],
   }
   ruleLayers.value = defaultLayers()
   groupLayers.value = defaultLayers()
+  // 打开弹窗时重新拉一次规则源清单：清单可能已被规则源页改动。
+  void loadRuleSourceOptions()
   dialog.value = true
 }
 
@@ -229,9 +254,12 @@ function openEdit(row: Profile): void {
     pipeline: row.pipeline,
     enabled: row.enabled,
     sort_order: row.sort_order,
+    rule_sources: [...(row.rule_sources ?? [])],
   }
   ruleLayers.value = ruleRowsFrom(row.rule_layers)
   groupLayers.value = layersToRows(row.group_layers)
+  // 打开弹窗时重新拉一次规则源清单：清单可能已被规则源页改动。
+  void loadRuleSourceOptions()
   dialog.value = true
 }
 
@@ -250,6 +278,7 @@ async function save(): Promise<void> {
     enabled: draft.value.enabled,
     sort_order: draft.value.sort_order,
     rule_layers,
+    rule_sources: [...draft.value.rule_sources],
     group_layers,
   }
   try {
@@ -289,6 +318,7 @@ async function confirmDelete(): Promise<void> {
 }
 
 load()
+loadRuleSourceOptions()
 </script>
 
 <template>
@@ -343,6 +373,11 @@ load()
         </template>
         <template #item.group_layers="{ item }">
           <span data-testid="profile-group-layers-text">{{ layerText(item.group_layers) }}</span>
+        </template>
+        <template #item.rule_sources="{ item }">
+          <span :data-testid="'profile-rule-sources-text-' + item.id">
+            {{ (item.rule_sources ?? []).join('、') || '默认' }}
+          </span>
         </template>
         <template #item.enabled="{ item }">
           <span class="sf-status">
@@ -409,6 +444,19 @@ load()
             class="mb-2"
             data-testid="profile-pipeline"
           />
+          <v-select
+            v-model="draft.rule_sources"
+            :items="ruleSourceOptions"
+            data-testid="profile-rule-sources"
+            label="绑定规则源（产物内联进订阅，并替换模板规则）"
+            multiple
+            chips
+            closable-chips
+            variant="outlined"
+            hint="可多选；按顺序拼接。规则源页执行更新生成产物后才会生效；产物里的 FINAL/MATCH 会被忽略。"
+            persistent-hint
+            class="mb-3"
+          />
           <v-switch
             v-model="draft.enabled"
             label="启用"
@@ -435,13 +483,13 @@ load()
               v-for="(row, index) in editor.rows"
               :key="row.key"
               class="sf-layer-row"
-              :data-testid="'layer-row-' + row.key"
+              :data-testid="editor.prefix + '-layer-row-' + row.key"
             >
               <v-checkbox
                 v-model="row.enabled"
                 hide-details
                 density="compact"
-                :data-testid="'layer-toggle-' + row.key"
+                :data-testid="editor.prefix + '-layer-toggle-' + row.key"
               />
               <span class="sf-layer-name">{{ LAYER_LABELS[row.key] }}</span>
               <span class="sf-layer-priority">{{ layerPriority(editor.rows, row.key) }}</span>
@@ -450,7 +498,7 @@ load()
                 size="x-small"
                 variant="text"
                 :disabled="index === 0 || (editor.lockTemplate && row.key === 'template')"
-                :data-testid="'layer-up-' + row.key"
+                :data-testid="editor.prefix + '-layer-up-' + row.key"
                 @click="editor.move(index, -1)"
               />
               <v-btn
@@ -458,7 +506,7 @@ load()
                 size="x-small"
                 variant="text"
                 :disabled="index === editor.rows.length - 1 || (editor.lockTemplate && row.key === 'template')"
-                :data-testid="'layer-down-' + row.key"
+                :data-testid="editor.prefix + '-layer-down-' + row.key"
                 @click="editor.move(index, 1)"
               />
               <span v-if="editor.note !== '' && row.key === 'template'" class="sf-layer-note">

@@ -14,6 +14,7 @@ vi.mock('../api/endpoints', () => ({
     createProfile: vi.fn(),
     updateProfile: vi.fn(),
     deleteProfile: vi.fn(),
+    listRuleSources: vi.fn(),
   },
 }))
 
@@ -26,6 +27,7 @@ interface Draft {
   pipeline: string
   enabled: boolean
   sort_order: number
+  rule_sources: string[]
 }
 
 interface ProfilesPageVm {
@@ -51,11 +53,23 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
     enabled: true,
     sort_order: 3,
     rule_layers: [...DEFAULT_LAYERS],
+    rule_sources: [] as string[],
     group_layers: [...DEFAULT_LAYERS],
     rule_count: 2,
     group_count: 1,
     ...overrides,
   }
+}
+
+// 页面里有多个 VSelect（表格底部的每页条数），这里按 data-testid 精确挑出规则源多选框。
+function ruleSourceSelect(w: ReturnType<typeof mountPage>) {
+  const found = w
+    .findAllComponents({ name: 'VSelect' })
+    .find((s) => s.attributes('data-testid') === 'profile-rule-sources')
+  if (!found) {
+    throw new Error('找不到规则源多选框')
+  }
+  return found
 }
 
 // v-dialog 的内容默认惰性渲染，测试里换成内联 stub 让弹窗内容直接可查。
@@ -81,6 +95,10 @@ describe('ProfilesPage', () => {
     notifyState.text = ''
     notifyState.kind = 'ok'
     ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    // 规则源清单默认返回「无 sources 字段」，覆盖前端 `res.sources ?? []` 的兜底分支。
+    const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
+    listSources.mockReset()
+    listSources.mockResolvedValue({})
   })
 
   it('渲染方案表格：模板/管线空值显示默认、模板超长截断、启用停用、顺序>1e12 显示未设置、层列顺序', async () => {
@@ -174,16 +192,16 @@ describe('ProfilesPage', () => {
     const groupBox = w.find('[data-testid="profile-group-layers"]')
     expect(ruleBox.exists()).toBe(true)
     expect(groupBox.exists()).toBe(true)
-    expect(ruleBox.find('[data-testid="layer-row-custom"]').exists()).toBe(true)
-    expect(ruleBox.find('[data-testid="layer-row-template"]').exists()).toBe(true)
-    expect(ruleBox.find('[data-testid="layer-row-custom"] .sf-layer-priority').text()).toBe('优先级 1')
-    expect(ruleBox.find('[data-testid="layer-row-airport"] .sf-layer-priority').text()).toBe('优先级 2')
-    expect(ruleBox.find('[data-testid="layer-row-template"] .sf-layer-priority').text()).toBe('优先级 3')
+    expect(ruleBox.find('[data-testid="rule-layer-row-custom"]').exists()).toBe(true)
+    expect(ruleBox.find('[data-testid="rule-layer-row-template"]').exists()).toBe(true)
+    expect(ruleBox.find('[data-testid="rule-layer-row-custom"] .sf-layer-priority').text()).toBe('优先级 1')
+    expect(ruleBox.find('[data-testid="rule-layer-row-airport"] .sf-layer-priority').text()).toBe('优先级 2')
+    expect(ruleBox.find('[data-testid="rule-layer-row-template"] .sf-layer-priority').text()).toBe('优先级 3')
     // 分组层不受「模板恒最后」约束，template 行上下移可用，也不显示模板提示。
-    const gTpl = groupBox.find('[data-testid="layer-row-template"]')
+    const gTpl = groupBox.find('[data-testid="group-layer-row-template"]')
     // 分组层不锁模板：template 行上移可用（只在末位时才是下移边界）。
-    expect(gTpl.find('[data-testid="layer-up-template"]').attributes('disabled')).toBeUndefined()
-    expect(gTpl.find('[data-testid="layer-down-template"]').attributes('disabled')).not.toBeUndefined()
+    expect(gTpl.find('[data-testid="group-layer-up-template"]').attributes('disabled')).toBeUndefined()
+    expect(gTpl.find('[data-testid="group-layer-down-template"]').attributes('disabled')).not.toBeUndefined()
     expect(groupBox.text()).not.toContain('模板规则始终最后（MATCH/FINAL）')
 
     await flushPromises()
@@ -198,6 +216,7 @@ describe('ProfilesPage', () => {
       enabled: false,
       sort_order: 9,
       rule_layers: ['custom', 'airport', 'template'],
+      rule_sources: [],
       group_layers: ['custom', 'airport', 'template'],
     })
     expect(notifyState.kind).toBe('ok')
@@ -214,9 +233,9 @@ describe('ProfilesPage', () => {
 
     // 先关掉规则层的全部三层 → 保存被阻止。
     const ruleBox = w.find('[data-testid="profile-rule-layers"]')
-    await ruleBox.find('[data-testid="layer-toggle-custom"] input').setValue(false)
-    await ruleBox.find('[data-testid="layer-toggle-airport"] input').setValue(false)
-    await ruleBox.find('[data-testid="layer-toggle-template"] input').setValue(false)
+    await ruleBox.find('[data-testid="rule-layer-toggle-custom"] input').setValue(false)
+    await ruleBox.find('[data-testid="rule-layer-toggle-airport"] input').setValue(false)
+    await ruleBox.find('[data-testid="rule-layer-toggle-template"] input').setValue(false)
     await flushPromises()
 
     await w.find('[data-testid="profile-save"]').trigger('click')
@@ -227,13 +246,13 @@ describe('ProfilesPage', () => {
     expect(notifyState.text).toBe('至少启用一层')
 
     // 规则层恢复全开，再关掉分组层的全部三层 → 同样被阻止。
-    await ruleBox.find('[data-testid="layer-toggle-custom"] input').setValue(true)
-    await ruleBox.find('[data-testid="layer-toggle-airport"] input').setValue(true)
-    await ruleBox.find('[data-testid="layer-toggle-template"] input').setValue(true)
+    await ruleBox.find('[data-testid="rule-layer-toggle-custom"] input').setValue(true)
+    await ruleBox.find('[data-testid="rule-layer-toggle-airport"] input').setValue(true)
+    await ruleBox.find('[data-testid="rule-layer-toggle-template"] input').setValue(true)
     const groupBox = w.find('[data-testid="profile-group-layers"]')
-    await groupBox.find('[data-testid="layer-toggle-custom"] input').setValue(false)
-    await groupBox.find('[data-testid="layer-toggle-airport"] input').setValue(false)
-    await groupBox.find('[data-testid="layer-toggle-template"] input').setValue(false)
+    await groupBox.find('[data-testid="group-layer-toggle-custom"] input').setValue(false)
+    await groupBox.find('[data-testid="group-layer-toggle-airport"] input').setValue(false)
+    await groupBox.find('[data-testid="group-layer-toggle-template"] input').setValue(false)
     await flushPromises()
 
     await w.find('[data-testid="profile-save"]').trigger('click')
@@ -257,17 +276,17 @@ describe('ProfilesPage', () => {
 
     // airport 在前（优先级 1），custom 在后，template 应被挪到末尾且未启用。
     const ruleBox = w.find('[data-testid="profile-rule-layers"]')
-    const ruleRows = ruleBox.findAll('[data-testid^="layer-row-"]')
+    const ruleRows = ruleBox.findAll('[data-testid^="rule-layer-row-"]')
     expect(ruleRows).toHaveLength(3)
-    expect(ruleRows[0].attributes('data-testid')).toBe('layer-row-airport')
+    expect(ruleRows[0].attributes('data-testid')).toBe('rule-layer-row-airport')
     expect(ruleRows[0].find('.sf-layer-priority').text()).toBe('优先级 1')
-    expect(ruleRows[1].attributes('data-testid')).toBe('layer-row-custom')
+    expect(ruleRows[1].attributes('data-testid')).toBe('rule-layer-row-custom')
     expect(ruleRows[1].find('.sf-layer-priority').text()).toBe('优先级 2')
-    expect(ruleRows[2].attributes('data-testid')).toBe('layer-row-template')
+    expect(ruleRows[2].attributes('data-testid')).toBe('rule-layer-row-template')
     expect(ruleRows[2].find('.sf-layer-priority').text()).toBe('未启用')
     // 模板规则始终最后，上下移按钮 disabled。
-    const upTpl = ruleRows[2].find('[data-testid="layer-up-template"]')
-    const downTpl = ruleRows[2].find('[data-testid="layer-down-template"]')
+    const upTpl = ruleRows[2].find('[data-testid="rule-layer-up-template"]')
+    const downTpl = ruleRows[2].find('[data-testid="rule-layer-down-template"]')
     expect(upTpl.attributes('disabled')).not.toBeUndefined()
     expect(downTpl.attributes('disabled')).not.toBeUndefined()
     expect(ruleRows[2].text()).toContain('模板规则始终最后（MATCH/FINAL）')
@@ -295,10 +314,10 @@ describe('ProfilesPage', () => {
     await flushPromises()
 
     const ruleBox = w.find('[data-testid="profile-rule-layers"]')
-    const upCustom = ruleBox.find('[data-testid="layer-row-custom"]').find('[data-testid="layer-up-custom"]')
+    const upCustom = ruleBox.find('[data-testid="rule-layer-row-custom"]').find('[data-testid="rule-layer-up-custom"]')
     expect(upCustom.attributes('disabled')).not.toBeUndefined()
 
-    await ruleBox.find('[data-testid="layer-row-airport"]').find('[data-testid="layer-up-airport"]').trigger('click')
+    await ruleBox.find('[data-testid="rule-layer-row-airport"]').find('[data-testid="rule-layer-up-airport"]').trigger('click')
     await flushPromises()
     expect(endpoints.updateProfile).not.toHaveBeenCalled()
 
@@ -322,7 +341,7 @@ describe('ProfilesPage', () => {
     await flushPromises()
 
     const groupBox = w.find('[data-testid="profile-group-layers"]')
-    await groupBox.find('[data-testid="layer-row-custom"]').find('[data-testid="layer-down-custom"]').trigger('click')
+    await groupBox.find('[data-testid="group-layer-row-custom"]').find('[data-testid="group-layer-down-custom"]').trigger('click')
     await flushPromises()
 
     await w.find('[data-testid="profile-save"]').trigger('click')
@@ -346,18 +365,18 @@ describe('ProfilesPage', () => {
     await flushPromises()
 
     const ruleBox = w.find('[data-testid="profile-rule-layers"]')
-    const rows = ruleBox.findAll('[data-testid^="layer-row-"]')
-    expect(rows[0].attributes('data-testid')).toBe('layer-row-custom')
-    expect(rows[1].attributes('data-testid')).toBe('layer-row-airport')
-    expect(rows[2].attributes('data-testid')).toBe('layer-row-template')
+    const rows = ruleBox.findAll('[data-testid^="rule-layer-row-"]')
+    expect(rows[0].attributes('data-testid')).toBe('rule-layer-row-custom')
+    expect(rows[1].attributes('data-testid')).toBe('rule-layer-row-airport')
+    expect(rows[2].attributes('data-testid')).toBe('rule-layer-row-template')
     // airport 不在后端数组里 → 未启用；template 被挪到末位且仍启用。
     expect(rows[1].find('.sf-layer-priority').text()).toBe('未启用')
     expect(rows[2].find('.sf-layer-priority').text()).toBe('优先级 2')
     // 分组层数组为空 → 按默认三层全开回填。
     const groupBox = w.find('[data-testid="profile-group-layers"]')
-    expect(groupBox.find('[data-testid="layer-row-custom"] .sf-layer-priority').text()).toBe('优先级 1')
-    expect(groupBox.find('[data-testid="layer-row-airport"] .sf-layer-priority').text()).toBe('优先级 2')
-    expect(groupBox.find('[data-testid="layer-row-template"] .sf-layer-priority').text()).toBe('优先级 3')
+    expect(groupBox.find('[data-testid="group-layer-row-custom"] .sf-layer-priority').text()).toBe('优先级 1')
+    expect(groupBox.find('[data-testid="group-layer-row-airport"] .sf-layer-priority').text()).toBe('优先级 2')
+    expect(groupBox.find('[data-testid="group-layer-row-template"] .sf-layer-priority').text()).toBe('优先级 3')
 
     await w.find('[data-testid="profile-save"]').trigger('click')
     await flushPromises()
@@ -544,4 +563,129 @@ describe('ProfilesPage', () => {
     vm.moveGroupLayer(0, 1)
     expect(vm.layerKeys(vm.groupLayers)).toEqual(['airport', 'custom', 'template'])
   })
-})
+  it('新建方案：选中规则源后保存提交 rule_sources', async () => {
+    const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
+    listSources.mockResolvedValue({ sources: [{ name: 'src1' }, { name: 'src2' }] })
+    ;(endpoints.createProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile({ id: 7 }))
+    const w = mountPage()
+    await flushPromises()
+
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+
+    // 弹窗里的规则源多选框，选项来自 GET /api/rule-sources 的 sources[].name。
+    expect(w.find('[data-testid="profile-rule-sources"]').exists()).toBe(true)
+    const select = ruleSourceSelect(w)
+    expect(select.props('items')).toEqual(['src1', 'src2'])
+
+    // 勾选 src1（等价于在多选框里选中一项）。
+    ;(select.vm as unknown as { $emit: (e: string, ...a: unknown[]) => void }).$emit('update:modelValue', ['src1'])
+    await flushPromises()
+    const vm = w.vm as unknown as ProfilesPageVm
+    expect(vm.draft.rule_sources).toEqual(['src1'])
+    // 已选项以 chips 展示。
+    expect(w.findAll('.v-chip').map((c) => c.text()).join('|')).toContain('src1')
+
+    await w.find('[data-testid="profile-name"]').find('input').setValue('带规则源方案')
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+
+    expect(endpoints.createProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '带规则源方案', rule_sources: ['src1'] }),
+    )
+    expect(notifyState.text).toBe('已保存')
+  })
+
+  it('编辑方案：回填已绑定的规则源并原样提交；旧数据缺字段回填为空数组', async () => {
+    const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
+    listSources.mockResolvedValue({ sources: [{ name: 'a' }, { name: 'b' }] })
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeProfile({ id: 9, name: '已绑定方案', rule_sources: ['a', 'b'] }),
+      makeProfile({ id: 10, name: '旧方案', rule_sources: undefined }),
+    ])
+    ;(endpoints.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile())
+    const w = mountPage()
+    await flushPromises()
+
+    await w.findAll('[data-testid="profile-edit"]')[0].trigger('click')
+    await flushPromises()
+
+    const vm = w.vm as unknown as ProfilesPageVm
+    expect(vm.draft.rule_sources).toEqual(['a', 'b'])
+    const select = ruleSourceSelect(w)
+    expect(select.props('modelValue')).toEqual(['a', 'b'])
+    const chipText = w.findAll('.v-chip').map((c) => c.text()).join('|')
+    expect(chipText).toContain('a')
+    expect(chipText).toContain('b')
+
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.updateProfile).toHaveBeenCalledWith(9, expect.objectContaining({ rule_sources: ['a', 'b'] }))
+
+    // 旧数据没有 rule_sources 字段时回填空数组，不崩。
+    await w.findAll('[data-testid="profile-edit"]')[1].trigger('click')
+    await flushPromises()
+    expect(vm.draft.rule_sources).toEqual([])
+  })
+
+  it('列表新增规则源列：未绑定显示「默认」，多值用「、」连接', async () => {
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeProfile({ id: 21, name: '无源', rule_sources: [] }),
+      makeProfile({ id: 22, name: '多源', rule_sources: ['src1', 'src2'] }),
+      makeProfile({ id: 23, name: '旧数据', rule_sources: undefined }),
+    ])
+    const w = mountPage()
+    await flushPromises()
+
+    expect(w.text()).toContain('规则源')
+    expect(w.find('[data-testid="profile-rule-sources-text-21"]').text().trim()).toBe('默认')
+    expect(w.find('[data-testid="profile-rule-sources-text-22"]').text().trim()).toBe('src1、src2')
+    expect(w.find('[data-testid="profile-rule-sources-text-23"]').text().trim()).toBe('默认')
+  })
+
+  it('D-43：层编辑器行级 testid 按编辑器前缀去重（rule-layer-* / group-layer-*），无裸 layer-*', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+
+    expect(w.find('[data-testid="rule-layer-row-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="group-layer-row-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="layer-row-custom"]').exists()).toBe(false)
+    expect(w.find('[data-testid="rule-layer-toggle-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="group-layer-toggle-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="layer-toggle-custom"]').exists()).toBe(false)
+    expect(w.find('[data-testid="rule-layer-up-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="group-layer-up-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="layer-up-custom"]').exists()).toBe(false)
+    expect(w.find('[data-testid="rule-layer-down-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="group-layer-down-custom"]').exists()).toBe(true)
+    expect(w.find('[data-testid="layer-down-custom"]').exists()).toBe(false)
+  })
+
+  it('规则源清单加载失败：不影响主功能，弹窗可开、选项为空、仍可保存方案', async () => {
+    const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
+    listSources.mockRejectedValue(new Error('规则源清单不可用'))
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([makeProfile({ id: 31 })])
+    ;(endpoints.createProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile({ id: 31 }))
+    const w = mountPage()
+    await flushPromises()
+
+    // 页面照常渲染：列表加载没有被规则源接口拖垮。
+    expect(w.find('[data-testid="profile-table"]').exists()).toBe(true)
+
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as unknown as ProfilesPageVm
+    expect(vm.dialog).toBe(true)
+    expect(ruleSourceSelect(w).props('items')).toEqual([])
+
+    await w.find('[data-testid="profile-name"]').find('input').setValue('兜底方案')
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+
+    expect(endpoints.createProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '兜底方案', rule_sources: [] }),
+    )
+    expect(notifyState.text).toBe('已保存')
+  })})

@@ -25,6 +25,9 @@ type Profile struct {
 	// 空串解析为 nil，由调用方按契约补默认三层。
 	RuleLayers  []string `json:"rule_layers"`
 	GroupLayers []string `json:"group_layers"`
+	// RuleSources 是方案绑定的规则源名列表（规则工厂 manifest 的 source 名），
+	// 库内以 JSON 文本保存（编码同 rule_layers）；空串解析为 nil = 未绑定。
+	RuleSources []string `json:"rule_sources"`
 	// RuleCount / GroupCount 是按「已启用层」实时统计的条数，由查询后填充。
 	RuleCount  int       `json:"rule_count"`
 	GroupCount int       `json:"group_count"`
@@ -38,6 +41,7 @@ type Profile struct {
 const profileSelectCols = `SELECT p.id, p.name, p.description, p.config, p.pipeline, p.enabled, p.sort_order,
        COALESCE(p.rule_layers, ''),
        COALESCE(p.group_layers, ''),
+       COALESCE(p.rule_sources, ''),
        p.created_at, p.updated_at
 FROM profiles p`
 
@@ -46,13 +50,14 @@ func scanProfile(row interface {
 	Scan(dest ...any) error
 }) (Profile, error) {
 	var p Profile
-	var ruleLayers, groupLayers string
+	var ruleLayers, groupLayers, ruleSources string
 	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Config, &p.Pipeline, &p.Enabled, &p.SortOrder,
-		&ruleLayers, &groupLayers, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&ruleLayers, &groupLayers, &ruleSources, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return Profile{}, err
 	}
 	p.RuleLayers = parseLayerList(ruleLayers)
 	p.GroupLayers = parseLayerList(groupLayers)
+	p.RuleSources = parseLayerList(ruleSources)
 	return p, nil
 }
 
@@ -233,6 +238,30 @@ func (d *DB) CreateSubTokenWithProfile(ctx context.Context, token, name, target,
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		token, name, target, pipeline, configName, include, exclude, profileID)
 	return err
+}
+
+// SetProfileRuleSources 保存方案绑定的规则源名；空数组落库为 ""（空串 = 未绑定）。
+// 只更新 rule_sources 一列：PUT 只带 rule_sources 时不得改写 rule_layers / group_layers。
+// 目标不存在时返回 sql.ErrNoRows。
+func (d *DB) SetProfileRuleSources(ctx context.Context, id int64, sources []string) error {
+	sourcesJSON, err := marshalLayerList(sources)
+	if err != nil {
+		return err
+	}
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE profiles SET rule_sources = ?, updated_at = ? WHERE id = ?",
+		sourcesJSON, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // ProfileExists 报告 id 对应的方案是否存在（API 层做 400 校验用）。

@@ -739,9 +739,12 @@ func migrate(db *sql.DB) error {
 	// v2：方案层顺序列（profiles.rule_layers / group_layers），JSON 文本数组，
 	// 空串 = 默认三层。与 rules/proxy_groups 一样走 ALTER 幂等补齐，
 	// 保证「新库/老库同一条加列路径」，列定义只有一处事实源。
+	// rule_sources 同为 JSON 文本数组：方案绑定的规则源名（空串 = 未绑定），
+	// 订阅时把这些规则源「当前版本」产物内联进订阅并替换模板规则。
 	for _, c := range []struct{ col, decl string }{
 		{"rule_layers", "TEXT NOT NULL DEFAULT ''"},
 		{"group_layers", "TEXT NOT NULL DEFAULT ''"},
+		{"rule_sources", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := addColumnIfMissing(db, "profiles", c.col, c.decl); err != nil {
 			return fmt.Errorf("迁移 profiles.%s: %w", c.col, err)

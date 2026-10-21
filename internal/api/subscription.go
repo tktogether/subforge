@@ -1003,6 +1003,19 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		renderRules = append(renderRules, line)
 	}
 
+	// 规则源产物：按方案的 rule_sources 顺序读各源的「当前版本」产物并内联进订阅。
+	// 注入成功（>0 条）时替换模板规则：模板规则里的 MATCH 会排在注入规则之前，
+	// 不替换的话产物规则永远命中不到。注入 0 条（源缺失/无产物/格式不支持）时
+	// 保留模板规则，warning 只是可见提示，不阻断订阅。
+	var sourceRules, sourceWarns []string
+	if profile != nil && len(profile.RuleSources) > 0 {
+		sourceRules, sourceWarns = m.RuleSourceRules(r.Context(), profile.RuleSources)
+		if len(sourceRules) > 0 {
+			renderRules = append(renderRules, sourceRules...)
+			sourceWarns = append(sourceWarns, fmt.Sprintf("已用规则源产物替换模板规则：注入 %d 条", len(sourceRules)))
+		}
+	}
+
 	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
 	params := convert.Params{
 		Target:   target,
@@ -1015,8 +1028,10 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		Include:  includeList,
 		Exclude:  excludeList,
 		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
-		DisableTemplateRules:  !hasLayer(ruleLayers, "template"),
+		// 规则源产物注入后模板规则必须整层停用，否则产物规则排在模板 MATCH 之后全成死规则。
+		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,
 		DisableTemplateGroups: !hasLayer(groupLayers, "template"),
+		TemplateWarnings:      sourceWarns,
 	}
 	result, err := s.engine.Run(r.Context(), params)
 	if err != nil {

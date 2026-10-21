@@ -42,7 +42,9 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	// 展开完成前 TemplateRules 保留，expandRemoteRulesets 会就地替换。
 	p.TemplateRules = sem.RuleItems
 	p.TemplateRemoteRulesets = sem.RemoteRulesets
-	p.TemplateWarnings = sem.Warnings
+	// 告警是「追加」语义而不是覆盖：调用方（订阅）已经攒了规则源产物注入之类的
+	// 提示，直接赋值会把它们静默丢掉——控制台看不见，用户只看到产物没生效。
+	p.TemplateWarnings = append(append([]string{}, base.TemplateWarnings...), sem.Warnings...)
 	// 命名管线只由模板声明（[pipeline:<name>] 段落），请求侧用 pipeline=<name> 选一条。
 	p.Pipelines = sem.PipelineMap()
 	// 结构化字段与原始参数同一套规则：请求侧写了就用请求侧的，否则用模板的。
@@ -62,7 +64,7 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 		p.TemplateWarnings = append(p.TemplateWarnings, "订阅方案未启用 template 层：模板分组已跳过")
 	}
 	if p.DisableTemplateRules {
-		p.TemplateWarnings = append(p.TemplateWarnings, "订阅方案未启用 template 层：模板规则已跳过")
+		p.TemplateWarnings = append(p.TemplateWarnings, "模板规则已跳过：订阅方案未启用 template 层，或规则源产物已替换模板规则")
 	}
 	p.Groups = mergeGroups(base.Groups, templateGroups)
 	// 结构化规则（控制台「规则」页启用的规则）同样要带过来：ParseMulti 只认
