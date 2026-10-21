@@ -34,6 +34,9 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	// Raw 里没有的字段需要手工带过来：请求头从不进 query，文件列表只有 CLI 入口会填。
 	p.Headers = base.Headers
 	p.Files = base.Files
+	// 模板层开关是调用方（API/CLI）直接赋值的结构化字段，同样不在 Raw 里。
+	p.DisableTemplateRules = base.DisableTemplateRules
+	p.DisableTemplateGroups = base.DisableTemplateGroups
 	// 规则流不合并到 Rules：模板里声明的远程规则集要由 Engine 拉取后按原位置展开，
 	// 拆成行再接上来会让展开出的规则落到模板的 MATCH 之后、变成永远命中不到的死规则。
 	// 展开完成前 TemplateRules 保留，expandRemoteRulesets 会就地替换。
@@ -48,10 +51,20 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	if p.NodePref.Empty() {
 		p.NodePref = sem.NodePref
 	}
-	p.Groups = base.Groups
-	if len(p.Groups) == 0 {
-		p.Groups = sem.Groups
+	// 分组：高优先层（base.Groups，来自全局分组库并按方案层顺序排好）在前，
+	// 模板分组只补不重名的。旧实现是「base 非空就整体替换模板分组」，用户新建
+	// 一个分组就会丢掉模板的几十个分组（D-36），这里改成合并：同名保留高优先层的定义。
+	var templateGroups []render.Group
+	if !base.DisableTemplateGroups {
+		templateGroups = sem.Groups
 	}
+	if p.DisableTemplateGroups {
+		p.TemplateWarnings = append(p.TemplateWarnings, "订阅方案未启用 template 层：模板分组已跳过")
+	}
+	if p.DisableTemplateRules {
+		p.TemplateWarnings = append(p.TemplateWarnings, "订阅方案未启用 template 层：模板规则已跳过")
+	}
+	p.Groups = mergeGroups(base.Groups, templateGroups)
 	// 结构化规则（控制台「规则」页启用的规则）同样要带过来：ParseMulti 只认
 	// Raw 里的 rules= 参数，base.Rules 是调用方直接赋值给的，不显式合并就会
 	// 被模板路径静默丢掉——表现为「规则页明明启用了，订阅里一条都没有」。
@@ -59,7 +72,33 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	if len(base.Rules) > 0 {
 		p.Rules = append(append([]string{}, base.Rules...), p.Rules...)
 	}
+	// 模板层被关闭时连规则流一起丢掉：TemplateRules 会在 Engine 里被展开成规则行
+	// 追加到 p.Rules 末尾，不清空的话「不用模板」的方案仍会带上模板的 MATCH。
+	if base.DisableTemplateRules {
+		p.TemplateRules = nil
+		p.TemplateRemoteRulesets = nil
+	}
 	return p, nil
+}
+
+// mergeGroups 按名称合并两组代理分组：先出现的优先，重名只保留第一份定义。
+// 空名字的分组直接丢掉——渲染器不接受无名分组，留着只会在产物里生成 null 项。
+func mergeGroups(high, low []render.Group) []render.Group {
+	if len(high) == 0 && len(low) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(high)+len(low))
+	out := make([]render.Group, 0, len(high)+len(low))
+	for _, list := range [][]render.Group{high, low} {
+		for _, g := range list {
+			if g.Name == "" || seen[g.Name] {
+				continue
+			}
+			seen[g.Name] = true
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // ResolveGroups 把代理组成员里的正则展开成实际节点名。

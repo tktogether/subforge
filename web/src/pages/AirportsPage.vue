@@ -5,7 +5,6 @@ import {
   type Airport,
   type AirportInput,
   type ImportRulesOutcome,
-  type Profile,
   type SubscheckResult,
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
@@ -195,30 +194,14 @@ async function refreshOne(row: AirportRow): Promise<void> {
   }
 }
 
-// 方案绑定：导入规则弹窗（契约 §3.6）。profiles 拉取失败降级为「只有未分配」，
-// 不阻塞机场列表与既有导入行为。
-const profiles = ref<Profile[]>([])
+// 导入规则弹窗（契约 v2 §6.4）：规则与分组已是全局库，导入时不再选方案；
+// 导入的规则来源固定为 airport:<机场名>，只保留「自动创建缺失的目标分组」。
 const importDialog = ref(false)
 const importTarget = ref<AirportRow | null>(null)
-const importProfileId = ref(0)
 const importCreateGroups = ref(true)
-
-const importProfileOptions = computed(() => [
-  { title: '未分配', value: 0 },
-  ...profiles.value.map((p) => ({ title: p.name, value: p.id })),
-])
-
-async function loadProfiles(): Promise<void> {
-  try {
-    profiles.value = await endpoints.listProfiles()
-  } catch {
-    profiles.value = []
-  }
-}
 
 function openImportDialog(row: AirportRow): void {
   importTarget.value = row
-  importProfileId.value = 0
   importCreateGroups.value = true
   importDialog.value = true
 }
@@ -231,7 +214,6 @@ async function confirmImportRules(): Promise<void> {
   }
   try {
     const r = await endpoints.importAirportRules(row.id, {
-      profile_id: importProfileId.value,
       create_groups: importCreateGroups.value,
     })
     let text = '已导入规则：新增 ' + r.rules_added + '，跳过 ' + r.rules_skipped
@@ -318,7 +300,6 @@ function relativeTime(ts: number): string {
 onMounted(() => {
   void load()
   void loadSettings()
-  void loadProfiles()
   void restoreLastCheck()
 })
 
@@ -475,11 +456,10 @@ async function restoreLastCheck(): Promise<void> {
       <v-card>
         <v-card-title>导入规则{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
         <v-card-text>
-          <v-select v-model="importProfileId" :items="importProfileOptions" label="方案" data-testid="import-rules-profile"></v-select>
           <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组（select，匹配全部节点）"
             data-testid="import-rules-create-groups" density="compact"></v-checkbox>
           <div class="text-medium-emphasis" data-testid="import-rules-hint">
-            选择方案后，导入的规则只属于该方案。
+            导入的规则来源固定为本机场（airport:机场名），在「规则」页按来源筛选即可查看。
           </div>
         </v-card-text>
         <v-card-actions>

@@ -22,8 +22,6 @@ vi.mock('../api/endpoints', () => ({
     rejectSuggestion: vi.fn(),
     applySuggestions: vi.fn(),
     updateRuleProvider: vi.fn(),
-    listProfiles: vi.fn(),
-    moveRules: vi.fn(),
   },
 }))
 
@@ -38,8 +36,6 @@ const confirmSuggestionMock = endpoints.confirmSuggestion as unknown as ReturnTy
 const rejectSuggestionMock = endpoints.rejectSuggestion as unknown as ReturnType<typeof vi.fn>
 const applySuggestionsMock = endpoints.applySuggestions as unknown as ReturnType<typeof vi.fn>
 const updateRuleProviderMock = endpoints.updateRuleProvider as unknown as ReturnType<typeof vi.fn>
-const listProfilesMock = endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>
-const moveRulesMock = endpoints.moveRules as unknown as ReturnType<typeof vi.fn>
 
 describe('RulesPage', () => {
   beforeEach(() => {
@@ -54,8 +50,6 @@ describe('RulesPage', () => {
     rejectSuggestionMock.mockResolvedValue({ ok: true })
     applySuggestionsMock.mockResolvedValue({ applied: 0 })
     updateRuleProviderMock.mockResolvedValue({ ok: true })
-    listProfilesMock.mockResolvedValue([])
-    moveRulesMock.mockResolvedValue({ updated: 0 })
   })
 
   it('onMounted 加载三块数据', async () => {
@@ -105,12 +99,15 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  it('导入候选：选中启用/禁用 + 启用本机场全部', async () => {
+  it('导入候选：选中启用/禁用 + 按来源整批启用', async () => {
     listRulesMock.mockResolvedValue([
       { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' },
       { id: 2, rule_type: 't2', rule_param: 'p2', rule_config: 5, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:x' },
     ])
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceFilter: string | null }
+    vm.sourceFilter = 'airport:x'
     await flushPromises()
     // switch to tab 2
     const tabs = w.findAll('.v-tab')
@@ -122,13 +119,14 @@ describe('RulesPage', () => {
     await flushPromises()
     const enableBtn = w.findAll('button').find((b) => b.text().includes('启用选中'))
     const disableBtn = w.findAll('button').find((b) => b.text().includes('禁用选中'))
-    const allBtn = w.findAll('button').find((b) => b.text().includes('启用本机场全部'))
+    const allBtn = w.find('[data-testid="enable-source-all"]')
     await enableBtn?.trigger('click')
     await flushPromises()
     await disableBtn?.trigger('click')
     await flushPromises()
     await allBtn?.trigger('click')
     await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledWith({ source: 'airport:x', sourcePrefix: false, enabled: true })
     w.unmount()
   })
 
@@ -321,24 +319,30 @@ describe('RulesPage', () => {
   })
 
 
-  it('coverage: candidates 加载失败 + enableAllAirport 失败', async () => {
+  it('coverage: candidates 加载失败 + 按来源整批启用失败', async () => {
     // candidates 加载失败
     listRulesMock.mockRejectedValueOnce(new Error('canderr'))
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     await new Promise(r => setTimeout(r, 50))
     await flushPromises()
-    // enableAllAirport 失败（需要 candidates 有数据）
+    // 按来源整批启用失败（需要 candidates 有数据）
     listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
     bulkRulesMock.mockRejectedValueOnce(new Error('bulkerr'))
+    notifyState.open = false
     await w.unmount()
     const w2 = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const vm = w2.vm as unknown as { sourceFilter: string | null }
+    vm.sourceFilter = 'airport:x'
     await flushPromises()
     const tabs = w2.findAll('.v-tab')
     if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
-    const enableAllBtn = w2.findAll('button').find((b) => b.text().includes('启用本机场全部'))
+    const enableAllBtn = w2.find('[data-testid="enable-source-all"]')
     if (enableAllBtn) { await enableAllBtn.trigger('click'); await flushPromises() }
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('bulkerr')
     w2.unmount()
   })
 
@@ -355,7 +359,7 @@ describe('RulesPage', () => {
     listRulesMock.mockResolvedValue([])
   })
 
-  it('导入候选：启用本机场全部按前缀取 ids 调用 bulk', async () => {
+  it('导入候选：按来源整批启用/停用走带 source 的 bulk 接口', async () => {
     listRulesMock.mockResolvedValue([
       { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' },
       { id: 2, rule_type: 't2', rule_param: 'p2', rule_config: 5, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:x' },
@@ -363,15 +367,23 @@ describe('RulesPage', () => {
       { id: 4, rule_type: 't4', rule_param: 'p4', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 4, source: null },
     ])
     bulkRulesMock.mockResolvedValue({ updated: 2 })
+    notifyState.open = false
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceFilter: string | null }
+    vm.sourceFilter = 'airport:x'
     await flushPromises()
     const tabs = w.findAll('.v-tab')
     if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
-    const allBtn = w.find('[data-testid="enable-all-airport"]')
-    await allBtn.trigger('click')
+    await w.find('[data-testid="enable-source-all"]').trigger('click')
     await flushPromises()
-    expect(bulkRulesMock).toHaveBeenCalledWith({ ids: [1, 2], enabled: true })
+    expect(bulkRulesMock).toHaveBeenCalledWith({ source: 'airport:x', sourcePrefix: false, enabled: true })
+    expect(notifyState.text).toBe('已启用 2 条')
+    await w.find('[data-testid="disable-source-all"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledWith({ source: 'airport:x', sourcePrefix: false, enabled: false })
+    expect(notifyState.text).toBe('已停用 2 条')
     w.unmount()
   })
 
@@ -382,18 +394,19 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  it('导入候选：启用本机场全部无机场规则', async () => {
-    let data: unknown[] = [{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }]
-    listRulesMock.mockImplementation(() => Promise.resolve(data))
+  it('导入候选：没有具体来源时整批按钮禁用且不发请求', async () => {
+    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     const tabs = w.findAll('.v-tab')
     if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
-    // 现在列表里已经没有机场规则了
-    data = [{ id: 3, rule_type: 't3', rule_param: 'p3', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 3, source: 'manual' }]
-    const allBtn = w.find('[data-testid="enable-all-airport"]')
-    await allBtn.trigger('click')
+    // 默认「全部来源」：整批按钮不可用
+    expect(w.find('[data-testid="enable-source-all"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-testid="disable-source-all"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-testid="delete-source-all"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-testid="source-batch-hint"]').exists()).toBe(true)
+    await w.find('[data-testid="enable-source-all"]').trigger('click')
     await flushPromises()
     expect(bulkRulesMock).not.toHaveBeenCalled()
     w.unmount()
@@ -457,193 +470,260 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  // ---------------- 方案（Profile）接入：筛选 / 移动 / 新增编辑带 profile_id ----------------
+  // ---------------- 来源（source）筛选 / 按来源整批操作 ----------------
 
-  it('方案筛选：默认「全部方案」不带 profile_id，切到具体方案时带 profile_id 请求', async () => {
+  it('来源筛选：默认「全部来源」不带参数，选中具体来源后带 source 请求', async () => {
     listRulesMock.mockResolvedValue([])
     const w = mountRules()
     await flushPromises()
     expect(listRulesMock).toHaveBeenCalledWith()
-    const vm = w.vm as unknown as { profileFilter: number; profileFilterOptions: { title: string; value: number }[]; profileOptions: { title: string; value: number }[] }
-    expect(vm.profileFilter).toBe(-1)
-    expect(vm.profileFilterOptions.map((o) => o.title)).toEqual(['全部方案', '未分配'])
-    expect(vm.profileOptions.map((o) => o.title)).toEqual(['未分配'])
-    vm.profileFilter = 5
+    const vm = w.vm as unknown as { sourceFilter: string | null; sourceOptions: { title: string; value: string | null }[] }
+    expect(vm.sourceFilter).toBe(null)
+    expect(vm.sourceOptions.map((o) => o.title)).toEqual(['全部来源', '自定义'])
+    vm.sourceFilter = 'airport:PEK'
     await flushPromises()
-    expect(listRulesMock).toHaveBeenCalledWith(5)
+    expect(listRulesMock).toHaveBeenCalledWith({ source: 'airport:PEK', sourcePrefix: false })
     w.unmount()
   })
 
-  it('方案筛选：加载方案后下拉含各方案；拉取失败降级为只有未分配', async () => {
+  it('来源筛选：选「自定义」时带空串 source', async () => {
     listRulesMock.mockResolvedValue([])
-    listProfilesMock.mockResolvedValueOnce([
-      { id: 4, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 0, rule_count: 0, group_count: 0 },
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceFilter: string | null }
+    vm.sourceFilter = ''
+    await flushPromises()
+    expect(listRulesMock).toHaveBeenCalledWith({ source: '', sourcePrefix: false })
+    w.unmount()
+  })
+
+  it('来源下拉：列出数据里出现过的来源（去重/排序）；来源列表拉取失败时降级', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:PEK' },
+      { id: 2, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:PEK' },
+      { id: 3, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 3, source: '' },
     ])
     const w = mountRules()
     await flushPromises()
-    const vm = w.vm as unknown as { profileOptions: { title: string; value: number }[] }
-    expect(vm.profileOptions).toEqual([
-      { title: '未分配', value: 0 },
-      { title: 'A-方案', value: 4 },
+    const vm = w.vm as unknown as { sourceOptions: { title: string; value: string | null }[] }
+    expect(vm.sourceOptions).toEqual([
+      { title: '全部来源', value: null },
+      { title: '自定义', value: '' },
+      { title: 'airport:PEK', value: 'airport:PEK' },
     ])
+    expect(w.find('[data-testid="rules-source-filter"]').exists()).toBe(true)
     w.unmount()
-    listProfilesMock.mockRejectedValueOnce(new Error('profiles boom'))
+    listRulesMock.mockRejectedValue(new Error('sources boom'))
     const w2 = mountRules()
     await flushPromises()
-    expect((w2.vm as unknown as { profileOptions: { title: string; value: number }[] }).profileOptions).toEqual([{ title: '未分配', value: 0 }])
-    expect(w2.find('[data-testid="rules-profile-filter"]').exists()).toBe(true)
+    expect((w2.vm as unknown as { sourceOptions: { title: string; value: string | null }[] }).sourceOptions).toEqual([
+      { title: '全部来源', value: null },
+      { title: '自定义', value: '' },
+    ])
     w2.unmount()
+    listRulesMock.mockResolvedValue([])
   })
 
-  it('批量移动规则到方案：选中后打开弹窗，确认调用 moveRules({ids, profile_id})', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
-    moveRulesMock.mockResolvedValueOnce({ updated: 2 })
-    const w = mountRules()
-    await flushPromises()
-    const rowBoxes = w.findAll('[data-testid="table"] tbody input[type="checkbox"]')
-    await rowBoxes[0].trigger('click')
-    await rowBoxes[1].trigger('click')
-    await flushPromises()
-    expect(w.find('[data-testid="move-profile"]').attributes('disabled')).toBeUndefined()
-    await w.find('[data-testid="move-profile"]').trigger('click')
-    await flushPromises()
-    const vm = w.vm as unknown as { moveDialogOpen: boolean; moveProfileId: number; profileFilter: number }
-    expect(vm.moveDialogOpen).toBe(true)
-    expect(vm.moveProfileId).toBe(0)
-    vm.moveProfileId = 6
-    await flushPromises()
-    await w.find('[data-testid="move-profile-confirm"]').trigger('click')
-    await flushPromises()
-    expect(moveRulesMock).toHaveBeenCalledWith({ ids: [1, 2], profile_id: 6 })
-    expect(notifyState.text).toBe('已移动 2 条规则')
-    expect(notifyState.kind).toBe('ok')
-    expect(vm.moveDialogOpen).toBe(false)
-    w.unmount()
-  })
-
-  it('批量移动：无选中时按钮 disabled 且点击不打开弹窗；取消不发请求', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
-    const w = mountRules()
-    await flushPromises()
-    expect(w.find('[data-testid="move-profile"]').attributes('disabled')).toBeDefined()
-    await w.find('[data-testid="move-profile"]').trigger('click')
-    await flushPromises()
-    expect((w.vm as unknown as { moveDialogOpen: boolean }).moveDialogOpen).toBe(false)
-    w.unmount()
-    const w2 = mountRules()
-    await flushPromises()
-    ;(w2.vm as unknown as { openMoveDialog: () => void }).openMoveDialog()
-    await flushPromises()
-    expect((w2.vm as unknown as { moveDialogOpen: boolean }).moveDialogOpen).toBe(false)
-    expect(moveRulesMock).not.toHaveBeenCalled()
-    w2.unmount()
-  })
-
-  it('批量移动：确认时若选择被清空则不发请求并关闭弹窗', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
-    const w = mountRules()
-    await flushPromises()
-    const vm = w.vm as unknown as { moveDialogOpen: boolean; selectedRuleIds: number[]; confirmMove: () => Promise<void> }
-    vm.moveDialogOpen = true
-    vm.selectedRuleIds = []
-    await flushPromises()
-    await vm.confirmMove()
-    await flushPromises()
-    expect(moveRulesMock).not.toHaveBeenCalled()
-    expect(vm.moveDialogOpen).toBe(false)
-    w.unmount()
-  })
-
-  it('批量移动失败：错误提示且弹窗保持打开', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
-    moveRulesMock.mockRejectedValueOnce(new Error('move boom'))
+  it('按来源整批删除：必须二次确认，确认后调用 bulk delete=true', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:PEK' },
+      { id: 2, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:PEK' },
+    ])
+    bulkRulesMock.mockResolvedValue({ deleted: 2 })
     notifyState.open = false
     const w = mountRules()
     await flushPromises()
-    const vm = w.vm as unknown as { moveDialogOpen: boolean; selectedRuleIds: number[]; moveProfileId: number; confirmMove: () => Promise<void> }
-    vm.moveDialogOpen = true
-    vm.selectedRuleIds = [1]
-    vm.moveProfileId = 2
+    const vm = w.vm as unknown as { sourceFilter: string | null; sourceDeleteOpen: boolean }
+    vm.sourceFilter = 'airport:PEK'
     await flushPromises()
-    await vm.confirmMove()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
-    expect(moveRulesMock).toHaveBeenCalledWith({ ids: [1], profile_id: 2 })
+    await w.find('[data-testid="delete-source-all"]').trigger('click')
+    await flushPromises()
+    expect(vm.sourceDeleteOpen).toBe(true)
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    const text = w.find('[data-testid="confirm-source-delete-text"]')
+    expect(text.exists()).toBe(true)
+    expect(text.text()).toContain('airport:PEK')
+    expect(text.text()).toContain('2')
+    expect(text.text()).toContain('此操作不可撤销')
+    // 取消：仍然不发请求
+    await w.find('[data-testid="confirm-source-delete-cancel"]').trigger('click')
+    await flushPromises()
+    expect(vm.sourceDeleteOpen).toBe(false)
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    // 再次打开并确认
+    await w.find('[data-testid="delete-source-all"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="confirm-source-delete-ok"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledWith({ source: 'airport:PEK', sourcePrefix: false, delete: true })
+    expect(notifyState.text).toBe('已删除 2 条')
+    w.unmount()
+  })
+
+  it('按来源整批删除弹窗：v-model 关闭回调覆盖', async () => {
+    const DialogStub = {
+      name: 'VDialog',
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      template: '<div><slot /></div>',
+    }
+    const w = mount(RulesPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: DialogStub } } })
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceDeleteOpen: boolean; tab: number }
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    const target = w.findAllComponents({ name: 'VDialog' }).find((d) => d.attributes('data-testid') === 'confirm-source-delete')
+    expect(target).toBeDefined()
+    await (target as unknown as { vm: { $emit: (e: string, ...a: unknown[]) => void } }).vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(vm.sourceDeleteOpen).toBe(false)
+    w.unmount()
+  })
+
+  it('整批操作守卫：没有具体来源 / 进行中时不发请求', async () => {
+    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      sourceFilter: string | null
+      sourceBusy: boolean
+      sourceDeleteOpen: boolean
+      sourceEnableAll: (v: boolean) => Promise<void>
+      openSourceDelete: () => void
+      confirmSourceDelete: () => Promise<void>
+    }
+    // 全部来源：sourceTarget() 为 null
+    await vm.sourceEnableAll(true)
+    vm.openSourceDelete()
+    expect(vm.sourceDeleteOpen).toBe(false)
+    vm.sourceDeleteOpen = true
+    await vm.confirmSourceDelete()
+    expect(vm.sourceDeleteOpen).toBe(false)
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    // 有来源但 busy：也不发请求
+    vm.sourceFilter = 'airport:x'
+    vm.sourceBusy = true
+    await flushPromises()
+    await vm.sourceEnableAll(false)
+    vm.openSourceDelete()
+    expect(vm.sourceDeleteOpen).toBe(false)
+    expect(bulkRulesMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('按来源整批删除失败：错误提示', async () => {
+    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    bulkRulesMock.mockRejectedValueOnce(new Error('del boom'))
+    notifyState.open = false
+    const w = mountRules()
+    await flushPromises()
+    const vm = w.vm as unknown as { sourceFilter: string | null; sourceDeleteOpen: boolean }
+    vm.sourceFilter = 'airport:x'
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="delete-source-all"]').trigger('click')
+    await flushPromises()
+    vm.sourceDeleteOpen = true
+    await flushPromises()
+    await w.find('[data-testid="confirm-source-delete-ok"]').trigger('click')
+    await flushPromises()
+    expect(bulkRulesMock).toHaveBeenCalledWith({ source: 'airport:x', sourcePrefix: false, delete: true })
     expect(notifyState.kind).toBe('error')
-    expect(notifyState.text).toContain('move boom')
-    expect(vm.moveDialogOpen).toBe(true)
+    expect(notifyState.text).toContain('del boom')
     w.unmount()
   })
 
-  it('新增规则默认带 profile_id（= 当前筛选方案，全部方案视为未分配），提交 body 带 profile_id', async () => {
-    listRulesMock.mockResolvedValue([])
-    const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
-    createMock.mockResolvedValue({ id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 0 })
+  it('整批结果缺 updated/deleted 字段时回退为当前来源的规则条数', async () => {
+    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    bulkRulesMock.mockResolvedValue({})
+    notifyState.open = false
     const w = mountRules()
     await flushPromises()
-    const vm = w.vm as unknown as { profileFilter: number }
-    vm.profileFilter = 3
+    const vm = w.vm as unknown as { sourceFilter: string | null }
+    vm.sourceFilter = 'airport:x'
+    await flushPromises()
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="enable-source-all"]').trigger('click')
+    await flushPromises()
+    expect(notifyState.text).toBe('已启用 1 条')
+    w.unmount()
+  })
+
+  it('规则表：来源列渲染原始 source；不再有方案列与批量移动入口', async () => {
+    listRulesMock.mockResolvedValue([
+      { id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:PEK' },
+      { id: 2, rule_type: 'DOMAIN', rule_param: 'b.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 2, source: '' },
+    ])
+    const w = mountRules()
+    await flushPromises()
+    expect(w.text()).toContain('airport:PEK')
+    const head = w.find('[data-testid="table"] thead').text()
+    expect(head).toContain('来源')
+    expect(head).not.toContain('方案')
+    expect(w.find('[data-testid="move-profile"]').exists()).toBe(false)
+    expect(w.find('[data-testid="rule-profile"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('新增规则提交 body 不含 profile_id（v2：规则不再归属方案）', async () => {
+    listRulesMock.mockResolvedValue([])
+    const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
+    createMock.mockResolvedValue({ id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1 })
+    const w = mountRules()
     await flushPromises()
     await w.find('[data-testid="add"]').trigger('click')
     await flushPromises()
-    expect((w.vm as unknown as { ruleDraft: { profile_id: number } }).ruleDraft.profile_id).toBe(3)
     await w.find('[data-testid="dialog-submit"]').trigger('click')
     await flushPromises()
-    expect(createMock.mock.calls[0][0].profile_id).toBe(3)
+    expect(createMock).toHaveBeenCalledTimes(1)
+    expect(createMock.mock.calls[0][0]).not.toHaveProperty('profile_id')
     w.unmount()
   })
 
-  it('新增规则在「全部方案」筛选下默认 profile_id=0', async () => {
-    listRulesMock.mockResolvedValue([])
-    const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
-    createMock.mockResolvedValue({ id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 0 })
-    const w = mountRules()
-    await flushPromises()
-    await w.find('[data-testid="add"]').trigger('click')
-    await flushPromises()
-    expect((w.vm as unknown as { ruleDraft: { profile_id: number } }).ruleDraft.profile_id).toBe(0)
-    await w.find('[data-testid="dialog-submit"]').trigger('click')
-    await flushPromises()
-    expect(createMock.mock.calls[0][0].profile_id).toBe(0)
-    w.unmount()
-  })
-
-  it('编辑规则回填 profile_id 并随保存发出', async () => {
-    listRulesMock.mockResolvedValue([{ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 8, profile_name: 'B-方案' }])
+  it('编辑规则回填来源字段并随保存发出（body 不含 profile_id）', async () => {
+    listRulesMock.mockResolvedValue([{ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:PEK' }])
     const updateMock = endpoints.updateRule as unknown as ReturnType<typeof vi.fn>
-    updateMock.mockResolvedValue({ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 8 })
+    updateMock.mockResolvedValue({ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:PEK' })
     const w = mountRules()
     await flushPromises()
     await w.find('[data-testid="edit"]').trigger('click')
     await flushPromises()
-    expect((w.vm as unknown as { ruleDraft: { profile_id: number } }).ruleDraft.profile_id).toBe(8)
+    expect((w.vm as unknown as { ruleDraft: { source?: string } }).ruleDraft.source).toBe('airport:PEK')
     await w.find('[data-testid="dialog-submit"]').trigger('click')
     await flushPromises()
-    expect(updateMock).toHaveBeenCalledWith(9, expect.objectContaining({ profile_id: 8 }))
+    expect(updateMock).toHaveBeenCalledWith(9, expect.objectContaining({ source: 'airport:PEK' }))
+    expect(updateMock.mock.calls[0][1]).not.toHaveProperty('profile_id')
     w.unmount()
   })
 
-  it('规则表「方案」列：profile_name 显示方案名，缺失显示未分配', async () => {
-    listRulesMock.mockResolvedValue([
-      { id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 5, profile_name: 'A-方案' },
-      { id: 2, rule_type: 'DOMAIN', rule_param: 'b.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 2, profile_id: 0 },
-    ])
+  it('候选列表加载失败：错误态展示', async () => {
+    listRulesMock.mockRejectedValue(new Error('canderr'))
     const w = mountRules()
     await flushPromises()
-    expect(w.text()).toContain('A-方案')
-    expect(w.text()).toContain('未分配')
+    expect((w.vm as unknown as { candidatesError: string }).candidatesError).toContain('canderr')
     w.unmount()
+    listRulesMock.mockResolvedValue([])
   })
 
-  it('导入候选提示文案补充「导入时可在「机场」页选择方案」', async () => {
+  it('导入候选提示文案说明来源筛选与整批操作', async () => {
     listRulesMock.mockResolvedValue([])
     const w = mountRules()
     await flushPromises()
     const tabs = w.findAll('.v-tab')
     if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
-    expect(w.text()).toContain('导入时可在「机场」页选择方案')
-    w.unmount()
+    expect(w.text()).toContain('来源筛选')
+    expect(w.text()).toContain('airport:')
   })
+
 
   it('loadGroups 失败软化：groups 归空数组，页面主功能不炸（T10 补 catch 分支）', async () => {
     listGroupsMock.mockRejectedValueOnce(new Error('groups boom'))
@@ -935,47 +1015,36 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  it('方案相关 v-model setter：筛选 / 规则弹窗方案 / 移动弹窗目标方案 + 移动取消按钮', async () => {
+  it('来源筛选下拉的 update:modelValue 与按来源删除确认弹窗', async () => {
     listRulesMock.mockResolvedValue(D09_RULES)
     const w = mountRules()
     await flushPromises()
     const vm = w.vm as unknown as {
-      profileFilter: number
-      moveDialogOpen: boolean
-      moveProfileId: number
-      ruleDialog: boolean
-      ruleDraft: Record<string, unknown>
+      sourceFilter: string | null
+      sourceDeleteOpen: boolean
+      sourceTarget: () => string | null
     }
     const selectByLabel = (label: string) => w.findAllComponents({ name: 'VSelect' })
       .find((c) => (c.props() as Record<string, unknown>).label === label)
-    // 1) 页面顶部「方案筛选」下拉的 update:modelValue
-    const filterSel = selectByLabel('方案筛选')
+    // 1) 页面顶部「来源筛选」下拉的 update:modelValue
+    const filterSel = selectByLabel('来源筛选')
     expect(filterSel).toBeTruthy()
-    await filterSel!.vm.$emit('update:modelValue', 4)
+    await filterSel!.vm.$emit('update:modelValue', 'airport:PEK')
     await flushPromises()
-    expect(vm.profileFilter).toBe(4)
-    expect(listRulesMock).toHaveBeenCalledWith(4)
-    // 2) 规则弹窗「方案」下拉的 update:modelValue
-    vm.ruleDialog = true
+    expect(vm.sourceFilter).toBe('airport:PEK')
+    expect(listRulesMock).toHaveBeenCalledWith({ source: 'airport:PEK', sourcePrefix: false })
+    expect(vm.sourceTarget()).toBe('airport:PEK')
+    // 2) 按来源删除确认弹窗：打开再取消（弹窗在「导入候选」tab 里）
+    const tabs = w.findAll('.v-tab')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
-    const ruleSel = selectByLabel('方案')
-    expect(ruleSel).toBeTruthy()
-    await ruleSel!.vm.$emit('update:modelValue', 5)
+    vm.sourceDeleteOpen = true
     await flushPromises()
-    expect(vm.ruleDraft.profile_id).toBe(5)
-    // 3) 批量移动弹窗「目标方案」下拉 + 取消按钮
-    vm.moveDialogOpen = true
-    await flushPromises()
-    const moveSel = selectByLabel('目标方案')
-    expect(moveSel).toBeTruthy()
-    await moveSel!.vm.$emit('update:modelValue', 6)
-    await flushPromises()
-    expect(vm.moveProfileId).toBe(6)
-    const cancelBtn = w.find('[data-testid="move-profile-cancel"]')
+    const cancelBtn = w.find('[data-testid="confirm-source-delete-cancel"]')
     expect(cancelBtn.exists()).toBe(true)
     await cancelBtn.trigger('click')
     await flushPromises()
-    expect(vm.moveDialogOpen).toBe(false)
+    expect(vm.sourceDeleteOpen).toBe(false)
     w.unmount()
   })
 })

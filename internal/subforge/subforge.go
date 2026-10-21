@@ -210,11 +210,11 @@ func (m *Manager) DeleteSelfNode(ctx context.Context, id int64) error {
 // ProxyGroup 是一个代理分组。行类型定义在 internal/store。
 type ProxyGroup = store.ProxyGroup
 
-// ListProxyGroups 返回所有代理分组。
-// regex / url / interval 列可为 NULL，用 COALESCE 兜底。
+// ListProxyGroups 返回所有代理分组（全量读，不区分来源；按来源过滤请用 ListProxyGroupsFiltered）。
+// regex / url / interval / source 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, profile_id, created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
 	out := []ProxyGroup{}
 	for rows.Next() {
 		var g ProxyGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.ProfileID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -250,7 +250,7 @@ type Rule = store.Rule
 // rule_param 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, profile_id, created_at, updated_at FROM rules ORDER BY sort_order, id")
+		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, created_at, updated_at FROM rules ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	out := []Rule{}
 	for rows.Next() {
 		var r Rule
-		if err := rows.Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.ProfileID, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -266,23 +266,22 @@ func (m *Manager) ListRules(ctx context.Context) ([]Rule, error) {
 	return out, rows.Err()
 }
 
-// AddRule 新增规则。
+// AddRule 新增自定义规则（source 为空串，即「自定义」来源，不属于任何方案）。
 func (m *Manager) AddRule(ctx context.Context, ruleType, ruleParam string, ruleConfig int64, resolveDNS, enabled bool) (*Rule, error) {
-	res, err := m.db.Raw().ExecContext(ctx,
-		"INSERT INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, profile_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		ruleType, ruleParam, ruleConfig, resolveDNS, enabled, time.Now().UnixNano(), 0)
-	if err != nil {
-		return nil, err
-	}
-	id, _ := res.LastInsertId()
-	var r Rule
-	err = m.db.Raw().QueryRowContext(ctx,
-		"SELECT id, rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, profile_id, created_at, updated_at FROM rules WHERE id = ?", id).
-		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.SortOrder, &r.ProfileID, &r.CreatedAt, &r.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &r, nil
+	return m.AddRuleWithSource(ctx, Rule{
+		RuleType:   ruleType,
+		RuleParam:  ruleParam,
+		RuleConfig: ruleConfig,
+		ResolveDNS: resolveDNS,
+		Enabled:    enabled,
+	})
+}
+
+// AddRuleWithSource 新增带来源的规则。
+// source 为空串表示自定义规则（用户在「规则」页手工建的）；airport:<机场名> 等来源由
+// 导入路径提供。SortOrder<=0 时由 store 回退时间戳。
+func (m *Manager) AddRuleWithSource(ctx context.Context, rule Rule) (*Rule, error) {
+	return m.db.AddRuleWithSource(ctx, rule)
 }
 
 // DeleteRule 删除规则。

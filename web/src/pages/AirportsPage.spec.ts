@@ -20,7 +20,6 @@ vi.mock('../api/endpoints', () => ({
     lastAirportCheck: vi.fn(),
     listSettings: vi.fn(),
     updateSettings: vi.fn(),
-    listProfiles: vi.fn(),
   },
 }))
 
@@ -37,7 +36,6 @@ const checkMock = endpoints.checkAirports as unknown as ReturnType<typeof vi.fn>
 const lastCheckMock = endpoints.lastAirportCheck as unknown as ReturnType<typeof vi.fn>
 const listSettingsMock = endpoints.listSettings as unknown as ReturnType<typeof vi.fn>
 const updateSettingsMock = endpoints.updateSettings as unknown as ReturnType<typeof vi.fn>
-const listProfilesMock = endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>
 
 function makeAirport(overrides: Record<string, unknown> = {}) {
   return {
@@ -84,7 +82,6 @@ beforeEach(() => {
   lastCheckMock.mockResolvedValue({ results: [makeCheckResult()] })
   listSettingsMock.mockResolvedValue({ settings: [] })
   updateSettingsMock.mockResolvedValue({ settings: [] })
-  listProfilesMock.mockResolvedValue([])
 })
 
 describe('AirportsPage', () => {
@@ -284,16 +281,15 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('导入规则（弹窗确认）带方案与建组参数调用 importAirportRules', async () => {
+  it('导入规则（弹窗确认）只带建组参数调用 importAirportRules（无 profile_id）', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
     await flushPromises()
-    ;(w.vm as any).importProfileId = 7
     ;(w.vm as any).importCreateGroups = false
     await (w.vm as any).confirmImportRules()
     await flushPromises()
-    expect(importMock).toHaveBeenCalledWith(1, { profile_id: 7, create_groups: false })
+    expect(importMock).toHaveBeenCalledWith(1, { create_groups: false })
     expect(listMock).toHaveBeenCalledTimes(2)
     w.unmount()
   })
@@ -311,16 +307,22 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('导入弹窗默认：未分配(0) + 自动建组勾选', async () => {
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
-    await flushPromises()
-    expect((w.vm as any).importDialog).toBe(true)
-    expect((w.vm as any).importTarget.id).toBe(1)
-    expect((w.vm as any).importProfileId).toBe(0)
-    expect((w.vm as any).importCreateGroups).toBe(true)
-    w.unmount()
+  it('导入弹窗默认：打开且自动建组勾选', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
+      await flushPromises()
+      expect((w.vm as any).importDialog).toBe(true)
+      expect((w.vm as any).importTarget.id).toBe(1)
+      expect((w.vm as any).importCreateGroups).toBe(true)
+      const hint = document.body.querySelector('[data-testid="import-rules-hint"]')
+      expect(hint).toBeTruthy()
+      expect((hint as HTMLElement).textContent).toContain('airport:机场名')
+      expect(document.body.querySelector('[data-testid="import-rules-profile"]')).toBeNull()
+    } finally {
+      w.unmount()
+    }
   })
 
   it('导入弹窗取消不调用接口', async () => {
@@ -343,30 +345,6 @@ describe('AirportsPage', () => {
     await flushPromises()
     expect(notifyState.text).toBe('已导入规则：新增 2，跳过 1，新建分组 3')
     expect(notifyState.kind).toBe('ok')
-    w.unmount()
-  })
-
-  it('方案列表加载成功后导入弹窗下拉含各方案', async () => {
-    listProfilesMock.mockResolvedValueOnce([{ id: 3, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 0, rule_count: 0, group_count: 0 }])
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
-    await flushPromises()
-    const options = (w.vm as any).importProfileOptions
-    expect(options.length).toBe(2)
-    expect(options[0]).toEqual({ title: '未分配', value: 0 })
-    expect(options[1]).toEqual({ title: 'A-方案', value: 3 })
-    w.unmount()
-  })
-
-  it('方案列表加载失败降级为只有未分配，且不阻塞机场列表', async () => {
-    listProfilesMock.mockRejectedValueOnce(new Error('profiles boom'))
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
-    await flushPromises()
-    expect((w.vm as any).importProfileOptions).toEqual([{ title: '未分配', value: 0 }])
-    expect(w.find('[data-testid="table"]').exists()).toBe(true)
     w.unmount()
   })
 
@@ -694,7 +672,7 @@ describe('AirportsPage', () => {
     expect(confirm).toBeTruthy()
     ;(confirm as HTMLElement).click()
     await flushPromises()
-    expect(importMock).toHaveBeenCalledWith(1, { profile_id: 0, create_groups: true })
+    expect(importMock).toHaveBeenCalledWith(1, { create_groups: true })
     w.unmount()
   })
 
@@ -737,37 +715,43 @@ describe('AirportsPage', () => {
 
   it('UI 对话框 v-model 与取消按钮', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
-    await flushPromises()
-    await w.find('[data-testid="add"]').trigger('click')
-    await flushPromises()
-    const dialogs = w.findAllComponents({ name: 'VDialog' })
-    dialogs[0].vm.$emit('update:modelValue', true)
-    await flushPromises()
-    w.findAllComponents({ name: 'VTextField' }).forEach(f => f.vm.$emit('update:modelValue', 'zzz'))
-    w.findAllComponents({ name: 'VSwitch' }).forEach(f => f.vm.$emit('update:modelValue', true))
-    await flushPromises()
-    const cancel = Array.from(document.body.querySelectorAll('button')).find(b => (b.textContent || '').trim() === '取消')
-    expect(cancel).toBeTruthy()
-    ;(cancel as HTMLElement).click()
-    await flushPromises()
-    expect((w.vm as any).dialog).toBe(false)
-    w.unmount()
+    try {
+      await flushPromises()
+      await w.find('[data-testid="add"]').trigger('click')
+      await flushPromises()
+      const dlg = w.findAllComponents({ name: 'VDialog' })[0]
+      dlg.vm.$emit('update:modelValue', true)
+      await flushPromises()
+      w.findAllComponents({ name: 'VTextField' }).forEach(f => f.vm.$emit('update:modelValue', 'zzz'))
+      w.findAllComponents({ name: 'VSwitch' }).forEach(f => f.vm.$emit('update:modelValue', true))
+      await flushPromises()
+      const cancel = Array.from(document.body.querySelectorAll('button')).find(b => (b.textContent || '').trim() === '取消')
+      expect(cancel).toBeTruthy()
+      ;(cancel as HTMLElement).click()
+      await flushPromises()
+      expect((w.vm as any).dialog).toBe(false)
+    } finally {
+      w.unmount()
+    }
   })
 
   it('UI 确认对话框 v-model 与取消按钮', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
-    await flushPromises()
-    ;(w.vm as any).askDelete((w.vm as any).rows[0])
-    await flushPromises()
-    const dialogs = w.findAllComponents({ name: 'VDialog' })
-    dialogs[dialogs.length - 1].vm.$emit('update:modelValue', true)
-    await flushPromises()
-    const cancel = Array.from(document.body.querySelectorAll('button')).find(b => (b.textContent || '').trim() === '取消')
-    expect(cancel).toBeTruthy()
-    ;(cancel as HTMLElement).click()
-    await flushPromises()
-    expect((w.vm as any).confirmOpen).toBe(false)
-    w.unmount()
+    try {
+      await flushPromises()
+      ;(w.vm as any).askDelete((w.vm as any).rows[0])
+      await flushPromises()
+      const dialogs = w.findAllComponents({ name: 'VDialog' })
+      dialogs[1].vm.$emit('update:modelValue', true)
+      await flushPromises()
+      const cancel = Array.from(document.body.querySelectorAll('button')).find(b => (b.textContent || '').trim() === '取消')
+      expect(cancel).toBeTruthy()
+      ;(cancel as HTMLElement).click()
+      await flushPromises()
+      expect((w.vm as any).confirmOpen).toBe(false)
+    } finally {
+      w.unmount()
+    }
   })
 
   it('UI 确认对话框删除按钮', async () => {
@@ -926,29 +910,28 @@ describe('AirportsPage 覆盖率补齐（D-06 保存失败）', () => {
 
 // ---------------- 覆盖率补齐：导入弹窗 / 删除弹窗的 v-model setter ----------------
 
-describe('AirportsPage 覆盖率补齐（方案导入弹窗）', () => {
-  it('导入弹窗：方案下拉与建组开关的 update:modelValue + 取消按钮（真实点击）', async () => {
+describe('AirportsPage 覆盖率补齐（导入弹窗）', () => {
+  it('导入弹窗：建组开关的 update:modelValue + 取消按钮（真实点击）', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
-    await flushPromises()
-    ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
-    await flushPromises()
-    const profileSel = w.findAllComponents({ name: 'VSelect' })
-      .find((s) => s.attributes('data-testid') === 'import-rules-profile')
-    expect(profileSel).toBeTruthy()
-    await profileSel!.vm.$emit('update:modelValue', 3)
-    const groupBox = w.findAllComponents({ name: 'VCheckbox' })
-      .find((c) => c.attributes('data-testid') === 'import-rules-create-groups')
-    expect(groupBox).toBeTruthy()
-    await groupBox!.vm.$emit('update:modelValue', false)
-    await flushPromises()
-    expect((w.vm as any).importProfileId).toBe(3)
-    expect((w.vm as any).importCreateGroups).toBe(false)
-    const cancelBtn = document.body.querySelector('[data-testid="import-rules-cancel"]') as HTMLElement | null
-    expect(cancelBtn).toBeTruthy()
-    cancelBtn!.click()
-    await flushPromises()
-    expect((w.vm as any).importDialog).toBe(false)
-    w.unmount()
+    try {
+      await flushPromises()
+      ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="import-rules-profile"]')).toBeNull()
+      const groupBox = w.findAllComponents({ name: 'VCheckbox' })
+        .find((c) => c.attributes('data-testid') === 'import-rules-create-groups')
+      expect(groupBox).toBeTruthy()
+      await groupBox!.vm.$emit('update:modelValue', false)
+      await flushPromises()
+      expect((w.vm as any).importCreateGroups).toBe(false)
+      const cancelBtn = document.body.querySelector('[data-testid="import-rules-cancel"]') as HTMLElement | null
+      expect(cancelBtn).toBeTruthy()
+      cancelBtn!.click()
+      await flushPromises()
+      expect((w.vm as any).importDialog).toBe(false)
+    } finally {
+      w.unmount()
+    }
   })
 
   it('删除确认弹窗：VDialog 的 update:modelValue 写回 + 无导入目标时直接返回', async () => {

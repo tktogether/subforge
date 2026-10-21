@@ -3,7 +3,6 @@
 package api
 
 import (
-	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -265,33 +264,18 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		// profile_id 可选过滤：无参数 → 全部；有参数 → 只看该方案。
-		profileID, filtered, ok := s.parseProfileIDFilter(w, r)
+		// ?source=&source_prefix=1 可选过滤：不带参数 → 全部；带参数 → 只看该来源。
+		filter, ok := s.parseSourceFilter(w, r)
 		if !ok {
 			return
 		}
-		var groups []subforge.ProxyGroup
-		var err error
-		if filtered {
-			groups, err = m.ListProxyGroupsByProfile(r.Context(), profileID)
-		} else {
-			groups, err = m.ListProxyGroups(r.Context())
-		}
+		groups, err := m.ListProxyGroupsFiltered(r.Context(), filter)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 		if groups == nil {
 			groups = []subforge.ProxyGroup{}
-		}
-		// profile_name 不落库，由 profiles 映射统一回填（未绑定方案时为空串）。
-		names, err := profileNameByID(r.Context(), m)
-		if err != nil {
-			s.writeAPIError(w, r, http.StatusInternalServerError, err)
-			return
-		}
-		for i := range groups {
-			groups[i].ProfileName = names[groups[i].ProfileID]
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
 	case http.MethodPost:
@@ -302,9 +286,15 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			URL       string `json:"url"`
 			Interval  int    `json:"interval"`
 			SortOrder int    `json:"sort_order"`
-			ProfileID int64  `json:"profile_id"`
+			Source    string `json:"source"`
+			// v2 起分组是全局库，只按来源分层；profile_id 已下线，出现即 400。
+			ProfileID *int64 `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if req.ProfileID != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("分组不再归属订阅方案，请用 source 区分来源"))
 			return
 		}
 		gtype, err := validateProxyGroup(req.Name, req.Type, req.Regex, req.Interval)
@@ -312,11 +302,7 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		// profile_id > 0 必须先确认方案存在，避免脏的归属写进库。
-		if !s.profileExists(w, r, m, req.ProfileID) {
-			return
-		}
-		g, err := m.AddProxyGroupWithProfile(r.Context(), req.ProfileID, req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder)
+		g, err := m.AddProxyGroupWithSource(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder, strings.TrimSpace(req.Source))
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -343,10 +329,6 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return
 		}
-		if err := s.fillGroupProfileName(r.Context(), m, g); err != nil {
-			s.writeAPIError(w, r, http.StatusInternalServerError, err)
-			return
-		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"group": g})
 	case http.MethodPut:
 		var req struct {
@@ -356,10 +338,14 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			URL       string `json:"url"`
 			Interval  int    `json:"interval"`
 			SortOrder int    `json:"sort_order"`
-			// ProfileID 非 nil = 顺带把分组移到该方案；nil = 不动归属。
+			// v2 起分组不再归属方案，profile_id 出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if req.ProfileID != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("分组不再归属订阅方案，请用 source 区分来源"))
 			return
 		}
 		gtype, err := validateProxyGroup(req.Name, req.Type, req.Regex, req.Interval)
@@ -367,24 +353,11 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		// 先换归属（0 = 移回未分配池），再覆盖其余字段。先探测存在性：subforge
-		// 层把「不存在」翻译成中文文案后不再包 sql.ErrNoRows，只靠 errors.Is 判会漏成 500。
-		if req.ProfileID != nil {
-			if _, err := m.GetProxyGroup(r.Context(), id); err != nil {
-				s.writeAPIError(w, r, http.StatusNotFound, err)
-				return
-			}
-			if !s.profileExists(w, r, m, *req.ProfileID) {
-				return
-			}
-			if err := m.SetProxyGroupProfile(r.Context(), id, *req.ProfileID); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("代理分组 %d 不存在", id))
-					return
-				}
-				s.writeAPIError(w, r, http.StatusInternalServerError, err)
-				return
-			}
+		// subforge 层把「不存在」翻成中文文案后不再包 sql.ErrNoRows，只靠 errors.Is 判会漏成 500，
+		// 所以先做一次存在性探测（同 handleAPIRule 的移方案分支）。
+		if _, err := m.GetProxyGroup(r.Context(), id); err != nil {
+			s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("代理分组 %d 不存在", id))
+			return
 		}
 		if err := m.UpdateProxyGroup(r.Context(), id, req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -392,10 +365,6 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		g, err := m.GetProxyGroup(r.Context(), id)
 		if err != nil {
-			s.writeAPIError(w, r, http.StatusInternalServerError, err)
-			return
-		}
-		if err := s.fillGroupProfileName(r.Context(), m, g); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -414,22 +383,41 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 // --- /api/rules ---
 
 // ruleView 是 GET /api/rules 的响应视图：在 store.Rule 基础上追加
-// group_name（由 rule_config 经 ListProxyGroups 映射得到；映射不上或 rule_config=0 时为空字符串）
-// 与 profile_name（由 profile_id 经 profiles 映射得到；未绑定方案时省略）。
+// group_name（由 rule_config 经 ListProxyGroups 映射得到；映射不上或 rule_config=0 时为空字符串）。
 type ruleView struct {
 	subforge.Rule
-	GroupName   string `json:"group_name"`
-	ProfileName string `json:"profile_name,omitempty"`
+	GroupName string `json:"group_name"`
 }
 
-// fillGroupProfileName 回填单个分组的 profile_name（未绑定方案时为空串，由 omitempty 抑制）。
-func (s *Server) fillGroupProfileName(ctx context.Context, m *subforge.Manager, g *subforge.ProxyGroup) error {
-	names, err := profileNameByID(ctx, m)
-	if err != nil {
-		return err
+// parseSourceFilter 解析 GET /api/rules、/api/groups 的来源过滤参数：
+//   - 不带 source：SourceFilter{All:true}（= 全部，保持 v1「无参数返回全部」的行为）
+//   - ?source=xxx：精确匹配；再给 ?source_prefix=1 时按前缀匹配
+func (s *Server) parseSourceFilter(w http.ResponseWriter, r *http.Request) (subforge.SourceFilter, bool) {
+	q := r.URL.Query()
+	if !q.Has("source") {
+		return subforge.SourceFilter{All: true}, true
 	}
-	g.ProfileName = names[g.ProfileID]
-	return nil
+	source := q.Get("source")
+	prefix := false
+	if raw := strings.TrimSpace(q.Get("source_prefix")); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("source_prefix 需要布尔值"))
+			return subforge.SourceFilter{}, false
+		}
+		prefix = v
+	}
+	if prefix && strings.TrimSpace(source) == "" {
+		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("source_prefix 需要非空 source"))
+		return subforge.SourceFilter{}, false
+	}
+	return subforge.SourceFilter{Source: source, Prefix: prefix}, true
+}
+
+// isDuplicateRuleSourceError 判断错误是否来自「改来源撞上同来源同去重键」的唯一冲突。
+// store 层用固定文案表达该冲突（不 %w 包装 SQLite 原始错误），因此按文案判断。
+func isDuplicateRuleSourceError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "目标来源里已存在同来源同去重键的规则")
 }
 
 func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
@@ -439,18 +427,12 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		// profile_id 可选过滤：无参数 → 全部；有参数 → 只看该方案。
-		profileID, filtered, ok := s.parseProfileIDFilter(w, r)
+		// ?source=&source_prefix=1 可选过滤：不带参数 → 全部；带参数 → 只看该来源。
+		filter, ok := s.parseSourceFilter(w, r)
 		if !ok {
 			return
 		}
-		var rules []subforge.Rule
-		var err error
-		if filtered {
-			rules, err = m.ListRulesByProfile(r.Context(), profileID)
-		} else {
-			rules, err = m.ListRules(r.Context())
-		}
+		rules, err := m.ListRulesFiltered(r.Context(), filter)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -462,18 +444,11 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 				groupNameByID[g.ID] = g.Name
 			}
 		}
-		// 方案名映射：一次查询，循环里只查 map。
-		profileNames, err := profileNameByID(r.Context(), m)
-		if err != nil {
-			s.writeAPIError(w, r, http.StatusInternalServerError, err)
-			return
-		}
 		views := make([]ruleView, 0, len(rules))
 		for _, ru := range rules {
 			views = append(views, ruleView{
-				Rule:        ru,
-				GroupName:   groupNameByID[ru.RuleConfig],
-				ProfileName: profileNames[ru.ProfileID],
+				Rule:      ru,
+				GroupName: groupNameByID[ru.RuleConfig],
 			})
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"rules": views})
@@ -484,20 +459,29 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 			RuleConfig int64  `json:"rule_config"`
 			ResolveDNS bool   `json:"resolve_dns"`
 			Enabled    bool   `json:"enabled"`
-			ProfileID  int64  `json:"profile_id"`
+			Source     string `json:"source"`
+			// v2 起规则只按来源分层；profile_id 已下线，出现即 400。
+			ProfileID *int64 `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if req.ProfileID != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("规则不再归属订阅方案，请用 source 区分来源"))
 			return
 		}
 		if err := validateRule(req.RuleType, req.RuleParam); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		// profile_id > 0 必须先确认方案存在，避免脏的归属写进库。
-		if !s.profileExists(w, r, m, req.ProfileID) {
-			return
-		}
-		rule, err := m.AddRuleWithProfile(r.Context(), req.ProfileID, req.RuleType, req.RuleParam, req.RuleConfig, req.ResolveDNS, req.Enabled)
+		rule, err := m.AddRuleWithSource(r.Context(), subforge.Rule{
+			RuleType:   req.RuleType,
+			RuleParam:  req.RuleParam,
+			RuleConfig: req.RuleConfig,
+			ResolveDNS: req.ResolveDNS,
+			Enabled:    req.Enabled,
+			Source:     strings.TrimSpace(req.Source),
+		})
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -532,32 +516,30 @@ func (s *Server) handleAPIRule(w http.ResponseWriter, r *http.Request) {
 			RuleConfig int64  `json:"rule_config"`
 			ResolveDNS bool   `json:"resolve_dns"`
 			Enabled    bool   `json:"enabled"`
-			// ProfileID 非 nil = 顺带把规则移到该方案；nil = 不动归属。
+			// Source 非 nil = 改来源（空串=改为自定义）；nil = 不动来源。
+			Source *string `json:"source"`
+			// v2 起规则只按来源分层；profile_id 已下线，出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
 		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if req.ProfileID != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("规则不再归属订阅方案，请用 source 区分来源"))
 			return
 		}
 		if err := validateRule(req.RuleType, req.RuleParam); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		// 先换归属（0 = 移回未分配池），再覆盖其余字段。先探测存在性：subforge 层
-		// 把「不存在」翻译成中文文案后不再包 sql.ErrNoRows，只靠 errors.Is 判会漏成 500。
-		if req.ProfileID != nil {
-			if _, err := m.GetRule(r.Context(), id); err != nil {
-				s.writeAPIError(w, r, http.StatusNotFound, err)
-				return
-			}
-			if !s.profileExists(w, r, m, *req.ProfileID) {
-				return
-			}
-			if err := m.SetRuleProfile(r.Context(), id, *req.ProfileID); err != nil {
+		// 先改来源再覆盖其余字段：撞唯一索引 (source, origin_key) 时整次更新失败。
+		if req.Source != nil {
+			if err := m.DB().SetRuleSource(r.Context(), id, strings.TrimSpace(*req.Source)); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("规则 %d 不存在", id))
 					return
 				}
-				if isDuplicateRuleMoveError(err) {
+				if isDuplicateRuleSourceError(err) {
 					s.writeAPIError(w, r, http.StatusConflict, err)
 					return
 				}
@@ -566,6 +548,11 @@ func (s *Server) handleAPIRule(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := m.UpdateRule(r.Context(), id, req.RuleType, req.RuleParam, req.RuleConfig, req.ResolveDNS, req.Enabled); err != nil {
+			// store 对不存在的 id 返回 sql.ErrNoRows；不翻成 404 会漏成 500。
+			if errors.Is(err, sql.ErrNoRows) {
+				s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("规则 %d 不存在", id))
+				return
+			}
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -960,13 +947,10 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. 代理分组：regex 非空时作为成员模式交给引擎按节点名展开。
-	//    令牌绑定方案后只取该方案的分组（旧令牌 profile_id=0 → 全局池，行为不变）。
-	var groups []subforge.ProxyGroup
-	if profileID > 0 {
-		groups, err = m.ListProxyGroupsByProfile(r.Context(), profileID)
-	} else {
-		groups, err = m.ListProxyGroups(r.Context())
-	}
+	//    v2 起按方案的 group_layers 顺序合并（同名先到者胜），模板分组由引擎在 DB 分组
+	//    之后追加（DB 优先，修 D-36）；未绑定方案时用默认三层。
+	groupLayers, ruleLayers := subscribeLayers(profile)
+	groups, err := m.ListProxyGroupsByLayers(r.Context(), groupLayers)
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
@@ -988,13 +972,8 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. 规则：rule_config 指向的 group id → 策略名，0 或找不到 → DIRECT。
-	//    令牌绑定方案后只取该方案的规则（旧令牌 profile_id=0 → 全库，行为不变）。
-	var rules []subforge.Rule
-	if profileID > 0 {
-		rules, err = m.ListRulesByProfile(r.Context(), profileID)
-	} else {
-		rules, err = m.ListRules(r.Context())
-	}
+	//    v2 起按方案的 rule_layers 顺序拼接（只取已启用；模板规则由引擎在 DB 规则后展开）。
+	rules, err := m.ListRulesByLayers(r.Context(), ruleLayers)
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
@@ -1035,6 +1014,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		Config:   configName,
 		Include:  includeList,
 		Exclude:  excludeList,
+		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
+		DisableTemplateRules:  !hasLayer(ruleLayers, "template"),
+		DisableTemplateGroups: !hasLayer(groupLayers, "template"),
 	}
 	result, err := s.engine.Run(r.Context(), params)
 	if err != nil {
@@ -1072,6 +1054,33 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
+}
+
+// subscribeLayers 返回订阅组装要用的分组层与规则层顺序：
+// 令牌绑定了方案就用方案配置，未绑定（或方案未配置）用默认三层。
+func subscribeLayers(profile *subforge.Profile) (groupLayers, ruleLayers []string) {
+	groupLayers = store.DefaultLayers
+	ruleLayers = store.DefaultLayers
+	if profile == nil {
+		return groupLayers, ruleLayers
+	}
+	if len(profile.GroupLayers) > 0 {
+		groupLayers = profile.GroupLayers
+	}
+	if len(profile.RuleLayers) > 0 {
+		ruleLayers = profile.RuleLayers
+	}
+	return groupLayers, ruleLayers
+}
+
+// hasLayer 报告层数组里是否含某层键。
+func hasLayer(layers []string, want string) bool {
+	for _, layer := range layers {
+		if layer == want {
+			return true
+		}
+	}
+	return false
 }
 
 // splitListQuery 把逗号分隔的 query 值切成去空白的非空切片。

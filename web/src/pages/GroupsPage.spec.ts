@@ -13,7 +13,6 @@ vi.mock('../api/endpoints', async () => {
     ...actual,
     endpoints: {
       listGroups: vi.fn(),
-      listProfiles: vi.fn(),
       createGroup: vi.fn(),
       updateGroup: vi.fn(),
       deleteGroup: vi.fn(),
@@ -22,7 +21,6 @@ vi.mock('../api/endpoints', async () => {
 })
 
 const listMock = endpoints.listGroups as unknown as ReturnType<typeof vi.fn>
-const listProfilesMock = endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>
 const createMock = endpoints.createGroup as unknown as ReturnType<typeof vi.fn>
 const updateMock = endpoints.updateGroup as unknown as ReturnType<typeof vi.fn>
 const deleteMock = endpoints.deleteGroup as unknown as ReturnType<typeof vi.fn>
@@ -32,7 +30,6 @@ describe('GroupsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     listMock.mockResolvedValue([])
-    listProfilesMock.mockResolvedValue([])
   })
 
   it('把 title/subtitle/columns/fields/resource/help-key 原样传给 ResourcePage', async () => {
@@ -46,7 +43,7 @@ describe('GroupsPage', () => {
     expect(rp.props('helpKey')).toBe('groups')
     expect(rp.props('columns')).toEqual([
       { key: 'name', title: '名称' },
-      { key: 'profile_name', title: '方案' },
+      { key: 'source_text', title: '来源' },
       { key: 'type', title: '类型' },
       { key: 'regex', title: '匹配正则' },
       { key: 'url', title: '测活地址' },
@@ -55,7 +52,6 @@ describe('GroupsPage', () => {
     ])
     expect(rp.props('fields')).toEqual([
       { key: 'name', label: '名称', type: 'text', hint: '客户端里显示的策略组名；规则行的目标分组就是按这个名找的', example: '香港' },
-      { key: 'profile_id', label: '方案', type: 'select', options: [{ title: '未分配', value: 0 }], hint: '方案里的分组只出现在绑定该方案的订阅；未分配 = 旧全局池' },
       { key: 'type', label: '类型', type: 'text', hint: 'select=手动选；url-test=自动选延迟最低；fallback=按顺序回退；load-balance=负载均衡', example: 'select' },
       { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名匹配成员；留空则不自动收节点', example: '香港|HK' },
       { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
@@ -63,7 +59,7 @@ describe('GroupsPage', () => {
       { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
     ])
     const resource = rp.props('resource') as any
-    expect(resource.list).toBe(endpoints.listGroups)
+    expect(resource.list).not.toBe(endpoints.listGroups)
     expect(resource.create).toBe(endpoints.createGroup)
     expect(w.text()).toContain('分组是什么')
     expect(w.text()).toContain('rule_config')
@@ -71,17 +67,21 @@ describe('GroupsPage', () => {
     w.unmount()
   })
 
-  it('resource.list 调 endpoints.listGroups，并把返回项渲染进表格', async () => {
+  it('resource.list 包装 endpoints.listGroups，给每行补 source_text 并渲染进表格', async () => {
     listMock.mockResolvedValue([
-      { id: 1, name: '分组A', type: 'select', regex: '.*', url: 'https://g.example', interval: 300, sort_order: 1 },
+      { id: 1, name: '分组A', type: 'select', regex: '.*', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X' },
+      { id: 2, name: '自定义组', type: 'select', regex: '.*', url: '', interval: 0, sort_order: 2, source: '' },
     ])
 
     const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
 
     expect(listMock).toHaveBeenCalledTimes(1)
+    // 来源列格式化：airport:机场X → 机场:机场X；空串 → 自定义
     expect(w.text()).toContain('分组A')
-    expect(w.text()).toContain('select')
+    expect(w.text()).toContain('机场:机场X')
+    expect(w.text()).toContain('自定义组')
+    expect(w.text()).toContain('自定义')
     w.unmount()
   })
 
@@ -91,7 +91,7 @@ describe('GroupsPage', () => {
     await flushPromises()
 
     const resource = w.findComponent(ResourcePage).props('resource') as any
-    const item = { id: 4, name: '改后', type: 'select', regex: '.*', url: 'u', interval: 60, sort_order: 1 }
+    const item = { id: 4, name: '改后', type: 'select', regex: '.*', url: 'u', interval: 60, sort_order: 1, source: '' }
     const res = await resource.update(item)
 
     expect(updateMock).toHaveBeenCalledTimes(1)
@@ -106,7 +106,7 @@ describe('GroupsPage', () => {
     await flushPromises()
 
     const resource = w.findComponent(ResourcePage).props('resource') as any
-    const item = { id: 8, name: '待删', type: 'select', regex: '.*', url: 'u', interval: 60, sort_order: 1 }
+    const item = { id: 8, name: '待删', type: 'select', regex: '.*', url: 'u', interval: 60, sort_order: 1, source: '' }
     const res = await resource.remove(item)
 
     expect(deleteMock).toHaveBeenCalledTimes(1)
@@ -129,38 +129,17 @@ describe('GroupsPage', () => {
     w.unmount()
   })
 
-  it('加载方案列表并传给方案下拉', async () => {
-    listProfilesMock.mockResolvedValue([{ id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0 }])
-    const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
+  it('新增分组表单无「方案」下拉（字段里没有 profile_id）', async () => {
+    const w = mount(GroupsPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } } })
     await flushPromises()
 
-    expect(listProfilesMock).toHaveBeenCalled()
-    const rp = w.findComponent(ResourcePage)
-    const fields = rp.props('fields') as any[]
-    const profileField = fields.find((f) => f.key === 'profile_id')
-    expect(profileField.type).toBe('select')
-    expect(profileField.options).toEqual([
-      { title: '未分配', value: 0 },
-      { title: 'A-方案', value: 1 },
-    ])
+    const fields = w.findComponent(ResourcePage).props('fields') as any[]
+    expect(fields.find((f) => f.key === 'profile_id')).toBeUndefined()
     w.unmount()
   })
 
-  it('方案拉取失败降级为仅未分配，不阻塞分页', async () => {
-    listProfilesMock.mockRejectedValueOnce(new Error('boom'))
-    const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-
-    expect(w.text()).toContain('代理分组')
-    const rp = w.findComponent(ResourcePage)
-    const fields = rp.props('fields') as any[]
-    const profileField = fields.find((f) => f.key === 'profile_id')
-    expect(profileField.options).toEqual([{ title: '未分配', value: 0 }])
-    w.unmount()
-  })
-
-  it('新增分组默认带 profile_id=0（未分配）', async () => {
-    createMock.mockResolvedValue({ id: 2, name: '新分组', profile_id: 0 })
+  it('新增分组提交时不带 profile_id（source 恒为自定义，后端默认）', async () => {
+    createMock.mockResolvedValue({ id: 2, name: '新分组' })
     const w = mount(GroupsPage, {
       global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } },
     })
@@ -173,16 +152,16 @@ describe('GroupsPage', () => {
     await flushPromises()
 
     expect(createMock).toHaveBeenCalledTimes(1)
-    expect(createMock.mock.calls[0][0].profile_id).toBe(0)
+    expect(createMock.mock.calls[0][0]).not.toHaveProperty('profile_id')
     expect(createMock.mock.calls[0][0].name).toBe('新分组')
     w.unmount()
   })
 
-  it('编辑分组回填并携带已有 profile_id', async () => {
+  it('编辑分组回填时不带 profile_id', async () => {
     listMock.mockResolvedValue([
-      { id: 5, name: '老分组', type: 'select', regex: '.*', url: 'u', interval: 300, sort_order: 2, profile_id: 1, profile_name: 'A-方案' },
+      { id: 5, name: '老分组', type: 'select', regex: '.*', url: 'u', interval: 300, sort_order: 2, source: 'airport:老机场' },
     ])
-    updateMock.mockResolvedValue({ id: 5, name: '老分组', profile_id: 1 })
+    updateMock.mockResolvedValue({ id: 5, name: '老分组' })
     const w = mount(GroupsPage, {
       global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } },
     })
@@ -192,15 +171,29 @@ describe('GroupsPage', () => {
     expect(editBtn.exists()).toBe(true)
     await editBtn.trigger('click')
     await flushPromises()
-    const selects = w.findAllComponents({ name: 'VSelect' })
-    const profileSelect = selects.find((s) => ((s.props('items') as any[]) ?? []).some((i) => i.title === '未分配'))
-    expect(profileSelect).toBeTruthy()
-    expect(profileSelect!.props('modelValue')).toBe(1)
     await w.find('[data-testid="dialog-submit"]').trigger('click')
     await flushPromises()
 
     expect(updateMock).toHaveBeenCalledTimes(1)
-    expect(updateMock.mock.calls[0][1].profile_id).toBe(1)
+    expect(updateMock.mock.calls[0][1]).not.toHaveProperty('profile_id')
+    w.unmount()
+  })
+
+  it('来源列格式化：airport: 前缀转「机场:」、空串转「自定义」、其它原样', async () => {
+    listMock.mockResolvedValue([
+      { id: 1, name: 'g1', type: 't', regex: '', url: '', interval: 0, sort_order: 0, source: 'airport:北京' },
+      { id: 2, name: 'g2', type: 't', regex: '', url: '', interval: 0, sort_order: 0, source: '' },
+      { id: 3, name: 'g3', type: 't', regex: '', url: '', interval: 0, sort_order: 0, source: 'manual:foo' },
+    ])
+    const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+
+    expect(w.text()).toContain('机场:北京')
+    // g2 的空串来源显示「自定义」（注意：g3 的 manual:foo 不会误命中「自定义」）
+    const texts = w.text()
+    expect(texts).toContain('机场:北京')
+    // manual:foo 原样
+    expect(texts).toContain('manual:foo')
     w.unmount()
   })
 

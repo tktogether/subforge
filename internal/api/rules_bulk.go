@@ -5,15 +5,21 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tktogether/subforge/internal/subforge"
+	"github.com/tktogether/subforge/internal/store"
 )
 
+// bulkRulesBody 是 /api/rules/bulk 的请求体。
+//
+// v2 起批量操作按「来源」整批执行（机场导入的上万条规则终于能一次停用/删除），
+// 也保留按 ids 精确操作。Source 用 *string 是为了区分「没给 source」与
+// 「source 是空串」——后者表示自定义层，是合法筛选条件。
 type bulkRulesBody struct {
-	IDs     []int64 `json:"ids"`
-	Source  string  `json:"source"`
-	Enabled bool    `json:"enabled"`
-	Delete  bool    `json:"delete"`
-	// ProfileID 非 nil = 批量移动归属（与启用/停用/删除互斥）；nil = 旧行为。
+	IDs          []int64 `json:"ids"`
+	Source       *string `json:"source"`
+	SourcePrefix bool    `json:"source_prefix"`
+	Enabled      bool    `json:"enabled"`
+	Delete       bool    `json:"delete"`
+	// ProfileID 非 nil = 旧客户端的「移动到方案」参数，v2 已下线。
 	ProfileID *int64 `json:"profile_id"`
 }
 
@@ -30,57 +36,41 @@ func (s *Server) handleAPIRulesBulk(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeBody(w, r, &body) {
 		return
 	}
-	hasIDs := len(body.IDs) > 0
-	hasSource := strings.TrimSpace(body.Source) != ""
-
-	// profile_id 非 nil = 把规则移到该方案（ids 或 source 二选一），与 delete 互斥。
 	if body.ProfileID != nil {
-		if body.Delete {
-			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("profile_id 与 delete 不能同时使用"))
-			return
-		}
-		if !s.profileExists(w, r, m, *body.ProfileID) {
-			return
-		}
-		if hasIDs && hasSource {
-			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("ids 与 source 不能同时给出"))
-			return
-		}
-		if !hasIDs && !hasSource {
-			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("必须给出 ids 或 source"))
-			return
-		}
-		var moved int64
-		var err error
-		if hasIDs {
-			moved, err = m.MoveRulesToProfile(r.Context(), body.IDs, *body.ProfileID)
-		} else {
-			moved, err = m.MoveRulesBySourceToProfile(r.Context(), strings.TrimSpace(body.Source), *body.ProfileID)
-		}
-		if err != nil {
-			if isDuplicateRuleMoveError(err) {
-				s.writeAPIError(w, r, http.StatusConflict, err)
-				return
-			}
-			s.writeAPIError(w, r, http.StatusInternalServerError, err)
-			return
-		}
-		s.writeJSON(w, http.StatusOK, map[string]any{"updated": moved})
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("规则不再归属订阅方案，请用 source 区分来源"))
 		return
 	}
+	hasIDs := len(body.IDs) > 0
+	hasSource := body.Source != nil
+	if hasIDs && hasSource {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("ids 与 source 不能同时给出"))
+		return
+	}
+	if !hasIDs && !hasSource {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("必须给出 ids 或 source"))
+		return
+	}
+	source := ""
+	if hasSource {
+		source = strings.TrimSpace(*body.Source)
+		if body.SourcePrefix && source == "" {
+			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("source_prefix 需要非空 source"))
+			return
+		}
+	}
+	filter := store.SourceFilter{Source: source, Prefix: body.SourcePrefix}
 
-	// 批量删除只接受显式列出的 ids：source 的语义是「按来源整批」，放开等于给
-	// 全表一个一键清空入口。删除与启用/禁用互斥，走各自独立的响应体。
+	// 删除：按来源整批删或按 ids 删，两者都走一条 SQL（来源批量是 v1 缺的能力：
+	// 导入上万家规则后想「把这个机场的全删掉」只能一条条点）。delete 与启停互斥。
 	if body.Delete {
-		if hasSource {
-			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("批量删除仅支持 ids"))
-			return
+		var deleted int64
+		var err error
+		if hasIDs {
+			n, derr := m.DB().BatchDeleteRules(r.Context(), body.IDs)
+			deleted, err = int64(n), derr
+		} else {
+			deleted, err = m.DB().BatchDeleteRulesBySource(r.Context(), filter)
 		}
-		if !hasIDs {
-			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("批量删除必须给出 ids"))
-			return
-		}
-		deleted, err := m.DB().BatchDeleteRules(r.Context(), body.IDs)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -89,43 +79,26 @@ func (s *Server) handleAPIRulesBulk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !hasIDs && !hasSource {
-		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("必须给出 ids 或 source"))
-		return
-	}
-	if hasIDs && hasSource {
-		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("ids 与 source 不能同时给出"))
-		return
-	}
-
-	var targets []subforge.Rule
-	if hasIDs {
-		for _, id := range body.IDs {
-			rule, err := m.GetRule(r.Context(), id)
-			if err != nil {
-				continue
-			}
-			targets = append(targets, *rule)
-		}
-	} else {
-		all, err := m.ListRules(r.Context())
+	// 启停：按来源走一条 UPDATE（原子），按 ids 逐条更新（保持 v1 行为，非原子可接受）。
+	if hasSource {
+		updated, err := m.DB().BatchSetRulesEnabledBySource(r.Context(), filter, body.Enabled)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
-		for _, rule := range all {
-			if rule.Source == body.Source {
-				targets = append(targets, rule)
-			}
-		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "deleted": 0})
+		return
 	}
-
 	updated := 0
-	for _, rule := range targets {
+	for _, id := range body.IDs {
+		rule, err := m.GetRule(r.Context(), id)
+		if err != nil {
+			continue
+		}
 		if err := m.UpdateRule(r.Context(), rule.ID, rule.RuleType, rule.RuleParam, rule.RuleConfig, rule.ResolveDNS, body.Enabled); err != nil {
 			continue
 		}
 		updated++
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"updated": updated})
+	s.writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "deleted": 0})
 }

@@ -754,3 +754,139 @@ Lead 独立复跑（原始命令，不是队友自测）：
 - 截图：.tmp/ux-e2e/profiles/shots/p20-*、p21-*、p21b-*、p21d-*、p21e-*、p22-*；
 - 数据快照：.tmp/ux-e2e/profiles/{p22-evidence.json,final-state.json}、cover.out。
 
+
+
+## 15. 第六轮：v2 分层改造 —— 规则/分组独立成「自定义库」，方案只管优先级
+
+> 时间：2026-10-21（15:00–16:40）。用户原话（m04961）："单独的规则分组啥的独立成自定义的那种，不要把profile又混进去，注意优先级即可"。
+> 这一轮推翻了 §14 刚交付的 v1 归属模型（规则/分组带 profile_id），改为「规则与分组进全局库、按 source 分层；方案只保存层顺序；订阅按层优先级拼装」。
+
+### 15.1 v1 模型为什么必须推翻
+
+§14 的 v1 把 profile_id 写进 rules / proxy_groups：一条规则、一个分组只能属于一个方案。遇到三个绕不过去的问题：
+
+1. **与用户诉求相反**：用户要的是「规则、分组独立成自定义的」，v1 却把它们绑死在方案里；同一批机场规则想在两个方案里用，得移动/复制（v1 的「批量移动」就是为此打的补丁）。
+2. **迁移与去重变复杂**：唯一索引用 (profile_id, source, origin_key)，跨方案同一条机场规则会重复入库；§14 的 D-34「启用本机场全部」跨方案泄漏就是这个模型的直接后果。
+3. **管理入口仍在方案里**：万条规则要「按机场（来源）整批启停/删除」，v1 只有方案筛选，没有来源入口（D-40）。
+
+v2 的数据语义：
+
+| 实体 | 归属 | 说明 |
+| --- | --- | --- |
+| 规则 rules.source | 全局 | `""` = 自定义（手工录入）；`airport:<机场名>` = 机场导入 |
+| 分组 proxy_groups.source | 全局 | 同上；机场导入自动建组时写入 `airport:<机场名>` |
+| 方案 profiles.rule_layers / group_layers | 方案 | 有序 JSON 数组，缺省 `["custom","airport","template"]`；数组顺序 = 优先级高 → 低 |
+| 令牌 sub_tokens.profile_id | 令牌 | 令牌可绑一个方案（保留 v1 语义）；不绑 = 默认三层 |
+
+层语义：`custom` = 自定义规则/分组；`airport` = 机场导入的规则/分组；`template` = INI 模板自带的规则/分组。**规则按层顺序拼接，匹配从上到下，先命中先赢**（所以 template 层永远自动排最后，MATCH/FINAL 才不会把前面全吃掉）；**分组按层顺序合并，同名先到者胜**（高优先层覆盖低优先层，不再整体替换模板分组）。
+
+### 15.2 代码改动面
+
+`git diff --stat`：31 个已跟踪文件 +3321/−2162，另新增 `internal/store/layers.go`（354 行）与 `internal/store/layers_test.go`（411 行）。
+
+| 层 | 文件 | 关键内容 |
+| --- | --- | --- |
+| store | internal/store/store.go | v2 迁移：profiles 加 rule_layers/group_layers；proxy_groups 加 source（rules.source 已有）；**有 profile_id 的旧库**先 DROP INDEX idx_rules_origin → 按 (source, origin_key) 去重保留 MIN(id)（origin_key 非空）→ ALTER TABLE DROP COLUMN profile_id（rules、proxy_groups）→ 重建 `CREATE UNIQUE INDEX idx_rules_origin ON rules(source, origin_key) WHERE origin_key <> ''`；`columnExists` 助手保证幂等；v0.1.8 老库跳过 drop |
+| store | internal/store/layers.go | `SourceFilter{Source, Prefix, All}`、`DefaultLayers`、`ListRulesFiltered`/`ListProxyGroupsFiltered`、`BatchSetRulesEnabledBySource`/`BatchDeleteRulesBySource`（按来源一条 SQL）、`ListRulesByLayers`/`ListProxyGroupsByLayers`（逐层取数、同名先到者胜）、`CountRulesByLayers`/`CountGroupsByLayers`、`ListAllRuleSources`/`ListAllGroupSources`、`SetRuleSource`（改来源，唯一冲突翻译成「目标来源里已存在同来源同去重键的规则」） |
+| store | internal/store/profiles.go / rules_batch.go | Profile 去 profile_id、加层数组与实时计数；批量插入 11 列（含 source） |
+| subforge | internal/subforge/import.go | `ImportRulesToLibrary(ctx, source, rules, providers, createGroups)`：来源必填（空 → `ErrEmptyImportSource`「导入来源不能为空」）；createGroups 时自动建 select 组（source 跟随）；已存在同名分组全局复用（先到者胜） |
+| subforge | internal/subforge/profiles.go | 12 个薄封装（分层取数/按来源批量/层顺序/来源枚举） |
+| convert | internal/convert/params.go、chain.go | Params 增 `DisableTemplateRules`/`DisableTemplateGroups`；ApplyTemplate 分组改为 `mergeGroups(DB, 模板)`（按名去重、先到者胜）——修复 §14 的 D-36；关模板层时追加告警并清空 TemplateRules/TemplateRemoteRulesets |
+| api | internal/api/subscription.go | /api/rules、/api/groups 支持 `?source=` 与 `?source_prefix=1`；POST 带 profile_id → 400「…不再归属订阅方案，请用 source 区分来源」；PUT rule 支持改 source（404/409 分层）；/subscribe 按层取规则与分组、层里没有 template 就置 DisableTemplate* |
+| api | internal/api/profiles.go | 层字段校验（未知层/重复层 400「规则层顺序非法：…」「分组层顺序非法：…」；规则层 template 自动移到末位）；删除方案只拦令牌占用（409「订阅方案 “X” 仍有 N 个令牌在用，请先改绑或删除令牌」） |
+| api | internal/api/rules_bulk.go | `{ids 或 source, source_prefix, enabled, delete}`；ids 与 source 互斥；按来源启停是一条 SQL、按来源删除一条 SQL；带 profile_id → 400 |
+| api | internal/api/import_rules.go | 导入 body 只认 `{create_groups}`；带 profile_id → 400「导入的规则不再归属订阅方案（来源恒为 airport:<机场名>），请改用规则页按来源管理」 |
+| api | internal/api/server.go、web.go | 下线 `POST /api/groups/bulk`；`/api/convert` 接受 `rule_layers`/`group_layers`（只影响是否展开模板规则/分组） |
+| web | RulesPage.vue | 方案筛选 → **来源筛选**（rules-source-filter）+「启用/停用/删除本来源全部」（enable/disable/delete-source-all，带 loading 与删除二次确认）+ 候选表头汉化 + 删除批量移动 |
+| web | GroupsPage.vue | 去方案字段，加「来源」列（人读文案：「自定义」/「机场:守候」） |
+| web | ProfilesPage.vue | 层编辑器：两层各三行，勾选启用 + 上移/下移 + 优先级序号；规则层的 template 锁定在末位 |
+| web | AirportsPage.vue | 导入弹窗去方案下拉，保留「自动创建缺失的目标分组」 |
+| web | SubscriptionsPage.vue | 令牌弹窗保留方案选择 |
+
+### 15.3 本地真机验收：47 条 API 层断言 + 30 条网页操作断言，全部通过
+
+环境：本地实例 `127.0.0.1:25612`（当前 HEAD 源码构建，`serve -token vtok`，数据目录 .tmp/ux-e2e/profiles2/data），fixture 上游 `127.0.0.1:25630`（45 节点 / 9,639 条 seed 规则 / 本地 Full.ini 38,003 字节）。所有网页操作通过 CDP 无头 Chrome 真实点击完成，断言只读复核走 /api。
+
+**（1）层逻辑与 API 语义：`.tmp/ux-e2e/profiles2/verify-layers.mjs` → 47/47 PASS**
+
+| 断言组 | 实测结果 |
+| --- | --- |
+| 层校验 | 规则层 `["custom","template"]` 保存后自动变 `["custom","template"]`（template 已末位）；分组层 `["template","custom"]` 原样保留；未知层 400「规则层顺序非法：未知的层 customx」；重复层 400「规则层顺序非法：重复的层 custom」 |
+| 导入 | 机场刷新 45 节点；导入自动建组 4 个（source=airport:守候）；9,639 条规则默认 enabled=false；按来源一批启用 9,639（`{"deleted":0,"updated":9639}`） |
+| 自定义库 | 手工规则/分组 source 均为空串，与机场来源互不干扰 |
+| 四令牌 × 四套订阅 | 自定义层：含自定义规则、无 seed 规则、无模板分组（只有自定义组-甲）；模板层：71 个模板分组、无自定义/机场规则；机场层：含 seed 规则与机场建的分组、无模板分组；混合层：自定义规则在 seed 之前、seed 在 MATCH 之前（custom=0/seed=2/match=-1） |
+| 同名分组优先级 | 把自定义组改名为「🚀 手动选择」→ 输出里该名只出现 1 次，且用 DB 定义（type: url-test，url/interval 是自定义值）——模板同名组被高优先层覆盖，但模板其余 70 组保留（D-36 已修） |
+| 关模板层 | 方案改两层只剩 custom → 无模板分组、无模板规则，自定义规则仍在；token `/subscribe` 与 `/api/convert` 均按此生效 |
+| 方案停用/解绑 | 停用方案 → 绑它的令牌 /subscribe 400「订阅方案 “层-混合” 已停用」；解绑后回默认三层：含 seed 与自定义规则，无 config 所以无模板分组 |
+| v1 参数下线 | 机场导入带 profile_id → 400；bulk ids+source → 400「ids 与 source 不能同时给出」；`POST /api/groups/bulk` → 405；规则 POST 带 profile_id → 400 |
+
+**（2）网页操作：`.tmp/ux-e2e/profiles2/step30-web.mjs` → 30/30 PASS（截图 shots/p30-01..10）**
+
+| # | 页面 | 操作 | 复核 |
+| --- | --- | --- | --- |
+| 1 | /profiles | 新建方案Web-自定义：取消勾选 airport/template（只剩 custom） | 落库 rule_layers=["custom"]、group_layers=["custom"] |
+| 2 | /profiles | 新建方案Web-模板：只留 template，填模板 http://127.0.0.1:25630/full.ini | rule_layers=["template"]、group_layers=["template"]、config 落库 |
+| 3 | /profiles | 新建方案Web-混合：三层全勾 | 两层都是 ["custom","airport","template"]；列表行显示「自定义 → 机场导入 → 模板」 |
+| 4 | /rules | 来源筛选选 airport:守候 | 「筛选命中 9639 条 · 已选 0 条」 |
+| 5 | /rules | 规则行勾 1 条 → 批量禁用 | 落库 1 条 disabled（候选因此非空） |
+| 6 | /rules | 切「导入候选」→ 停用本来源全部 | 轮询到 9639/9639 disabled |
+| 7 | /rules | 启用本来源全部 | 9639/9639 enabled |
+| 8 | /groups | 查看来源列 | 机场建组显示「机场:守候」，自定义组显示「自定义」 |
+| 9 | /groups | 新建方案Web分组（正则 .） | /api/groups source="" |
+| 10 | /airports | 行内「导入规则」 | 弹窗只有「自动创建缺失的目标分组」，无方案下拉（import-rules-profile 不存在） |
+| 11 | /subscriptions | 新建 tok_web、方案选方案Web-混合 | /api/tokens profile_id=31（=方案Web-混合） |
+
+**当前本地状态快照**（16:38）：profiles 8 个（verify-layers 的 5 个 + 网页建的 3 个）；tokens 5 个（tok_custom→方案1、tok_tpl→方案2、tok_mix→未绑、tok_air→方案4、tok_web→方案31）；groups 6 个（4 个来自 airport:守候 + 2 个自定义）；`GET /api/rules?source=airport:守候` 返回 9,639 条、全部 enabled、响应体 3,656,772 字节（约 3.5 MB，服务端仍不分页）。
+
+### 15.4 本轮新缺陷（编号接 §14.7 的 D-40）
+
+| 编号 | 级别 | 缺陷 | 证据 |
+| --- | --- | --- | --- |
+| D-41 | P1 | **「整批启用/停用/删除本来源全部」按钮被候选列表的空态闸门藏起来**：三个按钮渲染在「导入候选」tab 内、`AsyncSection :empty="candidates.length === 0"` 之下。候选 = 未启用的机场规则；某来源全部启用后候选为空 → 按钮整块不渲染，用户无法再用网页「停用本来源全部」撤回。这与用户「导入上万条后不好管理」的痛点正面冲突。 | `web/src/pages/RulesPage.vue:695-703`；CDP 实测：开始 `disable-source-all` 为 null，全部启用后仍为 null（断言 detail「开始隐藏=true 全部启用后隐藏=true」），只能先经规则行页禁用 1 条制造候选才能继续 |
+| D-42 | P2 | **「导入候选」列表只在来源筛选变化时刷新，切 tab 不刷新**：`watch(sourceFilter)` 与 onMounted 才调 loadCandidates；在规则行页批量禁用后再切过去，看到的仍是旧的空列表，空态继续藏按钮（叠加 D-41）。 | `web/src/pages/RulesPage.vue:424-427`；CDP 探针必须「全部来源 → airport:守候」重选一次来源才能触发刷新 |
+| D-43 | P3 | **层编辑器 data-testid 在两个编辑器之间重复**：规则层和分组层都渲染 `layer-toggle-custom/airport/template`、`layer-row-*`，同一 testid 在弹窗里出现 2 次；自动化必须用容器 `profile-rule-layers`/`profile-group-layers` 限定。对真实用户无影响，属可测性缺陷。 | `web/src/pages/ProfilesPage.vue:433-461`；CDP 实测同一 testid 出现 2 次 |
+
+§14 遗留缺陷的本轮状态：**D-34（跨方案泄漏）机制性消除**（`enableAllAirport`/全库 listRules 取数已删，按来源批量改为显式 source 参数，grep 全仓 0 处残留）；**D-36（模板分组被整体替换）已修**（mergeGroups 同名先到者胜，实测模板 71 组里只有同名 1 组被覆盖）；**D-40（按来源管理）已修**；**D-35（整批无进度）部分改善**：按来源批量现在是服务端一条 SQL + 按钮 loading（sourceBusy），不再是逐条 PUT 的半状态，但没有细粒度进度条；**D-37（方案顺序列直显 19 位纳秒）仍在**（快照里 sort_order=1792569110835618100）；**D-38/D-39（缺 testid、field-text 重复）仍在**。
+
+### 15.5 测试与门禁（Lead 亲跑，原始输出）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| gofmt | `gofmt -l cmd internal pkg` | 输出为空 |
+| 全量测试 | `go test ./... -count=1` | 无 FAIL/panic，ALL_EXIT=0 |
+| api 专项 | `go test ./internal/api/ -count=1` | ok 25.542s |
+| 覆盖率门禁（CI 口径） | `go test "-coverprofile=…cover-v2.out" "-covermode=atomic" ./internal/...` + `go run ./internal/tools/coveragegate "-profile=…" -min 80 -min-func 100` | 语句 91.2%（9413/10326）、函数 961/961=100.0%、GATE_EXIT=0；internal/api 173/173 函数 100% |
+| 前端 | `cd web; npm run coverage; npm run build` | 覆盖率 All files 100 stmts / 100 funcs / 100 lines（branch≈96.7）；BUILD_EXIT=0（index-3fgHODl_.js 655.07 kB，dist 已重建） |
+| 真机 | 47 条 API 断言 + 30 条网页断言 | 77/77 PASS |
+
+测试补写说明：T2（api 层）队友认领后 50 多分钟零落盘，Lead 收回写入权并亲自完成 `internal/api` 全部非测试代码 + `internal/api/profiles_test.go` 的 v2 重写（9 个 Test 覆盖 CRUD/层校验/来源过滤/跨来源 409/令牌绑定/订阅层拼装//api/convert 层参数/helper 单测），顺带修了两个真实 404 缺陷（PUT /api/groups 与 PUT /api/rules 不存在 id 时返回 500：subforge 层把 sql.ErrNoRows 翻成中文文案后不再包装，handler 判不到）。
+
+### 15.6 未完成 / 不能下的结论（诚实边界）
+
+1. **远端 192.168.8.102:25500 仍是 v0.1.8（commit bddbe641）**，没有 v2 代码，无法在远端网页演示层编辑器/来源筛选；本轮全部真机证据来自本地实例。
+2. 本地上游仍是 fixture（45 节点 / 9,639 条 seed-*.test 规则），不是守候真实机场；远端 10,393 条规则、29 个目标分组的真实映射没有在本地复现。
+3. 层顺序在网页上可勾选、可上下移，但**规则层的 template 强制末位**（否则 MATCH 会吃掉后面所有规则）；这是设计约束，不是可配置项。
+4. `PUT /api/profiles/{id}` 是**全量覆盖**（只有 enabled 缺省保持原值），省略 config 会清空模板；网页保存时全量提交所以无感，但直接调 API 的人会踩。这是 API 语义，未改。
+5. /api/rules 仍**全量返回**（9,639 条 3.5 MB），前端分页但服务端没有分页/字段裁剪；万条以上场景仍是性能与体验风险。
+6. 未跑并发/压力测试；未验证多方案下的规则总量上限。
+7. D-41 未修（只取证）：修复需要把整批按钮移出空态闸门（例如放到筛选栏），本轮不改前端结构。
+
+### 15.7 第六轮评分（主观，仅基于本轮证据）
+
+| 维度 | 评分 | 理由 |
+| --- | --- | --- |
+| 数据模型 | 8/10 | source 分层 + 层顺序，规则/分组真正独立于方案；有 v1→v2 与 v0.1.8→v2 两条迁移用例 |
+| API 设计 | 8/10 | 来源过滤/按来源批量/层校验/导入去方案收敛/convert 层参数齐全，错误码分层清楚；扣分是 rules 全量返回 |
+| 前端完成度 | 7.5/10 | 层编辑器、来源筛选、整批按钮、来源列、导入弹窗都到位；扣分是 D-41/D-42（整批按钮被空态藏住）与重复 testid |
+| 优先级正确性 | 9/10 | 同名分组 DB 胜出、模板组保留、规则顺序 custom→seed→MATCH 实测正确；template 强制末位防踩坑 |
+| 万条规则可管理性 | 7.5/10 | 按来源筛选 + 整批启停删 + 批量移动下线（不再需要）；扣分是 D-41 导致「全部启用后无法整批停用」 |
+| 综合 | ≈7.8/10 | 比第五轮 7.2 提高：用户诉求「规则/分组独立成自定义、方案只管优先级」已落地；D-41 是必须尽快修的回退入口 |
+
+### 15.8 本轮证据索引
+
+- 契约与任务书：.tmp/ux-e2e/profiles2/CONTRACT-V2.md、TASK-T1a-store.md、TASK-T1b-subforge.md、TASK-T2v2-api.md、TASK-T3v2-web.md；
+- 队友报告：.tmp/ux-e2e/profiles2/{T1b-subforge-report.md,T3v2-report.md}、T1a/T1b/T3v2 进度日志；
+- 网页/接口脚本与结果：.tmp/ux-e2e/profiles2/{verify-layers.mjs,verify-layers-result.json,step30-web.mjs,step30-web-result.json,prep-web.mjs}；
+- 截图：.tmp/ux-e2e/profiles2/shots/p30-01..10（含 p30-02a-layer-editor.png、p30-03-rules-source-filter.png、p30-06-groups-source-column.png）；
+- 覆盖率：.tmp/ux-e2e/profiles2/cover-v2.out；
+- 数据目录：.tmp/ux-e2e/profiles2/data（本轮本地实例）。

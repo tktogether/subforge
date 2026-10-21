@@ -23,15 +23,16 @@ type importHTTPError struct {
 func (e *importHTTPError) Error() string { return e.err.Error() }
 func (e *importHTTPError) Unwrap() error { return e.err }
 
-// importRulesFromAirport 拉取一个机场的订阅并导入规则与规则集（导入到未分配池）。
+// importRulesFromAirport 拉取一个机场的订阅并导入规则与规则集。
+// 导入的规则来源恒为 airport:<机场名>，进入全局规则库，不再归属任何订阅方案。
 // warnings = dec.Warnings + ir.Warnings 合并（非 nil 切片）。
 func (s *Server) importRulesFromAirport(ctx context.Context, m *subforge.Manager, a *subforge.Airport) (subforge.ImportResult, []string, error) {
-	return s.importRulesToProfile(ctx, m, a, 0, false)
+	return s.importRulesToLibrary(ctx, m, a, false)
 }
 
-// importRulesToProfile 是 importRulesFromAirport 的方案版：profileID 归属哪个方案，
-// createGroups=true 时为目标方案自动补建缺失的目标分组。
-func (s *Server) importRulesToProfile(ctx context.Context, m *subforge.Manager, a *subforge.Airport, profileID int64, createGroups bool) (subforge.ImportResult, []string, error) {
+// importRulesToLibrary 是导入的唯一入口：source 由机场名派生，
+// createGroups=true 时自动补建缺失的目标分组（分组的 source 跟随规则来源）。
+func (s *Server) importRulesToLibrary(ctx context.Context, m *subforge.Manager, a *subforge.Airport, createGroups bool) (subforge.ImportResult, []string, error) {
 	if m == nil {
 		return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusServiceUnavailable, errors.New("订阅管理未启用")}
 	}
@@ -46,7 +47,7 @@ func (s *Server) importRulesToProfile(ctx context.Context, m *subforge.Manager, 
 	if err != nil {
 		return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusBadGateway, fmt.Errorf("导入失败: %w", err)}
 	}
-	ir, err := m.ImportRulesToProfile(ctx, profileID, "airport:"+a.Name, dec.Rules, dec.RuleProviders, createGroups)
+	ir, err := m.ImportRulesToLibrary(ctx, "airport:"+a.Name, dec.Rules, dec.RuleProviders, createGroups)
 	if err != nil {
 		return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusInternalServerError, fmt.Errorf("导入失败: %w", err)}
 	}
@@ -79,10 +80,12 @@ func (s *Server) handleAPIImportRules(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("机场不存在"))
 		return
 	}
-	// body 可选：空 body / EOF → 未分配（profile_id=0）且不自动建组，兼容旧调用。
+	// body 可选：空 body / EOF → 不自动建组，兼容旧调用。
+	// v2 起规则/分组是全局库，导入不再有归属方案；旧客户端仍传 profile_id 时明确拒绝，
+	// 避免它以为「导到某个方案」而实际进了全局库。
 	var body struct {
-		ProfileID    int64 `json:"profile_id"`
-		CreateGroups bool  `json:"create_groups"`
+		ProfileID    *int64 `json:"profile_id"`
+		CreateGroups bool   `json:"create_groups"`
 	}
 	if r.Body != nil {
 		if derr := json.NewDecoder(r.Body).Decode(&body); derr != nil && !errors.Is(derr, io.EOF) {
@@ -90,10 +93,11 @@ func (s *Server) handleAPIImportRules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !s.profileExists(w, r, m, body.ProfileID) {
+	if body.ProfileID != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("导入的规则不再归属订阅方案（来源恒为 airport:%s），请改用规则页按来源管理", a.Name))
 		return
 	}
-	ir, warnings, err := s.importRulesToProfile(r.Context(), m, a, body.ProfileID, body.CreateGroups)
+	ir, warnings, err := s.importRulesToLibrary(r.Context(), m, a, body.CreateGroups)
 	if err != nil {
 		status := http.StatusInternalServerError
 		var he *importHTTPError

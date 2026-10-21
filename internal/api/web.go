@@ -148,6 +148,10 @@ type apiConvertReq struct {
 	Sort     string   `json:"sort"`
 	List     bool     `json:"list"`
 	Override string   `json:"override"`
+	// RuleLayers / GroupLayers 指定本次转换按哪些层、什么优先级取规则与分组；
+	// 缺省（nil）= 默认三层。模板层不在数组里就等于本次转换不用模板规则/分组。
+	RuleLayers  []string `json:"rule_layers"`
+	GroupLayers []string `json:"group_layers"`
 }
 
 func (s *Server) handleAPIConvert(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +216,23 @@ func (s *Server) handleAPIConvert(w http.ResponseWriter, r *http.Request) {
 	}
 	if params.Target == "" {
 		params.Target = "clash.meta"
+	}
+	// 层参数：给了就按层拼接（非法层键 400），没给就是默认三层（模板层启用）。
+	if len(req.RuleLayers) > 0 {
+		layers, lerr := normalizeLayers(req.RuleLayers, true)
+		if lerr != nil {
+			s.fail(w, r, http.StatusBadRequest, fmt.Errorf("规则层顺序非法：%w", lerr))
+			return
+		}
+		params.DisableTemplateRules = !hasLayer(layers, "template")
+	}
+	if len(req.GroupLayers) > 0 {
+		layers, lerr := normalizeLayers(req.GroupLayers, false)
+		if lerr != nil {
+			s.fail(w, r, http.StatusBadRequest, fmt.Errorf("分组层顺序非法：%w", lerr))
+			return
+		}
+		params.DisableTemplateGroups = !hasLayer(layers, "template")
 	}
 	if strings.TrimSpace(req.Override) != "" {
 		txt := strings.TrimSpace(req.Override)

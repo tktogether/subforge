@@ -3,6 +3,7 @@ package subforge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,10 @@ import (
 	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/store"
 )
+
+// ErrEmptyImportSource 表示导入来源为空：导入必须说明这批规则来自哪个来源（层），
+// 否则无法做同来源去重与层拼接。API 层可把它映射成 400。
+var ErrEmptyImportSource = errors.New("导入来源不能为空")
 
 // ImportResult 汇总一次订阅规则导入的结果。
 type ImportResult struct {
@@ -46,38 +51,44 @@ func isBuiltinPolicy(name string) bool {
 // source 形如 "airport:<机场名>"；providers 用 UpsertRuleProvider 写入，enabled 恒为 false。
 // 导入的规则一律 enabled=0（候选队列，不自动生效）。
 //
-// 等价于 ImportRulesToProfile(ctx, 0, source, rules, providers, false)：导入到「未分配」全局池，
+// 等价于 ImportRulesToLibrary(ctx, source, rules, providers, false)：导入全局自定义库，
 // 不自动建组，与引入方案前的行为完全一致。
 func (m *Manager) ImportRules(ctx context.Context, source string, rules []string, providers []model.RuleProvider) (ImportResult, error) {
-	return m.ImportRulesToProfile(ctx, 0, source, rules, providers, false)
+	return m.ImportRulesToLibrary(ctx, source, rules, providers, false)
 }
 
-// ImportRulesToProfile 把解析出来的规则行与规则集导入到指定方案。
+// ImportRulesToLibrary 把解析出来的规则行与规则集导入全局自定义库。
 //
-// profileID=0 表示导入到「未分配」全局池（等价旧行为）；profileID>0 表示导入到该方案，
-// 方案不存在直接报错。createGroups=true 时，规则目标（策略名）既不是内核内置出站、
-// 当前方案又没有同名分组，就为该方案自动建一个 select 分组，并把 rule_config 指向新组。
-// providers 不分方案（订阅渲染不使用），仍写全局。
-func (m *Manager) ImportRulesToProfile(ctx context.Context, profileID int64, source string, rules []string, providers []model.RuleProvider, createGroups bool) (ImportResult, error) {
+// source 必填：机场导入由调用方传 airport:<机场名>；为空或全是空白时返回
+// ErrEmptyImportSource（「导入来源不能为空」），且不落任何规则。
+// 导入的规则一律 enabled=0（候选队列，不自动生效）。
+//
+// createGroups=true 时，规则目标（策略名）既不是内核内置出站、当前分组库里又没有同名分组，
+// 就自动建一个 select 分组（regex="."、sort_order=0），新分组的 source 跟随本次导入的来源，
+// 并把 rule_config 指向新组；分组库里已有同名分组时直接复用，不重复建组。
+// providers 不分方案（订阅渲染不使用），仍写全局，来源跟随 source。
+func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules []string, providers []model.RuleProvider, createGroups bool) (ImportResult, error) {
 	result := ImportResult{
 		Warnings: []string{},
 	}
 
-	// 方案必须存在（profileID>0 时）；不存在直接失败，不落任何规则。
-	if profileID > 0 {
-		if _, err := m.GetProfile(ctx, profileID); err != nil {
-			return result, err
-		}
+	// 来源必填：没有来源就没法把规则归到某一层，也无法做同来源去重。
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return result, ErrEmptyImportSource
 	}
 
-	// 目标分组表按方案取：profileID=0 时等价旧的全局分组池。
-	groups, err := m.ListProxyGroupsByProfile(ctx, profileID)
+	// 目标分组表是全局库：同名分组先到者胜（按 sort_order,id 排序），
+	// 已有同名分组就复用，避免出现指向同一个名字的死分组。
+	groups, err := m.ListProxyGroups(ctx)
 	if err != nil {
 		return result, err
 	}
 	groupIDByName := make(map[string]int64, len(groups))
 	for _, g := range groups {
-		groupIDByName[g.Name] = g.ID
+		if _, ok := groupIDByName[g.Name]; !ok {
+			groupIDByName[g.Name] = g.ID
+		}
 	}
 
 	// 只取当前最大 sort_order（一行聚合），不再为了新序号把全部规则读进内存。
@@ -134,8 +145,8 @@ func (m *Manager) ImportRulesToProfile(ctx context.Context, profileID int64, sou
 				ruleConfig = id
 			} else if !isBuiltinPolicy(policyName) {
 				if createGroups {
-					// 自动建组：为该方案补一个 select 分组，规则直接指向新组。
-					g, gErr := m.AddProxyGroupWithProfile(ctx, profileID, policyName, "select", ".", "", 0, 0)
+					// 自动建组：补一个 select 分组（来源跟随本次导入），规则直接指向新组。
+					g, gErr := m.AddProxyGroupWithSource(ctx, policyName, "select", ".", "", 0, 0, source)
 					if gErr != nil {
 						return result, gErr
 					}
@@ -162,7 +173,6 @@ func (m *Manager) ImportRulesToProfile(ctx context.Context, profileID int64, sou
 			Source:     source,
 			Raw:        line,
 			OriginKey:  originKey,
-			ProfileID:  profileID,
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		})

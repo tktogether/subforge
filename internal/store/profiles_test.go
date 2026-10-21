@@ -1,6 +1,6 @@
 package store
 
-// internal/store/profiles.go 的补测 + 契约 §1.3 的老库迁移测试。
+// internal/store/profiles.go 的补测 + 契约 §2 的老库迁移测试。
 //
 // 纪律：不改 store.go 的行为；每个测试用 t.TempDir() 造独立 SQLite 文件（不用 :memory:），
 // 因为 Open 会执行 WAL pragma，落文件最稳。
@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// TestListProfilesEmpty 覆盖空库路径：返回非 nil 空切片。
+// TestListProfilesEmpty 覆盖空库路径：返回非 nil 空切片，且层数组为空。
 func TestListProfilesEmpty(t *testing.T) {
 	d, ctx := newTestDB(t)
 	got, err := d.ListProfiles(ctx)
@@ -43,6 +43,9 @@ func TestProfileCRUD(t *testing.T) {
 	}
 	if p.RuleCount != 0 || p.GroupCount != 0 {
 		t.Fatalf("空方案计数应为 0/0，实际 %d/%d", p.RuleCount, p.GroupCount)
+	}
+	if p.RuleLayers != nil || p.GroupLayers != nil {
+		t.Fatalf("新方案的层应为 nil（由调用方补默认），实际 %v / %v", p.RuleLayers, p.GroupLayers)
 	}
 
 	got, err := d.GetProfile(ctx, p.ID)
@@ -93,8 +96,11 @@ func TestProfileCRUD(t *testing.T) {
 	}
 }
 
-// TestListProfilesOrderAndCounts 覆盖 ORDER BY sort_order, id 与规则/分组计数子查询。
-func TestListProfilesOrderAndCounts(t *testing.T) {
+// TestListProfilesOrderAndLayerCounts 覆盖排序、层配置默认值与按层计数。
+//
+// v2 里规则/分组是全局库，方案的 rule_count/group_count 由「已启用层」统计：
+// 规则只数 enabled=true，template 层不贡献任何行。
+func TestListProfilesOrderAndLayerCounts(t *testing.T) {
 	d, ctx := newTestDB(t)
 
 	a, err := d.AddProfile(ctx, "a", "", "", "", true, 20)
@@ -106,357 +112,160 @@ func TestListProfilesOrderAndCounts(t *testing.T) {
 		t.Fatalf("AddProfile(b): %v", err)
 	}
 
-	for i := 0; i < 2; i++ {
-		if _, err := d.AddRuleWithProfile(ctx, a.ID, "DOMAIN-SUFFIX", "x.com", 0, true, true); err != nil {
-			t.Fatalf("AddRuleWithProfile(a): %v", err)
+	// 自定义层：2 条启用 + 1 条停用
+	for _, param := range []string{"x1.com", "x2.com"} {
+		if _, err := d.AddRuleWithSource(ctx, Rule{RuleType: "DOMAIN-SUFFIX", RuleParam: param, Enabled: true}); err != nil {
+			t.Fatalf("AddRuleWithSource(custom): %v", err)
 		}
 	}
-	if _, err := d.AddRuleWithProfile(ctx, b.ID, "DOMAIN-SUFFIX", "y.com", 0, true, true); err != nil {
-		t.Fatalf("AddRuleWithProfile(b): %v", err)
+	if _, err := d.AddRuleWithSource(ctx, Rule{RuleType: "DOMAIN-SUFFIX", RuleParam: "off.com", Enabled: false}); err != nil {
+		t.Fatalf("AddRuleWithSource(disabled): %v", err)
 	}
-	if _, err := d.AddProxyGroupWithProfile(ctx, a.ID, "g", "select", ".", "", 0, 0); err != nil {
-		t.Fatalf("AddProxyGroupWithProfile(a): %v", err)
+	// 机场层：1 条启用
+	if _, err := d.AddRuleWithSource(ctx, Rule{RuleType: "DOMAIN-SUFFIX", RuleParam: "hk.com", Enabled: true, Source: "airport:HK"}); err != nil {
+		t.Fatalf("AddRuleWithSource(airport): %v", err)
+	}
+	// 分组：2 自定义 + 1 机场
+	for _, name := range []string{"g1", "g2"} {
+		if _, err := d.AddProxyGroupWithSource(ctx, name, "select", "", "", 0, 0, ""); err != nil {
+			t.Fatalf("AddProxyGroupWithSource(%s): %v", name, err)
+		}
+	}
+	if _, err := d.AddProxyGroupWithSource(ctx, "airport-group", "select", "", "", 0, 0, "airport:HK"); err != nil {
+		t.Fatalf("AddProxyGroupWithSource(airport): %v", err)
 	}
 
+	// 默认层 = custom + airport + template：启用规则 3 条（自定义 2 + 机场 1），分组 3 条。
+	for _, p := range []*Profile{a, b} {
+		got, err := d.GetProfile(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("GetProfile(%d): %v", p.ID, err)
+		}
+		if got.RuleCount != 3 || got.GroupCount != 3 {
+			t.Fatalf("%s 默认层计数=%d/%d，期望 3/3", got.Name, got.RuleCount, got.GroupCount)
+		}
+	}
+
+	// 只保留自定义层：规则 2 条（停用的不计），分组 2 条。
+	if err := d.SetProfileLayers(ctx, b.ID, []string{"custom"}, []string{"custom"}); err != nil {
+		t.Fatalf("SetProfileLayers: %v", err)
+	}
+	got, err := d.GetProfile(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("GetProfile(b): %v", err)
+	}
+	if got.RuleCount != 2 || got.GroupCount != 2 {
+		t.Fatalf("b 只看自定义层计数=%d/%d，期望 2/2", got.RuleCount, got.GroupCount)
+	}
+
+	// ListProfiles 排序仍是 sort_order, id：b(10) 在 a(20) 前
 	list, err := d.ListProfiles(ctx)
 	if err != nil {
 		t.Fatalf("ListProfiles: %v", err)
 	}
-	if len(list) != 2 {
-		t.Fatalf("ListProfiles 长度 %d，期望 2", len(list))
+	if len(list) != 2 || list[0].ID != b.ID || list[1].ID != a.ID {
+		t.Fatalf("ListProfiles 顺序=%v，期望 [b, a]", []int64{list[0].ID, list[1].ID})
 	}
-	if list[0].ID != b.ID || list[1].ID != a.ID {
-		t.Fatalf("ListProfiles 排序错误: [%s(%d) %s(%d)]，期望按 sort_order 升序",
-			list[0].Name, list[0].SortOrder, list[1].Name, list[1].SortOrder)
-	}
-	if list[1].RuleCount != 2 || list[1].GroupCount != 1 {
-		t.Fatalf("a 的计数应为 2 规则/1 分组，实际 %d/%d", list[1].RuleCount, list[1].GroupCount)
-	}
-	if list[0].RuleCount != 1 || list[0].GroupCount != 0 {
-		t.Fatalf("b 的计数应为 1 规则/0 分组，实际 %d/%d", list[0].RuleCount, list[0].GroupCount)
+	if list[0].RuleLayers == nil || len(list[0].RuleLayers) != 1 || list[0].RuleLayers[0] != "custom" {
+		t.Fatalf("b 的层未回读: %v", list[0].RuleLayers)
 	}
 }
 
-// TestRulesGroupsByProfile 覆盖 Add/List 的按方案隔离：profileID=0 走旧全局池。
-func TestRulesGroupsByProfile(t *testing.T) {
+// TestSetProfileLayersRoundTrip 覆盖层配置的空数组语义与不存在的方案。
+func TestSetProfileLayersRoundTrip(t *testing.T) {
 	d, ctx := newTestDB(t)
-
-	// 旧路径：profile_id=0（未分配）
-	legacy, err := d.AddRuleWithProfile(ctx, 0, "DOMAIN", "legacy.com", 0, false, true)
-	if err != nil {
-		t.Fatalf("AddRuleWithProfile(0): %v", err)
-	}
-	if legacy.ProfileID != 0 {
-		t.Fatalf("profileID=0 的规则 ProfileID=%d，期望 0", legacy.ProfileID)
-	}
-
-	p1, err := d.AddProfile(ctx, "p1", "", "", "", true, 0)
-	if err != nil {
-		t.Fatalf("AddProfile(p1): %v", err)
-	}
-	p2, err := d.AddProfile(ctx, "p2", "", "", "", true, 0)
-	if err != nil {
-		t.Fatalf("AddProfile(p2): %v", err)
-	}
-	r1, err := d.AddRuleWithProfile(ctx, p1.ID, "DOMAIN-SUFFIX", "a.com", 7, true, false)
-	if err != nil {
-		t.Fatalf("AddRuleWithProfile(p1): %v", err)
-	}
-	if r1.ProfileID != p1.ID || r1.RuleConfig != 7 || !r1.ResolveDNS || r1.Enabled {
-		t.Fatalf("AddRuleWithProfile 返回字段不符: %+v", r1)
-	}
-	if _, err := d.AddRuleWithProfile(ctx, p2.ID, "DOMAIN-SUFFIX", "b.com", 0, false, true); err != nil {
-		t.Fatalf("AddRuleWithProfile(p2): %v", err)
-	}
-
-	g1, err := d.AddProxyGroupWithProfile(ctx, p1.ID, "g1", "select", ".", "", 0, 0)
-	if err != nil {
-		t.Fatalf("AddProxyGroupWithProfile(p1): %v", err)
-	}
-	if g1.ProfileID != p1.ID || g1.Type != "select" || g1.Regex != "." {
-		t.Fatalf("AddProxyGroupWithProfile 返回字段不符: %+v", g1)
-	}
-	if _, err := d.AddProxyGroupWithProfile(ctx, 0, "g0", "url-test", "", "", 0, 0); err != nil {
-		t.Fatalf("AddProxyGroupWithProfile(0): %v", err)
-	}
-
-	rules1, err := d.ListRulesByProfile(ctx, p1.ID)
-	if err != nil {
-		t.Fatalf("ListRulesByProfile(p1): %v", err)
-	}
-	if len(rules1) != 1 || rules1[0].ID != r1.ID || rules1[0].ProfileID != p1.ID {
-		t.Fatalf("ListRulesByProfile(p1) = %+v，期望只有 r1", rules1)
-	}
-	rules0, err := d.ListRulesByProfile(ctx, 0)
-	if err != nil {
-		t.Fatalf("ListRulesByProfile(0): %v", err)
-	}
-	if len(rules0) != 1 || rules0[0].ID != legacy.ID {
-		t.Fatalf("ListRulesByProfile(0) = %+v，期望只有旧规则", rules0)
-	}
-
-	groups1, err := d.ListProxyGroupsByProfile(ctx, p1.ID)
-	if err != nil {
-		t.Fatalf("ListProxyGroupsByProfile(p1): %v", err)
-	}
-	if len(groups1) != 1 || groups1[0].ID != g1.ID {
-		t.Fatalf("ListProxyGroupsByProfile(p1) = %+v，期望只有 g1", groups1)
-	}
-	groups0, err := d.ListProxyGroupsByProfile(ctx, 0)
-	if err != nil {
-		t.Fatalf("ListProxyGroupsByProfile(0): %v", err)
-	}
-	if len(groups0) != 1 {
-		t.Fatalf("ListProxyGroupsByProfile(0) 长度 %d，期望 1", len(groups0))
-	}
-}
-
-// TestSetRuleAndGroupProfile 覆盖 Set 的命中与 sql.ErrNoRows 分支。
-func TestSetRuleAndGroupProfile(t *testing.T) {
-	d, ctx := newTestDB(t)
-
-	p, err := d.AddProfile(ctx, "p", "", "", "", true, 0)
+	p, err := d.AddProfile(ctx, "层", "", "", "", true, 0)
 	if err != nil {
 		t.Fatalf("AddProfile: %v", err)
 	}
-	r, err := d.AddRuleWithProfile(ctx, 0, "DOMAIN", "a.com", 0, true, true)
-	if err != nil {
-		t.Fatalf("AddRuleWithProfile: %v", err)
+
+	layers := []string{"custom", "airport"}
+	if err := d.SetProfileLayers(ctx, p.ID, layers, layers); err != nil {
+		t.Fatalf("SetProfileLayers: %v", err)
 	}
-	g, err := d.AddProxyGroupWithProfile(ctx, 0, "g", "select", "", "", 0, 0)
+	got, err := d.GetProfile(ctx, p.ID)
 	if err != nil {
-		t.Fatalf("AddProxyGroupWithProfile: %v", err)
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if len(got.RuleLayers) != 2 || got.RuleLayers[0] != "custom" || got.RuleLayers[1] != "airport" {
+		t.Fatalf("RuleLayers 回读=%v，期望 [custom airport]", got.RuleLayers)
+	}
+	if len(got.GroupLayers) != 2 || got.GroupLayers[1] != "airport" {
+		t.Fatalf("GroupLayers 回读=%v，期望 [custom airport]", got.GroupLayers)
 	}
 
-	if err := d.SetRuleProfile(ctx, r.ID, p.ID); err != nil {
-		t.Fatalf("SetRuleProfile 失败: %v", err)
+	// 空数组 = 空串 = 默认三层：回读为 nil（由调用方补默认）
+	if err := d.SetProfileLayers(ctx, p.ID, []string{}, nil); err != nil {
+		t.Fatalf("SetProfileLayers(空): %v", err)
 	}
-	got, err := d.GetRule(ctx, r.ID)
+	got, err = d.GetProfile(ctx, p.ID)
 	if err != nil {
-		t.Fatalf("GetRule: %v", err)
+		t.Fatalf("GetProfile(空层): %v", err)
 	}
-	if got.ProfileID != p.ID {
-		t.Fatalf("SetRuleProfile 未生效，ProfileID=%d，期望 %d", got.ProfileID, p.ID)
+	if got.RuleLayers != nil || got.GroupLayers != nil {
+		t.Fatalf("空数组应回读为 nil，实际 %v / %v", got.RuleLayers, got.GroupLayers)
+	}
+	var raw string
+	if err := d.Raw().QueryRowContext(ctx, "SELECT rule_layers FROM profiles WHERE id = ?", p.ID).Scan(&raw); err != nil {
+		t.Fatalf("读库内 rule_layers: %v", err)
+	}
+	if raw != "" {
+		t.Fatalf("空数组应落库为空串，实际 %q", raw)
 	}
 
-	if err := d.SetProxyGroupProfile(ctx, g.ID, p.ID); err != nil {
-		t.Fatalf("SetProxyGroupProfile 失败: %v", err)
-	}
-	g2, err := d.GetProxyGroup(ctx, g.ID)
-	if err != nil {
-		t.Fatalf("GetProxyGroup: %v", err)
-	}
-	if g2.ProfileID != p.ID {
-		t.Fatalf("SetProxyGroupProfile 未生效，ProfileID=%d，期望 %d", g2.ProfileID, p.ID)
-	}
-
-	if err := d.SetRuleProfile(ctx, 9999, p.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("SetRuleProfile(9999) 错误=%v，期望 sql.ErrNoRows", err)
-	}
-	if err := d.SetProxyGroupProfile(ctx, 9999, p.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("SetProxyGroupProfile(9999) 错误=%v，期望 sql.ErrNoRows", err)
+	if err := d.SetProfileLayers(ctx, 9999, layers, layers); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("SetProfileLayers(9999) 错误=%v，期望 sql.ErrNoRows", err)
 	}
 }
 
-// TestMoveRulesToProfile 覆盖空 ids、批量移动与唯一索引冲突文案。
-func TestMoveRulesToProfile(t *testing.T) {
-	d, ctx := newTestDB(t)
-
-	p1, err := d.AddProfile(ctx, "p1", "", "", "", true, 0)
-	if err != nil {
-		t.Fatalf("AddProfile(p1): %v", err)
-	}
-	p2, err := d.AddProfile(ctx, "p2", "", "", "", true, 0)
-	if err != nil {
-		t.Fatalf("AddProfile(p2): %v", err)
-	}
-
-	// 空 ids：直接 0, nil（不开事务）
-	n, err := d.MoveRulesToProfile(ctx, nil, p2.ID)
-	if err != nil || n != 0 {
-		t.Fatalf("MoveRulesToProfile(nil) = %d, %v，期望 0, nil", n, err)
-	}
-
-	// p1 里已有一条同来源同去重键的规则，p2 里再移一条同 key 规则 → 撞唯一索引
-	r1, err := d.AddRuleWithProfile(ctx, p1.ID, "DOMAIN-SUFFIX", "dup.com", 0, true, true)
-	if err != nil {
-		t.Fatalf("AddRuleWithProfile(p1): %v", err)
-	}
-	if _, err := d.Raw().ExecContext(ctx,
-		"UPDATE rules SET source = 'airport:HK', origin_key = 'dup.com' WHERE id = ?", r1.ID); err != nil {
-		t.Fatalf("设置 r1 溯源列: %v", err)
-	}
-	r2, err := d.AddRuleWithProfile(ctx, 0, "DOMAIN-SUFFIX", "dup.com", 0, true, true)
-	if err != nil {
-		t.Fatalf("AddRuleWithProfile(0): %v", err)
-	}
-	if _, err := d.Raw().ExecContext(ctx,
-		"UPDATE rules SET source = 'airport:HK', origin_key = 'dup.com' WHERE id = ?", r2.ID); err != nil {
-		t.Fatalf("设置 r2 溯源列: %v", err)
-	}
-
-	// 正常批量移动
-	r3, err := d.AddRuleWithProfile(ctx, 0, "DOMAIN", "move.com", 0, true, true)
-	if err != nil {
-		t.Fatalf("AddRuleWithProfile(r3): %v", err)
-	}
-	moved, err := d.MoveRulesToProfile(ctx, []int64{r3.ID, 4242}, p2.ID)
-	if err != nil {
-		t.Fatalf("MoveRulesToProfile 失败: %v", err)
-	}
-	if moved != 1 {
-		t.Fatalf("MoveRulesToProfile 返回 %d，期望 1（不存在的 id 不计）", moved)
-	}
-	got, err := d.GetRule(ctx, r3.ID)
-	if err != nil {
-		t.Fatalf("GetRule: %v", err)
-	}
-	if got.ProfileID != p2.ID {
-		t.Fatalf("r3.ProfileID=%d，期望 %d", got.ProfileID, p2.ID)
-	}
-
-	// 撞唯一索引：返回固定文案，且不吞成 nil
-	_, err = d.MoveRulesToProfile(ctx, []int64{r2.ID}, p1.ID)
-	if err == nil {
-		t.Fatal("撞唯一索引的 MoveRulesToProfile 应返回错误")
-	}
-	if err.Error() != "目标方案里已存在同来源同去重键的规则，无法移动" {
-		t.Fatalf("冲突文案=%q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "目标方案") {
-		t.Fatalf("冲突文案缺少「目标方案」字样: %q", err.Error())
-	}
-}
-
-// TestMoveRulesBySourceToProfile 覆盖空 source 与按来源批量移动。
-func TestMoveRulesBySourceToProfile(t *testing.T) {
-	d, ctx := newTestDB(t)
-
-	p, err := d.AddProfile(ctx, "p", "", "", "", true, 0)
-	if err != nil {
-		t.Fatalf("AddProfile: %v", err)
-	}
-	// 空 source：直接 0, nil，绝不能把全表搬到方案里
-	n, err := d.MoveRulesBySourceToProfile(ctx, "", p.ID)
-	if err != nil || n != 0 {
-		t.Fatalf("MoveRulesBySourceToProfile(empty) = %d, %v，期望 0, nil", n, err)
-	}
-
-	for _, param := range []string{"a.com", "b.com"} {
-		r, err := d.AddRuleWithProfile(ctx, 0, "DOMAIN-SUFFIX", param, 0, true, true)
-		if err != nil {
-			t.Fatalf("AddRuleWithProfile: %v", err)
-		}
-		if _, err := d.Raw().ExecContext(ctx,
-			"UPDATE rules SET source = 'airport:HK', origin_key = ? WHERE id = ?", param, r.ID); err != nil {
-			t.Fatalf("设置溯源列: %v", err)
-		}
-	}
-	moved, err := d.MoveRulesBySourceToProfile(ctx, "airport:HK", p.ID)
-	if err != nil {
-		t.Fatalf("MoveRulesBySourceToProfile 失败: %v", err)
-	}
-	if moved != 2 {
-		t.Fatalf("MoveRulesBySourceToProfile 返回 %d，期望 2", moved)
-	}
-	left, err := d.ListRulesByProfile(ctx, 0)
-	if err != nil {
-		t.Fatalf("ListRulesByProfile(0): %v", err)
-	}
-	if len(left) != 0 {
-		t.Fatalf("移动后全局池应清空，实际剩 %d 条", len(left))
-	}
-	inP, err := d.ListRulesByProfile(ctx, p.ID)
-	if err != nil {
-		t.Fatalf("ListRulesByProfile(p): %v", err)
-	}
-	if len(inP) != 2 {
-		t.Fatalf("方案内应有 2 条，实际 %d", len(inP))
-	}
-}
-
-// TestMoveGroupsToProfile 覆盖空 ids 与批量移动（proxy_groups 无唯一索引）。
-func TestMoveGroupsToProfile(t *testing.T) {
-	d, ctx := newTestDB(t)
-
-	p, err := d.AddProfile(ctx, "p", "", "", "", true, 0)
-	if err != nil {
-		t.Fatalf("AddProfile: %v", err)
-	}
-	n, err := d.MoveGroupsToProfile(ctx, nil, p.ID)
-	if err != nil || n != 0 {
-		t.Fatalf("MoveGroupsToProfile(nil) = %d, %v，期望 0, nil", n, err)
-	}
-
-	g1, err := d.AddProxyGroupWithProfile(ctx, 0, "g1", "select", "", "", 0, 0)
-	if err != nil {
-		t.Fatalf("AddProxyGroupWithProfile(g1): %v", err)
-	}
-	moved, err := d.MoveGroupsToProfile(ctx, []int64{g1.ID}, p.ID)
-	if err != nil {
-		t.Fatalf("MoveGroupsToProfile 失败: %v", err)
-	}
-	if moved != 1 {
-		t.Fatalf("MoveGroupsToProfile 返回 %d，期望 1", moved)
-	}
-	got, err := d.GetProxyGroup(ctx, g1.ID)
-	if err != nil {
-		t.Fatalf("GetProxyGroup: %v", err)
-	}
-	if got.ProfileID != p.ID {
-		t.Fatalf("g1.ProfileID=%d，期望 %d", got.ProfileID, p.ID)
-	}
-}
-
-// TestCreateSubTokenWithProfile 覆盖令牌的方案绑定与 ListSubTokens/UpdateSubToken 的读写。
+// TestCreateSubTokenWithProfile 覆盖保留的令牌→方案绑定。
 func TestCreateSubTokenWithProfile(t *testing.T) {
 	d, ctx := newTestDB(t)
-
-	p, err := d.AddProfile(ctx, "p", "", "", "", true, 0)
+	p, err := d.AddProfile(ctx, "令牌方案", "", "", "", true, 0)
 	if err != nil {
 		t.Fatalf("AddProfile: %v", err)
 	}
-	if err := d.CreateSubTokenWithProfile(ctx, "tok-p", "绑方案", "", "", "", "", "", p.ID); err != nil {
-		t.Fatalf("CreateSubTokenWithProfile 失败: %v", err)
+	if err := d.CreateSubTokenWithProfile(ctx, "tok-p", "名字", "https://sub", "p1", "ini", "a", "b", p.ID); err != nil {
+		t.Fatalf("CreateSubTokenWithProfile: %v", err)
 	}
-	if err := d.CreateSubTokenWithProfile(ctx, "tok-0", "未绑", "", "", "", "", "", 0); err != nil {
-		t.Fatalf("CreateSubTokenWithProfile(0) 失败: %v", err)
+	if err := d.CreateSubTokenWithProfile(ctx, "tok-0", "", "", "", "", "", "", 0); err != nil {
+		t.Fatalf("CreateSubTokenWithProfile(0): %v", err)
 	}
-
 	list, err := d.ListSubTokens(ctx)
 	if err != nil {
 		t.Fatalf("ListSubTokens: %v", err)
-	}
-	if len(list) != 2 {
-		t.Fatalf("ListSubTokens 长度 %d，期望 2", len(list))
 	}
 	byToken := map[string]SubToken{}
 	for _, tok := range list {
 		byToken[tok.Token] = tok
 	}
-	if byToken["tok-p"].ProfileID != p.ID {
-		t.Fatalf("tok-p.ProfileID=%d，期望 %d", byToken["tok-p"].ProfileID, p.ID)
+	if byToken["tok-p"].ProfileID != p.ID || byToken["tok-p"].Name != "名字" ||
+		byToken["tok-p"].Target != "https://sub" || byToken["tok-p"].Pipeline != "p1" ||
+		byToken["tok-p"].Config != "ini" || byToken["tok-p"].Include != "a" || byToken["tok-p"].Exclude != "b" {
+		t.Fatalf("tok-p 字段不符: %+v", byToken["tok-p"])
 	}
 	if byToken["tok-0"].ProfileID != 0 {
 		t.Fatalf("tok-0.ProfileID=%d，期望 0", byToken["tok-0"].ProfileID)
 	}
+}
 
-	// UpdateSubToken 的 ProfileID 指针路径（0 合法 = 解绑）
-	zero := int64(0)
-	if err := d.UpdateSubToken(ctx, "tok-p", SubTokenUpdate{ProfileID: &zero}); err != nil {
-		t.Fatalf("UpdateSubToken(ProfileID=0) 失败: %v", err)
+// TestColumnExists 覆盖新加的列探测助手。
+func TestColumnExists(t *testing.T) {
+	d, ctx := newTestDB(t)
+	if ok, err := columnExists(d.Raw(), "rules", "source"); err != nil || !ok {
+		t.Fatalf("rules.source 应存在，实际 ok=%v err=%v", ok, err)
 	}
-	if _, err := d.ListSubTokens(ctx); err != nil {
-		t.Fatalf("ListSubTokens: %v", err)
+	if ok, err := columnExists(d.Raw(), "profiles", "rule_layers"); err != nil || !ok {
+		t.Fatalf("profiles.rule_layers 应存在，实际 ok=%v err=%v", ok, err)
 	}
-	list, err = d.ListSubTokens(ctx)
-	if err != nil {
-		t.Fatalf("ListSubTokens: %v", err)
+	if ok, err := columnExists(d.Raw(), "rules", "profile_id"); err != nil || ok {
+		t.Fatalf("新库 rules 不应有 profile_id，实际 ok=%v err=%v", ok, err)
 	}
-	for _, tok := range list {
-		if tok.Token == "tok-p" && tok.ProfileID != 0 {
-			t.Fatalf("解绑后 tok-p.ProfileID=%d，期望 0", tok.ProfileID)
-		}
+	if _, err := columnExists(d.Raw(), "no_such_table", "id"); err != nil {
+		t.Fatalf("不存在的表不应报错，实际 %v", err)
+	}
+	if ctx == nil {
+		t.Fatal("ctx 不应为 nil")
 	}
 }
 
@@ -482,32 +291,44 @@ func TestProfileMethodsClosedDB(t *testing.T) {
 	if err := d.DeleteProfile(ctx, 1); err == nil {
 		t.Error("DeleteProfile(closed) 期望失败")
 	}
-	if _, err := d.ListRulesByProfile(ctx, 0); err == nil {
-		t.Error("ListRulesByProfile(closed) 期望失败")
+	if _, err := d.ListRulesFiltered(ctx, SourceFilter{All: true}); err == nil {
+		t.Error("ListRulesFiltered(closed) 期望失败")
 	}
-	if _, err := d.ListProxyGroupsByProfile(ctx, 0); err == nil {
-		t.Error("ListProxyGroupsByProfile(closed) 期望失败")
+	if _, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true}); err == nil {
+		t.Error("ListProxyGroupsFiltered(closed) 期望失败")
 	}
-	if _, err := d.AddRuleWithProfile(ctx, 0, "T", "P", 0, true, true); err == nil {
-		t.Error("AddRuleWithProfile(closed) 期望失败")
+	if _, err := d.AddRuleWithSource(ctx, Rule{}); err == nil {
+		t.Error("AddRuleWithSource(closed) 期望失败")
 	}
-	if _, err := d.AddProxyGroupWithProfile(ctx, 0, "g", "select", "", "", 0, 0); err == nil {
-		t.Error("AddProxyGroupWithProfile(closed) 期望失败")
+	if _, err := d.AddProxyGroupWithSource(ctx, "g", "select", "", "", 0, 0, ""); err == nil {
+		t.Error("AddProxyGroupWithSource(closed) 期望失败")
 	}
-	if err := d.SetRuleProfile(ctx, 1, 0); err == nil {
-		t.Error("SetRuleProfile(closed) 期望失败")
+	if err := d.SetProfileLayers(ctx, 1, nil, nil); err == nil {
+		t.Error("SetProfileLayers(closed) 期望失败")
 	}
-	if err := d.SetProxyGroupProfile(ctx, 1, 0); err == nil {
-		t.Error("SetProxyGroupProfile(closed) 期望失败")
+	if _, err := d.CountRulesByLayers(ctx, nil); err == nil {
+		t.Error("CountRulesByLayers(closed) 期望失败")
 	}
-	if _, err := d.MoveRulesToProfile(ctx, []int64{1}, 0); err == nil {
-		t.Error("MoveRulesToProfile(closed) 期望失败")
+	if _, err := d.CountGroupsByLayers(ctx, nil); err == nil {
+		t.Error("CountGroupsByLayers(closed) 期望失败")
 	}
-	if _, err := d.MoveRulesBySourceToProfile(ctx, "airport:HK", 0); err == nil {
-		t.Error("MoveRulesBySourceToProfile(closed) 期望失败")
+	if _, err := d.ListRulesByLayers(ctx, nil); err == nil {
+		t.Error("ListRulesByLayers(closed) 期望失败")
 	}
-	if _, err := d.MoveGroupsToProfile(ctx, []int64{1}, 0); err == nil {
-		t.Error("MoveGroupsToProfile(closed) 期望失败")
+	if _, err := d.ListProxyGroupsByLayers(ctx, nil); err == nil {
+		t.Error("ListProxyGroupsByLayers(closed) 期望失败")
+	}
+	if _, err := d.ListAllRuleSources(ctx); err == nil {
+		t.Error("ListAllRuleSources(closed) 期望失败")
+	}
+	if _, err := d.ListAllGroupSources(ctx); err == nil {
+		t.Error("ListAllGroupSources(closed) 期望失败")
+	}
+	if _, err := d.BatchSetRulesEnabledBySource(ctx, SourceFilter{Source: "x"}, true); err == nil {
+		t.Error("BatchSetRulesEnabledBySource(closed) 期望失败")
+	}
+	if _, err := d.BatchDeleteRulesBySource(ctx, SourceFilter{Source: "x"}); err == nil {
+		t.Error("BatchDeleteRulesBySource(closed) 期望失败")
 	}
 	if err := d.CreateSubTokenWithProfile(ctx, "t", "n", "", "", "", "", "", 0); err == nil {
 		t.Error("CreateSubTokenWithProfile(closed) 期望失败")
@@ -517,11 +338,63 @@ func TestProfileMethodsClosedDB(t *testing.T) {
 	}
 }
 
-// --- 契约 §1.3：老库迁移测试 ---
+// --- 契约 §2：老库迁移测试 ---
 
-// legacySchemaDDL 是「老 schema」的最小集合：rules 无 profile_id、旧的两列唯一索引，
-// 并且先插一条带 origin_key 的规则（模拟真实老库已导入过的数据）。
-var legacySchemaDDL = []string{
+// legacyV1SchemaDDL 是「v1 老库」的最小集合：rules / proxy_groups 有 profile_id 列、
+// 旧的三列唯一索引，并且两个方案各有一条同 (source, origin_key) 的规则
+// （模拟跨方案重复导入的真实场景）。
+var legacyV1SchemaDDL = []string{
+	`CREATE TABLE rules (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		rule_type   TEXT NOT NULL,
+		rule_param  TEXT,
+		rule_config INTEGER NOT NULL,
+		resolve_dns INTEGER DEFAULT 1,
+		enabled     INTEGER DEFAULT 1,
+		sort_order  INTEGER DEFAULT 0,
+		source      TEXT NOT NULL DEFAULT '',
+		raw         TEXT NOT NULL DEFAULT '',
+		origin_key  TEXT NOT NULL DEFAULT '',
+		profile_id  INTEGER NOT NULL DEFAULT 0,
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`,
+	`CREATE UNIQUE INDEX idx_rules_origin ON rules(profile_id, source, origin_key) WHERE origin_key <> '';`,
+	`INSERT INTO rules (rule_type, rule_param, rule_config, source, origin_key, profile_id)
+	 VALUES ('DOMAIN-SUFFIX', 'a.com', 1, 'airport:HK', 'a.com', 1);`,
+	`INSERT INTO rules (rule_type, rule_param, rule_config, source, origin_key, profile_id)
+	 VALUES ('DOMAIN-SUFFIX', 'a.com', 1, 'airport:HK', 'a.com', 2);`,
+	`INSERT INTO rules (rule_type, rule_param, rule_config, source, origin_key, profile_id)
+	 VALUES ('DOMAIN-SUFFIX', 'hand.com', 1, '', '', 1);`,
+	`CREATE TABLE proxy_groups (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT NOT NULL,
+		type        TEXT NOT NULL DEFAULT 'select',
+		regex       TEXT,
+		url         TEXT,
+		interval    INTEGER,
+		sort_order  INTEGER DEFAULT 0,
+		profile_id  INTEGER NOT NULL DEFAULT 0,
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`,
+	`CREATE TABLE profiles (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`,
+	`CREATE TABLE sub_tokens (
+		token       TEXT PRIMARY KEY,
+		name        TEXT,
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`,
+}
+
+// legacyV018SchemaDDL 是「v0.1.8 老库」：rules / proxy_groups 从来没有 profile_id 列，
+// 只有旧的两列唯一索引，并且已有一条带 origin_key 的导入规则。
+var legacyV018SchemaDDL = []string{
 	`CREATE TABLE rules (
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,
 		rule_type   TEXT NOT NULL,
@@ -576,16 +449,14 @@ func openLegacyDB(t *testing.T, ddl []string) string {
 	return path
 }
 
-// TestLegacySchemaMigrationAddsProfileIDAndRebuildsIndex 是契约 §1.3 的迁移测试：
-// 老库（rules 无 profile_id、旧两列索引、已有 1 条带 origin_key 的规则）→ Open →
-// ①迁移成功；②rules 含 profile_id；③idx_rules_origin 三列依次为 profile_id/source/origin_key；
-// ④再 Open 一次仍成功（幂等）；⑤老数据保留且落在未分配方案。
-func TestLegacySchemaMigrationAddsProfileIDAndRebuildsIndex(t *testing.T) {
-	path := openLegacyDB(t, legacySchemaDDL)
+// TestLegacyV018SchemaMigratesToV2 覆盖契约 §2 的第 5 条：
+// 从未有过 profile_id 的旧库跳过 DROP 分支，直接补齐新列与两列唯一索引。
+func TestLegacyV018SchemaMigratesToV2(t *testing.T) {
+	path := openLegacyDB(t, legacyV018SchemaDDL)
 
-	d, err := Open(path) // 等价 subforge.NewManager(path)：内部就是 store.Open → migrate
+	d, err := Open(path)
 	if err != nil {
-		t.Fatalf("①迁移失败: %v", err)
+		t.Fatalf("迁移失败: %v", err)
 	}
 	defer func() {
 		if err := d.Close(); err != nil {
@@ -593,50 +464,39 @@ func TestLegacySchemaMigrationAddsProfileIDAndRebuildsIndex(t *testing.T) {
 		}
 	}()
 
-	// ②rules / proxy_groups / sub_tokens 都应有 profile_id
-	for _, tbl := range []string{"rules", "proxy_groups", "sub_tokens"} {
-		cols := tableColumns(t, d, tbl)
-		if !cols["profile_id"] {
-			t.Errorf("②%s 缺少 profile_id，实际列：%v", tbl, cols)
+	// ①rules / proxy_groups 不得出现 profile_id
+	for _, tbl := range []string{"rules", "proxy_groups"} {
+		if cols := tableColumns(t, d, tbl); cols["profile_id"] {
+			t.Errorf("%s 不应有 profile_id，实际列：%v", tbl, cols)
 		}
 	}
-	if !tableColumns(t, d, "profiles")["id"] {
-		t.Error("②新库缺少 profiles 表")
+	// ②proxy_groups 补 source，profiles 补 rule_layers/group_layers
+	if !tableColumns(t, d, "proxy_groups")["source"] {
+		t.Error("proxy_groups 缺少 source 列")
 	}
-
-	// ③索引三列顺序
-	idxCols := indexColumns(t, d, "idx_rules_origin")
-	want := []string{"profile_id", "source", "origin_key"}
-	if len(idxCols) != len(want) {
-		t.Fatalf("③idx_rules_origin 列数 %d，期望 %d（%v）", len(idxCols), len(want), idxCols)
-	}
-	for i, c := range want {
-		if idxCols[i] != c {
-			t.Errorf("③idx_rules_origin 第 %d 列=%q，期望 %q（全列 %v）", i, idxCols[i], c, idxCols)
+	for _, col := range []string{"rule_layers", "group_layers"} {
+		if !tableColumns(t, d, "profiles")[col] {
+			t.Errorf("profiles 缺少 %s 列", col)
 		}
 	}
-
-	// ⑤老数据保留，且归属未分配（profile_id=0）
+	// ③索引是两列版本
+	want := []string{"source", "origin_key"}
+	cols := indexColumns(t, d, "idx_rules_origin")
+	if strings.Join(cols, ",") != strings.Join(want, ",") {
+		t.Fatalf("idx_rules_origin 列=%v，期望 %v", cols, want)
+	}
+	// ④老数据保留
 	var n int
 	if err := d.Raw().QueryRowContext(context.Background(), "SELECT COUNT(*) FROM rules").Scan(&n); err != nil {
 		t.Fatalf("读老 rules 计数: %v", err)
 	}
 	if n != 1 {
-		t.Fatalf("⑤老 rules 应保留 1 行，实际 %d", n)
+		t.Fatalf("老 rules 应保留 1 行，实际 %d", n)
 	}
-	var profileID int64
-	if err := d.Raw().QueryRowContext(context.Background(), "SELECT profile_id FROM rules WHERE origin_key = 'a.com'").
-		Scan(&profileID); err != nil {
-		t.Fatalf("读老 rules.profile_id: %v", err)
-	}
-	if profileID != 0 {
-		t.Errorf("⑤老数据 profile_id=%d，期望 0", profileID)
-	}
-
-	// ④二次 Open 幂等
+	// ⑤二次 Open 幂等
 	d2, err := Open(path)
 	if err != nil {
-		t.Fatalf("④二次 Open 应幂等，实际: %v", err)
+		t.Fatalf("二次 Open 应幂等，实际: %v", err)
 	}
 	defer func() {
 		if err := d2.Close(); err != nil {
@@ -644,7 +504,88 @@ func TestLegacySchemaMigrationAddsProfileIDAndRebuildsIndex(t *testing.T) {
 		}
 	}()
 	if cols := indexColumns(t, d2, "idx_rules_origin"); strings.Join(cols, ",") != strings.Join(want, ",") {
-		t.Errorf("④二次 Open 后索引列=%v，期望 %v", cols, want)
+		t.Errorf("二次 Open 后索引列=%v，期望 %v", cols, want)
+	}
+	if tableColumns(t, d2, "rules")["profile_id"] {
+		t.Error("二次 Open 不应补回 profile_id")
+	}
+}
+
+// TestLegacyV1SchemaDropsProfileIDAndDedupes 覆盖契约 §2 的第 3 条：
+// v1 老库（带 profile_id 与三列索引、两个方案各一条同 (source, origin_key)）→
+// ①DROP 旧索引；②去重保留 MIN(id)；③rules / proxy_groups 的 profile_id 列被删除；
+// ④索引重建为 (source, origin_key)；⑤二次 Open 幂等。
+func TestLegacyV1SchemaDropsProfileIDAndDedupes(t *testing.T) {
+	path := openLegacyDB(t, legacyV1SchemaDDL)
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	defer func() {
+		if err := d.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}()
+
+	// ①去重：跨方案同 (source, origin_key) 只剩一行（保留 MIN(id)）
+	var n int
+	if err := d.Raw().QueryRowContext(context.Background(),
+		"SELECT COUNT(*) FROM rules WHERE source = 'airport:HK' AND origin_key = 'a.com'").Scan(&n); err != nil {
+		t.Fatalf("读去重后计数: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("跨方案同 (source, origin_key) 应只剩 1 行，实际 %d", n)
+	}
+	// origin_key='' 的手工规则不受去重影响
+	if err := d.Raw().QueryRowContext(context.Background(),
+		"SELECT COUNT(*) FROM rules WHERE origin_key = ''").Scan(&n); err != nil {
+		t.Fatalf("读手工规则计数: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("手工规则（origin_key=''）应保留 1 行，实际 %d", n)
+	}
+
+	// ②profile_id 列已从两张表删除，sub_tokens 保留
+	for _, tbl := range []string{"rules", "proxy_groups"} {
+		if cols := tableColumns(t, d, tbl); cols["profile_id"] {
+			t.Errorf("%s 的 profile_id 应被删除，实际列：%v", tbl, cols)
+		}
+	}
+	if !tableColumns(t, d, "sub_tokens")["profile_id"] {
+		t.Error("sub_tokens 的 profile_id 应保留")
+	}
+
+	// ③索引是两列版本
+	want := []string{"source", "origin_key"}
+	cols := indexColumns(t, d, "idx_rules_origin")
+	if strings.Join(cols, ",") != strings.Join(want, ",") {
+		t.Fatalf("idx_rules_origin 列=%v，期望 %v", cols, want)
+	}
+
+	// ④唯一约束仍然生效：同 (source, origin_key) 再插应失败
+	if _, err := d.AddRuleWithSource(context.Background(),
+		Rule{RuleType: "DOMAIN-SUFFIX", RuleParam: "a.com", Source: "airport:HK", OriginKey: "a.com", Enabled: true}); err == nil {
+		t.Fatal("迁移后同 (source, origin_key) 的规则应被唯一索引拒绝")
+	} else if err.Error() != errDuplicateOriginInSource.Error() {
+		t.Fatalf("唯一冲突文案=%q，期望 %q", err.Error(), errDuplicateOriginInSource.Error())
+	}
+
+	// ⑤二次 Open 幂等
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("二次 Open 应幂等，实际: %v", err)
+	}
+	defer func() {
+		if err := d2.Close(); err != nil {
+			t.Fatalf("Close(d2): %v", err)
+		}
+	}()
+	if cols := indexColumns(t, d2, "idx_rules_origin"); strings.Join(cols, ",") != strings.Join(want, ",") {
+		t.Errorf("二次 Open 后索引列=%v，期望 %v", cols, want)
+	}
+	if tableColumns(t, d2, "rules")["profile_id"] {
+		t.Error("二次 Open 不应补回 profile_id")
 	}
 }
 

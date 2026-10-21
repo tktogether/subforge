@@ -177,27 +177,33 @@ func TestRulesBulk_DeleteEmptyIDs400(t *testing.T) {
 		Error string `json:"error"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &e)
-	if e.Error != "批量删除必须给出 ids" {
+	if e.Error != "必须给出 ids 或 source" {
 		t.Fatalf("error = %q", e.Error)
 	}
 }
 
-// TestRulesBulk_DeleteWithSource400 覆盖批量删除 + source：400，避免整来源误删。
-func TestRulesBulk_DeleteWithSource400(t *testing.T) {
-	srv, _ := importTestServer(t)
-	body := "{\"ids\":[1],\"source\":\"airport:x\",\"delete\":true}"
+// TestRulesBulk_DeleteBySource 覆盖 v2 新增的「按来源整批删除」：
+// source 指向自定义层（空串），删除后该来源的规则全部消失。
+func TestRulesBulk_DeleteBySource(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	rule, err := mgr.AddRule(t.Context(), "DOMAIN", "del-by-source.example.com", 0, false, true)
+	if err != nil {
+		t.Fatalf("AddRule: %v", err)
+	}
+	body := "{\"source\":\"\",\"delete\":true}"
 	req := httptest.NewRequest(http.MethodPost, "/api/rules/bulk", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	srv.handleAPIRulesBulk(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("状态码 = %d，应为 400", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，body=%s", rr.Code, rr.Body.String())
 	}
-	var e struct {
-		Error string `json:"error"`
+	var resp map[string]int
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["deleted"] != 1 {
+		t.Fatalf("deleted = %d，应为 1", resp["deleted"])
 	}
-	_ = json.Unmarshal(rr.Body.Bytes(), &e)
-	if e.Error != "批量删除仅支持 ids" {
-		t.Fatalf("error = %q", e.Error)
+	if _, err := mgr.GetRule(t.Context(), rule.ID); err == nil {
+		t.Fatalf("规则 %d 应已被按来源删除", rule.ID)
 	}
 }
 

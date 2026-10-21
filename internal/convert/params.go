@@ -52,6 +52,11 @@ type Params struct {
 	Sort string
 	// Config 模板名。
 	Config string
+	// DisableTemplateRules / DisableTemplateGroups 关掉模板里的规则流与代理分组。
+	// 订阅方案没勾选 template 层时由调用方置位：此时模板只作为「参数与渲染目标」
+	// 使用，不再贡献规则与分组——否则用户在方案里关掉的层会被模板静默补回来。
+	DisableTemplateRules  bool
+	DisableTemplateGroups bool
 	// Filename 覆盖下载文件名（subconverter 的 filename 参数）。
 	// sub-web 的"高级"模式会传它，用户改了这个字段却拿不到对应文件名会以为是后端 bug。
 	// 只影响 Content-Disposition，不影响产物内容。

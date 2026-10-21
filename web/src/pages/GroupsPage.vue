@@ -1,27 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
 import { pageHelp } from '../content/help'
 import ResourcePage from '../components/ResourcePage.vue'
-import { endpoints, type Profile } from '../api/endpoints'
+import { endpoints, type ProxyGroup } from '../api/endpoints'
 
 const help = pageHelp('groups')
 
-// 方案（Profile）列表：分组可以挂到某个方案下，只有绑定该方案的订阅才会用到它。
-// 拉取失败时降级成「只有未分配」，不阻塞分组页本身的增删改查。
-const profiles = ref<Profile[]>([])
-
-async function loadProfiles(): Promise<void> {
-  try {
-    profiles.value = await endpoints.listProfiles()
-  } catch {
-    profiles.value = []
-  }
+// v2：分组不再归属方案，按来源(source)分层。来源列展示文案：
+// '' → 「自定义」；'airport:<机场名>' → 「机场:<机场名>」；其它原样显示。
+function sourceText(source?: string): string {
+  if (!source || source === '') return '自定义'
+  return source.startsWith('airport:') ? '机场:' + source.slice('airport:'.length) : source
 }
 
-// 方案列展示后端回填的 profile_name；未分配的分组该字段为空。
+// 来源列挂一个计算字段 source_text，ResourcePage 直接当普通列渲染。
 const groupColumns = [
   { key: 'name', title: '名称' },
-  { key: 'profile_name', title: '方案' },
+  { key: 'source_text', title: '来源' },
   { key: 'type', title: '类型' },
   { key: 'regex', title: '匹配正则' },
   { key: 'url', title: '测活地址' },
@@ -29,24 +23,22 @@ const groupColumns = [
   { key: 'sort_order', title: '顺序' },
 ]
 
-// 表单字段：方案用 select，选项 = 未分配(0) + 各方案；ResourcePage 的 blank()
-// 会取第一个选项，即「未分配」。
-const groupFields = computed(() => [
+// v2：表单不再有「方案」下拉；新建分组的 source 恒为 ''（自定义），由后端默认。
+const groupFields = [
   { key: 'name', label: '名称', type: 'text', hint: '客户端里显示的策略组名；规则行的目标分组就是按这个名找的', example: '香港' },
-  { key: 'profile_id', label: '方案', type: 'select', options: [{ title: '未分配', value: 0 }, ...profiles.value.map((p) => ({ title: p.name, value: p.id }))], hint: '方案里的分组只出现在绑定该方案的订阅；未分配 = 旧全局池' },
   { key: 'type', label: '类型', type: 'text', hint: 'select=手动选；url-test=自动选延迟最低；fallback=按顺序回退；load-balance=负载均衡', example: 'select' },
   { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名匹配成员；留空则不自动收节点', example: '香港|HK' },
   { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
   { key: 'interval', label: '测活间隔（秒）', type: 'number', hint: '仅 url-test 需要；太小会频繁测活', example: '300' },
   { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
-])
+]
 
-onMounted(() => {
-  void loadProfiles()
-})
-
+// 包装 list：给每行补一个 source_text 展示字段；新增/编辑透传 createGroup/updateGroup 原样。
 const resource: any = {
-  list: endpoints.listGroups,
+  list: async (): Promise<(ProxyGroup & { source_text?: string })[]> => {
+    const groups = await endpoints.listGroups()
+    return groups.map((g) => ({ ...g, source_text: sourceText(g.source) }))
+  },
   create: endpoints.createGroup,
   update: (item: any) => endpoints.updateGroup(item.id, item),
   remove: (item: any) => endpoints.deleteGroup(item.id),

@@ -19,10 +19,8 @@ type ImportedRuleRow struct {
 	Source     string
 	Raw        string
 	OriginKey  string
-	// ProfileID 标识该导入规则归属的订阅方案，0 = 未分配（旧的全局池）。
-	ProfileID int64
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // BatchInsertImportedRules 在单个事务里批量写入导入规则。
@@ -49,7 +47,7 @@ func (d *DB) BatchInsertImportedRules(ctx context.Context, rows []ImportedRuleRo
 	}()
 
 	insertStmt, err := tx.PrepareContext(ctx,
-		"INSERT OR IGNORE INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, profile_id, source, raw, origin_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		"INSERT OR IGNORE INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, sort_order, source, raw, origin_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, 0, fmt.Errorf("准备规则插入: %w", err)
 	}
@@ -59,9 +57,9 @@ func (d *DB) BatchInsertImportedRules(ctx context.Context, rows []ImportedRuleRo
 	// （WHERE origin_key <> ''），SQLite 只有在查询条件能推出该谓词时才会用索引；
 	// 少了它，每次改时间戳都会全表扫一遍，1 万条重复导入会退化到 20s+。
 	// 语义不受影响：origin_key='' 的行不受唯一约束，永远不会走到「已存在」分支。
-	// 索引已改为 (profile_id, source, origin_key)，刷新时需带上 profile_id 避免误刷其他方案的同 key 行。
+	// v2 索引是 (source, origin_key)，刷新条件不再带 profile_id。
 	updateStmt, err := tx.PrepareContext(ctx,
-		"UPDATE rules SET updated_at = ? WHERE profile_id = ? AND source = ? AND origin_key = ? AND origin_key <> ''")
+		"UPDATE rules SET updated_at = ? WHERE source = ? AND origin_key = ? AND origin_key <> ''")
 	if err != nil {
 		return 0, 0, fmt.Errorf("准备规则更新时间戳: %w", err)
 	}
@@ -70,7 +68,7 @@ func (d *DB) BatchInsertImportedRules(ctx context.Context, rows []ImportedRuleRo
 	for _, row := range rows {
 		res, execErr := insertStmt.ExecContext(ctx,
 			row.RuleType, row.RuleParam, row.RuleConfig, row.ResolveDNS, row.Enabled,
-			row.SortOrder, row.ProfileID, row.Source, row.Raw, row.OriginKey, row.CreatedAt, row.UpdatedAt)
+			row.SortOrder, row.Source, row.Raw, row.OriginKey, row.CreatedAt, row.UpdatedAt)
 		if execErr != nil {
 			return added, skipped, fmt.Errorf("写入规则 %q: %w", row.OriginKey, execErr)
 		}
@@ -81,7 +79,7 @@ func (d *DB) BatchInsertImportedRules(ctx context.Context, rows []ImportedRuleRo
 		if n == 0 {
 			// UNIQUE 冲突（已导入过）：跳过但刷新时间戳，不中断整批。
 			skipped++
-			if _, upErr := updateStmt.ExecContext(ctx, row.UpdatedAt, row.ProfileID, row.Source, row.OriginKey); upErr != nil {
+			if _, upErr := updateStmt.ExecContext(ctx, row.UpdatedAt, row.Source, row.OriginKey); upErr != nil {
 				return added, skipped, fmt.Errorf("刷新规则时间戳 %q: %w", row.OriginKey, upErr)
 			}
 			continue

@@ -190,7 +190,6 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/groups", func(r chi.Router) {
 		r.Get("/", s.handleAPIGroups)
 		r.Post("/", s.handleAPIGroups)
-		r.Post("/bulk", s.handleAPIGroupsBulk)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPIGroup)
 			r.Put("/", s.handleAPIGroup)

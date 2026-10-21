@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tktogether/subforge/internal/config"
@@ -85,8 +86,9 @@ func TestApplyTemplate_RequestStructFieldsWin(t *testing.T) {
 	if p.NodePref.Prefixes["vless"] != "[VLESS] " || p.NodePref.Prefixes["vmess"] != "" {
 		t.Errorf("NodePref = %v", p.NodePref)
 	}
-	if len(p.Groups) != 1 || p.Groups[0].Name != "请求组" {
-		t.Errorf("Groups = %v", p.Groups)
+	// v2 起分组是合并而非覆盖：请求侧（DB 分组）在前，模板分组补在后面。
+	if len(p.Groups) != 2 || p.Groups[0].Name != "请求组" || p.Groups[1].Name != "模板组" {
+		t.Errorf("Groups = %v，期望 [请求组 模板组]", p.Groups)
 	}
 	if p.Headers["X-Token"] != "abc" || len(p.Files) != 1 {
 		t.Errorf("Headers/Files 未带过来: %v %v", p.Headers, p.Files)
@@ -243,4 +245,101 @@ func TestResolveGroups_Empty(t *testing.T) {
 	if got := ResolveGroups(nil, []string{"a"}); got != nil {
 		t.Errorf("nil 输入应返回 nil，实际 %v", got)
 	}
+}
+
+// TestApplyTemplate_MergeGroups 分组按层合并：高优先层在前，同名保留高优先层。
+func TestApplyTemplate_MergeGroups(t *testing.T) {
+	sem := config.Semantics{
+		Params: map[string][]string{},
+		Groups: []render.Group{
+			{Name: "模板独有", Type: "select"},
+			{Name: "同名", Type: "url-test"},
+		},
+	}
+	base := Params{
+		Raw: map[string][]string{},
+		Groups: []render.Group{
+			{Name: "自定义组", Type: "select"},
+			{Name: "同名", Type: "select"},
+			{Name: "", Type: "select"},
+		},
+	}
+	p, err := ApplyTemplate(sem, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 空名分组被丢掉；同名只留 base 的定义（type select）。
+	want := []string{"自定义组", "同名", "模板独有"}
+	got := make([]string, 0, len(p.Groups))
+	for _, g := range p.Groups {
+		got = append(got, g.Name)
+	}
+	if !sameStrings(got, want) {
+		t.Fatalf("分组顺序 = %v，期望 %v", got, want)
+	}
+	if p.Groups[1].Type != "select" {
+		t.Fatalf("同名分组 type=%q，应保留高优先层的 select", p.Groups[1].Type)
+	}
+}
+
+// TestApplyTemplate_DisableTemplateGroups 关掉模板层分组：只剩 DB 分组，并留一条可见告警。
+func TestApplyTemplate_DisableTemplateGroups(t *testing.T) {
+	sem := config.Semantics{
+		Params: map[string][]string{},
+		Groups: []render.Group{{Name: "模板组"}},
+	}
+	base := Params{
+		Raw:                   map[string][]string{},
+		Groups:                []render.Group{{Name: "自定义组"}},
+		DisableTemplateGroups: true,
+	}
+	p, err := ApplyTemplate(sem, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Groups) != 1 || p.Groups[0].Name != "自定义组" {
+		t.Fatalf("Groups = %v，期望只剩自定义组", p.Groups)
+	}
+	if !containsWarning(p.TemplateWarnings, "模板分组已跳过") {
+		t.Fatalf("TemplateWarnings = %v，期望含「模板分组已跳过」", p.TemplateWarnings)
+	}
+}
+
+// TestApplyTemplate_DisableTemplateRules 关掉模板层规则：规则流被清空，不再展开成 MATCH 之类。
+func TestApplyTemplate_DisableTemplateRules(t *testing.T) {
+	sem := config.Semantics{
+		Params: map[string][]string{},
+		RuleItems: []config.RuleItem{
+			{Remote: -1, Line: "GEOIP,CN,DIRECT"},
+		},
+		RemoteRulesets: []config.RemoteRuleset{{URL: "https://example.com/x.list", Kind: "classical", Group: "G"}},
+	}
+	base := Params{
+		Raw:                  map[string][]string{},
+		Rules:                []string{"DOMAIN-SUFFIX,db.test,DIRECT"},
+		DisableTemplateRules: true,
+	}
+	p, err := ApplyTemplate(sem, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.TemplateRules) != 0 || len(p.TemplateRemoteRulesets) != 0 {
+		t.Fatalf("模板规则流未清空: %d %d", len(p.TemplateRules), len(p.TemplateRemoteRulesets))
+	}
+	if len(p.Rules) != 1 || p.Rules[0] != "DOMAIN-SUFFIX,db.test,DIRECT" {
+		t.Fatalf("DB 规则不应被影响: %v", p.Rules)
+	}
+	if !containsWarning(p.TemplateWarnings, "模板规则已跳过") {
+		t.Fatalf("TemplateWarnings = %v，期望含「模板规则已跳过」", p.TemplateWarnings)
+	}
+}
+
+// containsWarning 判断告警里是否有包含子串的一条。
+func containsWarning(warns []string, sub string) bool {
+	for _, w := range warns {
+		if strings.Contains(w, sub) {
+			return true
+		}
+	}
+	return false
 }

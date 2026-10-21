@@ -681,7 +681,7 @@ it('listScripts 解包 .scripts', async () => {
 
 // T3a：方案（profile）端点与 profile_id 归属。页面 spec 全 mock endpoints，
 // 这里是真调用点，负责钉住 URL、方法与解包字段。
-describe('endpoints 方案(profile) 与 profile_id 归属', () => {
+describe('endpoints 方案(profile) 与来源(source)分层（v2）', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -698,17 +698,19 @@ describe('endpoints 方案(profile) 与 profile_id 归属', () => {
     return { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(data) }
   }
 
-  it('listProfiles → GET /api/profiles 解出 .profiles', async () => {
-    const profiles = [{ id: 1, name: 'p1', description: '', config: '', pipeline: '', enabled: true, sort_order: 0, rule_count: 2, group_count: 3 }]
+  const DEFAULT_LAYERS = ['custom', 'airport', 'template']
+
+  it('listProfiles → GET /api/profiles 解出 .profiles（含 rule_layers/group_layers）', async () => {
+    const profiles = [{ id: 1, name: 'p1', description: '', config: '', pipeline: '', enabled: true, sort_order: 0, rule_layers: DEFAULT_LAYERS, group_layers: DEFAULT_LAYERS, rule_count: 2, group_count: 3 }]
     fetchMock.mockResolvedValue(respond({ profiles }))
     const r = await endpoints.listProfiles()
     expect(r).toEqual(profiles)
     expect(fetchMock).toHaveBeenCalledWith('/api/profiles', expect.objectContaining({ method: 'GET' }))
   })
 
-  it('createProfile(body) → POST /api/profiles 解出 .profile', async () => {
-    const profile = { id: 2, name: 'p2', description: 'd', config: 'c', pipeline: 'pl', enabled: true, sort_order: 1, rule_count: 0, group_count: 0 }
-    const input = { name: 'p2', description: 'd', config: 'c', pipeline: 'pl', enabled: true, sort_order: 1 }
+  it('createProfile(body) → POST /api/profiles 解出 .profile（body 可带 rule_layers/group_layers）', async () => {
+    const profile = { id: 2, name: 'p2', description: 'd', config: 'c', pipeline: 'pl', enabled: true, sort_order: 1, rule_layers: ['custom', 'airport', 'template'], group_layers: ['custom', 'airport'], rule_count: 0, group_count: 0 }
+    const input = { name: 'p2', description: 'd', config: 'c', pipeline: 'pl', enabled: true, sort_order: 1, rule_layers: ['custom', 'airport', 'template'], group_layers: ['custom', 'airport'] }
     fetchMock.mockResolvedValue(respond({ profile }))
     const r = await endpoints.createProfile(input)
     expect(r).toEqual(profile)
@@ -721,7 +723,7 @@ describe('endpoints 方案(profile) 与 profile_id 归属', () => {
   })
 
   it('updateProfile(3,body) → PUT /api/profiles/3 解出 .profile', async () => {
-    const profile = { id: 3, name: 'p3', description: '', config: '', pipeline: '', enabled: false, sort_order: 2, rule_count: 0, group_count: 0 }
+    const profile = { id: 3, name: 'p3', description: '', config: '', pipeline: '', enabled: false, sort_order: 2, rule_layers: DEFAULT_LAYERS, group_layers: DEFAULT_LAYERS, rule_count: 0, group_count: 0 }
     const input = { name: 'p3', enabled: false }
     fetchMock.mockResolvedValue(respond({ profile }))
     const r = await endpoints.updateProfile(3, input)
@@ -741,51 +743,50 @@ describe('endpoints 方案(profile) 与 profile_id 归属', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/profiles/3', expect.objectContaining({ method: 'DELETE' }))
   })
 
-  it('listGroups(2) → GET /api/groups?profile_id=2', async () => {
-    const groups = [{ id: 1, name: 'g', type: 't', regex: 'r', url: 'u', interval: 1, sort_order: 1, profile_id: 2, profile_name: 'p2' }]
+  it('listGroups({source:"airport:A"}) → GET /api/groups?source=airport%3AA&source_prefix=0', async () => {
+    const groups = [{ id: 1, name: 'g', type: 't', regex: 'r', url: 'u', interval: 1, sort_order: 1, source: 'airport:A' }]
     fetchMock.mockResolvedValue(respond({ groups }))
-    const r = await endpoints.listGroups(2)
+    const r = await endpoints.listGroups({ source: 'airport:A', sourcePrefix: false })
     expect(r).toEqual(groups)
-    expect(fetchMock).toHaveBeenCalledWith('/api/groups?profile_id=2', expect.objectContaining({ method: 'GET' }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/groups?source=airport%3AA&source_prefix=0', expect.objectContaining({ method: 'GET' }))
   })
 
-  it('listGroups() 不带 profile_id → GET /api/groups', async () => {
+  it('listGroups({source:""}) → GET /api/groups?source=&source_prefix=0（空串保留 ?source=）', async () => {
+    fetchMock.mockResolvedValue(respond({ groups: [] }))
+    await endpoints.listGroups({ source: '', sourcePrefix: false })
+    expect(fetchMock).toHaveBeenCalledWith('/api/groups?source=&source_prefix=0', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('listGroups() 不带参数 → GET /api/groups（无 query）', async () => {
     fetchMock.mockResolvedValue(respond({ groups: [] }))
     await endpoints.listGroups()
     expect(fetchMock).toHaveBeenCalledWith('/api/groups', expect.objectContaining({ method: 'GET' }))
   })
 
-  it('listRules(2) → GET /api/rules?profile_id=2', async () => {
-    const rules = [{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: true, sort_order: 1, profile_id: 2, profile_name: 'p2' }]
+  it('listRules({source:"airport:B"}) → GET /api/rules?source=airport%3AB&source_prefix=0', async () => {
+    const rules = [{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:B' }]
     fetchMock.mockResolvedValue(respond({ rules }))
-    const r = await endpoints.listRules(2)
+    const r = await endpoints.listRules({ source: 'airport:B', sourcePrefix: false })
     expect(r).toEqual(rules)
-    expect(fetchMock).toHaveBeenCalledWith('/api/rules?profile_id=2', expect.objectContaining({ method: 'GET' }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules?source=airport%3AB&source_prefix=0', expect.objectContaining({ method: 'GET' }))
   })
 
-  it('listRules() 不带 profile_id → GET /api/rules', async () => {
+  it('listRules({source:"", sourcePrefix:true}) → GET /api/rules?source=&source_prefix=1', async () => {
+    fetchMock.mockResolvedValue(respond({ rules: [] }))
+    await endpoints.listRules({ source: '', sourcePrefix: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules?source=&source_prefix=1', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('listRules() 不带参数 → GET /api/rules（无 query）', async () => {
     fetchMock.mockResolvedValue(respond({ rules: [] }))
     await endpoints.listRules()
     expect(fetchMock).toHaveBeenCalledWith('/api/rules', expect.objectContaining({ method: 'GET' }))
   })
 
-  it('bulkGroups({ids,profile_id}) → POST /api/groups/bulk 原样透传', async () => {
-    const body = { ids: [1, 2], profile_id: 4 }
+  it('bulkRules({ids,enabled}) 按 ids 整批启停原样透传', async () => {
+    const body = { ids: [1, 2], enabled: true }
     fetchMock.mockResolvedValue(respond({ updated: 2 }))
-    const r = await endpoints.bulkGroups(body)
-    expect(r).toEqual({ updated: 2 })
-    expect(fetchMock).toHaveBeenCalledWith('/api/groups/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: undefined,
-    })
-  })
-
-  it('moveRules({ids,source,profile_id}) → POST /api/rules/bulk 原样透传', async () => {
-    const body = { ids: [1, 2], source: 'airport:7', profile_id: 4 }
-    fetchMock.mockResolvedValue(respond({ updated: 2 }))
-    const r = await endpoints.moveRules(body)
+    const r = await endpoints.bulkRules(body)
     expect(r).toEqual({ updated: 2 })
     expect(fetchMock).toHaveBeenCalledWith('/api/rules/bulk', {
       method: 'POST',
@@ -795,17 +796,26 @@ describe('endpoints 方案(profile) 与 profile_id 归属', () => {
     })
   })
 
-  it('bulkRules 带 profile_id 时原样透传（移动模式）', async () => {
-    const body = { ids: [5], source: '', enabled: true, profile_id: 4 }
-    fetchMock.mockResolvedValue(respond({ updated: 1 }))
+  it('bulkRules({source,sourcePrefix,enabled}) 按来源整批启停原样透传', async () => {
+    const body = { source: 'airport:A', sourcePrefix: false, enabled: true }
+    fetchMock.mockResolvedValue(respond({ updated: 3 }))
     const r = await endpoints.bulkRules(body)
-    expect(r).toEqual({ updated: 1 })
+    expect(r).toEqual({ updated: 3 })
     const call = fetchMock.mock.calls[0]
     expect(JSON.parse(call[1].body as string)).toEqual(body)
   })
 
-  it('importAirportRules(4,{profile_id}) → POST /api/airports/4/import-rules body 带 profile_id', async () => {
-    const body = { profile_id: 4, create_groups: true }
+  it('bulkRules({source,delete:true}) 按来源整批删除原样透传', async () => {
+    const body = { source: 'airport:A', sourcePrefix: false, delete: true }
+    fetchMock.mockResolvedValue(respond({ deleted: 3 }))
+    const r = await endpoints.bulkRules(body)
+    expect(r).toEqual({ deleted: 3 })
+    const call = fetchMock.mock.calls[0]
+    expect(JSON.parse(call[1].body as string)).toEqual(body)
+  })
+
+  it('importAirportRules(4,{create_groups}) → POST body 只含 create_groups', async () => {
+    const body = { create_groups: true }
     fetchMock.mockResolvedValue(respond({ rules_added: 1, rules_skipped: 0, providers_added: 0, warnings: [], groups_created: 2 }))
     const r = await endpoints.importAirportRules(4, body)
     expect(r.groups_created).toBe(2)

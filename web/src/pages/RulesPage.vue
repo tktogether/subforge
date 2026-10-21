@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { endpoints, type Profile, type ProxyGroup, type Rule, type RuleInput, type RuleProvider, type Suggestion } from '../api/endpoints'
+import { endpoints, type ProxyGroup, type Rule, type RuleInput, type RuleProvider, type Suggestion } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { useCrud, type CrudResource } from '../composables/useCrud'
@@ -20,37 +20,37 @@ const tab = ref(0)
 // RL-01..RL-08 选择器契约不受影响。
 // ---------------------------------------------------------------------------
 
-// 表格行 = 规则本体 + 后端带出的展示字段（group_name/source/profile_name）
-type RuleRow = RuleInput & { id?: number; group_name?: string; source?: string; profile_name?: string }
+// 表格行 = 规则本体 + 后端带出的展示字段（group_name/source）
+type RuleRow = RuleInput & { id?: number; group_name?: string; source?: string }
 
-// 方案（Profile）筛选：-1 = 全部方案（请求不带 profile_id），0 = 未分配，>0 = 指定方案。
-const profileFilter = ref(-1)
-const profiles = ref<Profile[]>([])
+// 来源筛选（CONTRACT-V2 §6.2）：null = 全部来源（请求不带参数），'' = 自定义，
+// 其它 = 指定 source（如 airport:PEK）。v1 的「按方案归属」模型已作废。
+const sourceFilter = ref<string | null>(null)
+const allRuleSources = ref<Rule[]>([])
 
-// 方案下拉选项：未分配 + 各方案。
-const profileOptions = computed(() => [
-  { title: '未分配', value: 0 },
-  ...profiles.value.map((p) => ({ title: p.name, value: p.id })),
+// 来源下拉选项：全部来源 / 自定义 / 数据里出现过的其它来源。
+// 契约 §4.2 没有「来源列表」端点，这里用一次不带过滤的 listRules 去重得出。
+const sourceOptions = computed<{ title: string; value: string | null }[]>(() => [
+  { title: '全部来源', value: null },
+  { title: '自定义', value: '' },
+  ...Array.from(new Set(allRuleSources.value.map((r) => r.source ?? '')))
+    .filter((s) => s !== '')
+    .sort()
+    .map((s) => ({ title: s, value: s })),
 ])
 
-// 顶部筛选的选项：比方案下拉多一个「全部方案」。
-const profileFilterOptions = computed(() => [
-  { title: '全部方案', value: -1 },
-  ...profileOptions.value,
-])
-
-async function loadProfiles(): Promise<void> {
+async function loadSources(): Promise<void> {
   try {
-    profiles.value = await endpoints.listProfiles()
+    allRuleSources.value = await endpoints.listRules()
   } catch {
-    profiles.value = []
+    allRuleSources.value = []
   }
 }
 
-// 按当前方案筛选取规则：-1（全部方案）时不带 profile_id，保持旧的全局行为。
+// 按当前来源筛选取规则：null（全部来源）不带参数；''（自定义）与具体来源都带 source。
 function fetchRules(): Promise<Rule[]> {
-  const filter = profileFilter.value
-  return filter >= 0 ? endpoints.listRules(filter) : endpoints.listRules()
+  const filter = sourceFilter.value
+  return filter === null ? endpoints.listRules() : endpoints.listRules({ source: filter, sourcePrefix: false })
 }
 
 const rulesResource: CrudResource<RuleRow> = {
@@ -99,7 +99,6 @@ const ruleHeaders = [
   { key: 'resolve_dns', title: '解析DNS' },
   { key: 'enabled', title: '启用' },
   { key: 'source', title: '来源' },
-  { key: 'profile_name', title: '方案' },
   { key: 'actions', title: '操作' },
 ]
 
@@ -137,8 +136,6 @@ function blankRule(): RuleRow {
     rule_config: groupOptions.value.length > 0 ? groupOptions.value[0].value : 0,
     resolve_dns: true,
     enabled: true,
-    // 新建时默认落在当前筛选的方案上；「全部方案」(-1) 视为未分配。
-    profile_id: profileFilter.value >= 0 ? profileFilter.value : 0,
   }
 }
 
@@ -159,7 +156,7 @@ function openRuleCreate(): void {
 }
 
 function openRuleEdit(row: RuleRow): void {
-  ruleDraft.value = { ...row, profile_id: row.profile_id ?? 0 }
+  ruleDraft.value = { ...row }
   editingRule.value = row
   ruleDialog.value = true
 }
@@ -225,32 +222,6 @@ async function bulkDelete(): Promise<void> {
   }
 }
 
-// 批量移动到方案：POST /api/rules/bulk { ids, profile_id } -> { updated }
-const moveDialogOpen = ref(false)
-const moveProfileId = ref(0)
-
-function openMoveDialog(): void {
-  if (selectedRuleIds.value.length === 0) return
-  moveProfileId.value = profileFilter.value >= 0 ? profileFilter.value : 0
-  moveDialogOpen.value = true
-}
-
-async function confirmMove(): Promise<void> {
-  const ids = [...selectedRuleIds.value]
-  if (ids.length === 0) {
-    moveDialogOpen.value = false
-    return
-  }
-  try {
-    const res = await endpoints.moveRules({ ids, profile_id: moveProfileId.value })
-    notify('已移动 ' + (res.updated ?? ids.length) + ' 条规则', 'ok')
-    moveDialogOpen.value = false
-    selectedRuleIds.value = []
-    await loadRules()
-  } catch (err) {
-    notify(errorMessage(err), 'error')
-  }
-}
 
 // Block 2: rule providers
 const providersLoading = ref(false)
@@ -307,12 +278,34 @@ const candidatesError = ref('')
 const candidates = ref<Rule[]>([])
 const selectedIds = ref<number[]>([])
 
+// 候选表头固定中文列名（vuetify 默认按字段名生成，会出现 Id / Rule_type）。
+const candidateHeaders = [
+  { key: 'rule_type', title: '类型' },
+  { key: 'rule_param', title: '参数' },
+  { key: 'rule_config', title: '目标分组' },
+  { key: 'enabled', title: '启用' },
+  { key: 'source', title: '来源' },
+]
+
+// 按来源整批操作（CONTRACT-V2 §6.2）：必须走带 source 的 bulk 接口，
+// 不允许「拉全量再在前端筛 id」；因此需要一个具体来源（自定义/全部来源不适用）。
+const sourceBusy = ref(false)
+const sourceDeleteOpen = ref(false)
+
+function sourceTarget(): string | null {
+  const filter = sourceFilter.value
+  return filter === null || filter === '' ? null : filter
+}
+
+// 当前是否可以对「当前来源」做整批操作。
+const sourceReady = computed(() => sourceTarget() !== null)
+
 async function loadCandidates(): Promise<void> {
   candidatesLoading.value = true
   candidatesError.value = ''
   try {
     const all = await fetchRules()
-    candidates.value = all.filter((r) => r.source?.startsWith('airport:') && r.enabled === false)
+    candidates.value = all.filter((r) => (r.source ?? '').startsWith('airport:') && r.enabled === false)
     selectedIds.value = []
   } catch (err) {
     candidatesError.value = errorMessage(err)
@@ -332,16 +325,44 @@ async function enableSelected(enabled: boolean): Promise<void> {
   }
 }
 
-async function enableAllAirport(enabled: boolean): Promise<void> {
+// 整批启用/停用当前来源：POST /api/rules/bulk { source, source_prefix, enabled }
+async function sourceEnableAll(enabled: boolean): Promise<void> {
+  const source = sourceTarget()
+  if (source === null || sourceBusy.value) return
+  sourceBusy.value = true
   try {
-    const all = await endpoints.listRules()
-    const ids = all.filter((r) => (r.source ?? '').startsWith('airport:')).map((r) => r.id)
-    if (ids.length === 0) { notify('没有来自机场的规则', 'error'); return }
-    const r = await endpoints.bulkRules({ ids, enabled })
-    notify('已更新 ' + (r.updated ?? 0) + ' 条', 'ok')
+    const res = await endpoints.bulkRules({ source, sourcePrefix: false, enabled })
+    notify('已' + (enabled ? '启用' : '停用') + ' ' + (res.updated ?? rules.value.length) + ' 条', 'ok')
+    await loadRules()
     await loadCandidates()
   } catch (err) {
     notify(errorMessage(err), 'error')
+  } finally {
+    sourceBusy.value = false
+  }
+}
+
+function openSourceDelete(): void {
+  if (sourceTarget() === null || sourceBusy.value) return
+  sourceDeleteOpen.value = true
+}
+
+// 整批删除当前来源：POST /api/rules/bulk { source, source_prefix, delete: true }
+async function confirmSourceDelete(): Promise<void> {
+  const source = sourceTarget()
+  sourceDeleteOpen.value = false
+  if (source === null || sourceBusy.value) return
+  sourceBusy.value = true
+  try {
+    const res = await endpoints.bulkRules({ source, sourcePrefix: false, delete: true })
+    notify('已删除 ' + (res.deleted ?? rules.value.length) + ' 条', 'ok')
+    await loadRules()
+    await loadCandidates()
+    await loadSources()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    sourceBusy.value = false
   }
 }
 
@@ -399,8 +420,8 @@ async function applySuggestions(): Promise<void> {
   }
 }
 
-// 切换方案筛选：重新拉规则与候选（-1 = 全部方案，请求不带 profile_id）。
-watch(profileFilter, () => {
+// 切换来源筛选：重新拉规则与候选（null = 全部来源，请求不带 source）。
+watch(sourceFilter, () => {
   void loadRules()
   void loadCandidates()
 })
@@ -409,7 +430,7 @@ onMounted(() => {
   void loadRules()
   void loadProviders()
   void loadGroups()
-  void loadProfiles()
+  void loadSources()
   void loadCandidates()
   void loadSuggestions()
 })
@@ -419,18 +440,18 @@ onMounted(() => {
   <PageHeader title="规则" subtitle="规则行 / 规则集 / 导入候选 / Rule-Bot 建议" help-key="rules" />
   <div class="mb-4 d-flex ga-2 align-center flex-wrap">
     <v-select
-      v-model="profileFilter"
-      :items="profileFilterOptions"
+      v-model="sourceFilter"
+      :items="sourceOptions"
       item-title="title"
       item-value="value"
-      label="方案筛选"
+      label="来源筛选"
       density="compact"
       variant="outlined"
       hide-details
-      style="max-width: 220px"
-      data-testid="rules-profile-filter"
+      style="max-width: 260px"
+      data-testid="rules-source-filter"
     ></v-select>
-    <span class="text-caption text-medium-emphasis">全部方案 = 不带过滤；未分配 = 旧的全局池。</span>
+    <span class="text-caption text-medium-emphasis">全部来源 = 不带过滤；自定义 = 手工录入的规则；其它为机场导入的 source（airport:&lt;机场名&gt;）。</span>
   </div>
   <v-tabs v-model="tab" class="mb-4">
     <v-tab>规则行</v-tab>
@@ -473,7 +494,6 @@ onMounted(() => {
         <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-all" @click="ruleEnabledFilter = 'all'">全部</v-btn>
         <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-enabled" @click="ruleEnabledFilter = 'enabled'">已启用</v-btn>
         <v-btn size="small" variant="tonal" data-testid="filter-disabled" @click="ruleEnabledFilter = 'disabled'">已停用</v-btn>
-        <v-btn size="small" variant="tonal" class="mr-2" data-testid="move-profile" :disabled="selectedRuleIds.length === 0" @click="openMoveDialog">批量移动方案</v-btn>
         <v-spacer></v-spacer>
         <span class="text-caption text-medium-emphasis" data-testid="rule-selection-count">筛选命中 {{ filteredRules.length }} 条 · 已选 {{ selectedRuleIds.length }} 条</span>
       </div>
@@ -504,7 +524,6 @@ onMounted(() => {
             <span>{{ value ? '启用' : '停用' }}</span>
           </span>
         </template>
-        <template #item.profile_name="{ item }">{{ item.profile_name ?? '未分配' }}</template>
         <template #item.actions="{ item }">
           <v-btn
             icon="mdi-pencil"
@@ -576,18 +595,6 @@ onMounted(() => {
           <div v-if="fieldExample('rule_config') !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
             示例：{{ fieldExample('rule_config') }}
           </div>
-          <v-select
-            v-model="ruleDraft.profile_id"
-            :items="profileOptions"
-            item-title="title"
-            item-value="value"
-            label="方案"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            hide-details
-            data-testid="rule-profile"
-          ></v-select>
           <v-switch
             v-model="ruleDraft.resolve_dns"
             label="解析DNS"
@@ -649,32 +656,6 @@ onMounted(() => {
       </v-card>
     </v-dialog>
 
-    <!-- 批量移动规则到方案 -->
-    <v-dialog v-model="moveDialogOpen" max-width="480" data-testid="move-profile-dialog">
-      <v-card>
-        <v-card-title>批量移动规则</v-card-title>
-        <v-card-text>
-          <v-select
-            v-model="moveProfileId"
-            :items="profileOptions"
-            item-title="title"
-            item-value="value"
-            label="目标方案"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            hide-details
-            data-testid="move-profile-select"
-          ></v-select>
-          <div class="text-caption text-medium-emphasis">选「未分配」表示把规则移回旧的全局池。</div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" data-testid="move-profile-cancel" @click="moveDialogOpen = false">取消</v-btn>
-          <v-btn color="primary" data-testid="move-profile-confirm" @click="confirmMove">移动</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 
   <!-- Block 2: 规则集 -->
@@ -708,25 +689,43 @@ onMounted(() => {
   <div v-if="tab === 2">
     <v-alert type="info" variant="tonal" density="comfortable" class="mb-4" data-testid="candidates-note">
       <div>候选 = 从机场导入进来、但还没有启用的规则。启用它们之前不会影响订阅输出。</div>
-      <div>本页在前端筛选（服务端无过滤参数）。</div>
-      <div>导入时可在「机场」页选择方案；本页可用上方筛选按方案查看。</div>
+      <div>列表随上方「来源筛选」从服务端取数；选中某个来源后可整批启用/停用/删除。</div>
+      <div>导入的规则来源固定为本机场（airport:&lt;机场名&gt;），在「机场」页重新导入才会改变归属。</div>
     </v-alert>
     <AsyncSection :loading="candidatesLoading" :error="candidatesError" :empty="candidates.length === 0" empty-text="" :empty-state="pageHelp('rules').emptyState" @retry="loadCandidates">
-      <div class="mb-2">
-        <v-btn size="small" color="primary" class="mr-2" @click="enableSelected(true)">启用选中</v-btn>
+      <div class="mb-2 d-flex ga-2 align-center flex-wrap">
+        <v-btn size="small" color="primary" class="mr-2" data-testid="enable-selected" @click="enableSelected(true)">启用选中</v-btn>
         <v-btn size="small" variant="tonal" class="mr-2" data-testid="disable-selected" :disabled="selectedIds.length === 0" @click="enableSelected(false)">禁用选中</v-btn>
-        <v-btn size="small" color="success" data-testid="enable-all-airport" @click="enableAllAirport(true)">启用本机场全部（source 以 airport: 开头的全部规则）</v-btn>
+        <v-btn size="small" color="success" class="mr-2" data-testid="enable-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="sourceEnableAll(true)">启用本来源全部</v-btn>
+        <v-btn size="small" variant="tonal" class="mr-2" data-testid="disable-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="sourceEnableAll(false)">停用本来源全部</v-btn>
+        <v-btn size="small" color="error" data-testid="delete-source-all" :loading="sourceBusy" :disabled="!sourceReady" @click="openSourceDelete">删除本来源全部</v-btn>
+        <span v-if="!sourceReady" class="text-caption text-medium-emphasis" data-testid="source-batch-hint">整批按钮需要先在上方「来源筛选」选中具体来源（自定义/全部来源不适用）。</span>
       </div>
-      <v-data-table :items="candidates" show-select v-model="selectedIds" item-value="id" density="comfortable">
+      <v-data-table :items="candidates" :headers="candidateHeaders" show-select v-model="selectedIds" item-value="id" density="comfortable" data-testid="candidates-table">
         <template #item.rule_config="{ item }">
           <span :class="item.rule_config === 0 ? 'text-error font-weight-bold' : ''">
             {{ item.rule_config === 0 ? '目标分组不存在' : item.rule_config }}
           </span>
         </template>
+        <template #item.enabled="{ value }">
+          <span :class="value ? 'text-medium-emphasis' : 'text-error font-weight-bold'">{{ value ? '启用' : '停用' }}</span>
+        </template>
         <template #item.source="{ item }">{{ item.source }}</template>
-        <template #item.rule_type="{ item }">{{ item.rule_type }}</template>
       </v-data-table>
     </AsyncSection>
+
+    <!-- 按来源整批删除二次确认 -->
+    <v-dialog v-model="sourceDeleteOpen" max-width="420" data-testid="confirm-source-delete">
+      <v-card>
+        <v-card-title>确认按来源删除</v-card-title>
+        <v-card-text data-testid="confirm-source-delete-text">将删除来源 “{{ sourceFilter }}” 的 {{ rules.length }} 条规则，此操作不可撤销。</v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn variant="text" data-testid="confirm-source-delete-cancel" @click="sourceDeleteOpen = false">取消</v-btn>
+          <v-btn color="error" data-testid="confirm-source-delete-ok" @click="confirmSourceDelete">删除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 
   <!-- Block 4: Rule-Bot 建议 -->

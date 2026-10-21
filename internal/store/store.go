@@ -93,20 +93,19 @@ type FetchAudit struct {
 
 // ProxyGroup 是 proxy_groups 表的一行。
 //
-// ProfileID 标识该分组归属的订阅方案，0 = 未分配（旧全局池）。
-// ProfileName 不落库，由 API 层按 ProfileID 填。
+// v2：分组是全局自定义库，不再归属任何订阅方案；Source 标识来源
+// （空串 = 自定义，"airport:<机场名>" = 机场导入自动创建）。
 type ProxyGroup struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Type        string    `json:"type"`
-	Regex       string    `json:"regex"`
-	URL         string    `json:"url"`
-	Interval    int       `json:"interval"`
-	SortOrder   int       `json:"sort_order"`
-	ProfileID   int64     `json:"profile_id"`
-	ProfileName string    `json:"profile_name,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Regex     string    `json:"regex"`
+	URL       string    `json:"url"`
+	Interval  int       `json:"interval"`
+	SortOrder int       `json:"sort_order"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // SelfNode 是 self_nodes 表的一行。
@@ -210,8 +209,7 @@ type Rule struct {
 	Raw       string `json:"raw"`
 	OriginKey string `json:"origin_key"`
 	SortOrder int    `json:"sort_order"`
-	// ProfileID 标识该规则归属的订阅方案，0 = 未分配（旧全局池）。
-	ProfileID int64     `json:"profile_id"`
+	// v2：规则不再归属订阅方案（无 profile_id），只用 Source 区分来源。
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -374,19 +372,44 @@ func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate)
 	return nil
 }
 
-// AddProxyGroup 新增代理分组；sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
+// AddProxyGroup 新增「自定义来源」的代理分组；sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
 //
-// 旧签名保持不变：分组归属「未分配」（profile_id=0），等价于 AddProxyGroupWithProfile(ctx, 0, …)。
+// v2：分组不再归属订阅方案，source 固定为空串（自定义层）。
 func (d *DB) AddProxyGroup(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int) (*ProxyGroup, error) {
-	return d.AddProxyGroupWithProfile(ctx, 0, name, gtype, regex, url, interval, sortOrder)
+	g, err := d.AddProxyGroupWithSource(ctx, name, gtype, regex, url, interval, sortOrder, "")
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+// AddProxyGroupWithSource 新增带来源的代理分组，返回新行。
+// source 为空串 = 自定义分组，"airport:<机场名>" = 机场导入自动创建的分组。
+// sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
+func (d *DB) AddProxyGroupWithSource(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string) (ProxyGroup, error) {
+	res, err := d.db.ExecContext(ctx,
+		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source)
+	if err != nil {
+		return ProxyGroup{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return ProxyGroup{}, err
+	}
+	g, err := scanProxyGroup(d.db.QueryRowContext(ctx, "SELECT "+groupColumns+" FROM proxy_groups WHERE id = ?", id))
+	if err != nil {
+		return ProxyGroup{}, err
+	}
+	return g, nil
 }
 
 // GetProxyGroup 按 id 返回代理分组；不存在时返回 sql.ErrNoRows。
 func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 	var g ProxyGroup
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, profile_id, created_at, updated_at FROM proxy_groups WHERE id = ?", id).
-		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.ProfileID, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
+		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -417,8 +440,8 @@ func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex,
 func (d *DB) GetRule(ctx context.Context, id int64) (*Rule, error) {
 	var r Rule
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, profile_id, created_at, updated_at FROM rules WHERE id = ?", id).
-		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.ProfileID, &r.CreatedAt, &r.UpdatedAt)
+		"SELECT id, rule_type, COALESCE(rule_param, ''), rule_config, resolve_dns, enabled, COALESCE(source, ''), COALESCE(raw, ''), COALESCE(origin_key, ''), sort_order, created_at, updated_at FROM rules WHERE id = ?", id).
+		Scan(&r.ID, &r.RuleType, &r.RuleParam, &r.RuleConfig, &r.ResolveDNS, &r.Enabled, &r.Source, &r.Raw, &r.OriginKey, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -441,6 +464,31 @@ func (d *DB) UpdateRule(ctx context.Context, id int64, ruleType, ruleParam strin
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// AddRuleWithSource 新增一条带来源的规则，返回新行。
+//
+// rule.Source 决定它落在哪个来源层（空串 = 自定义规则，"airport:<机场名>" = 机场导入）。
+// sortOrder>0 用用户值，否则回退纳秒时间戳（与分组一致）。
+// 撞唯一索引 (source, origin_key) 时返回固定文案错误（API 层判 409）。
+func (d *DB) AddRuleWithSource(ctx context.Context, rule Rule) (*Rule, error) {
+	res, err := d.db.ExecContext(ctx,
+		"INSERT INTO rules (rule_type, rule_param, rule_config, resolve_dns, enabled, source, raw, origin_key, sort_order, created_at, updated_at) "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		rule.RuleType, rule.RuleParam, rule.RuleConfig, rule.ResolveDNS, rule.Enabled,
+		rule.Source, rule.Raw, rule.OriginKey, resolveSortOrder(rule.SortOrder), time.Now(), time.Now())
+	if err != nil {
+		return nil, wrapUniqueRuleError(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	r, err := scanRule(d.db.QueryRowContext(ctx, "SELECT "+ruleColumns+" FROM rules WHERE id = ?", id))
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // addColumnIfMissing 幂等加列：SQLite 没有 ADD COLUMN IF NOT EXISTS，
@@ -472,6 +520,37 @@ func addColumnIfMissing(db *sql.DB, table, column, decl string) error {
 	}
 	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + decl)
 	return err
+}
+
+// columnExists 报告 table 是否已有 column 列（PRAGMA table_info）。
+// v2 迁移用它判定「旧库是否还有 rules/proxy_groups 的 profile_id」，
+// 从而对老库走 DROP COLUMN 分支、对新库跳过。
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notNull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // migrate 建表（幂等）。
@@ -651,24 +730,71 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("迁移 rules.%s: %w", c.col, err)
 		}
 	}
-	// 方案归属列 profile_id：rules / proxy_groups / sub_tokens 三表统一补齐。
-	// 0 = 未分配（未绑定方案），语义与改动前完全一致，老数据迁移后一律落在 0。
-	for _, t := range []string{"rules", "proxy_groups", "sub_tokens"} {
-		if err := addColumnIfMissing(db, t, "profile_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-			return fmt.Errorf("迁移 %s.profile_id: %w", t, err)
+	// v2：sub_tokens.profile_id 保留（令牌仍可绑定方案，0 = 未绑定）。
+	// rules / proxy_groups 不再有 profile_id：老库走下面的 DROP COLUMN 分支，
+	// 新库根本不建这列，两种路径都不会再补回来。
+	if err := addColumnIfMissing(db, "sub_tokens", "profile_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("迁移 sub_tokens.profile_id: %w", err)
+	}
+	// v2：方案层顺序列（profiles.rule_layers / group_layers），JSON 文本数组，
+	// 空串 = 默认三层。与 rules/proxy_groups 一样走 ALTER 幂等补齐，
+	// 保证「新库/老库同一条加列路径」，列定义只有一处事实源。
+	for _, c := range []struct{ col, decl string }{
+		{"rule_layers", "TEXT NOT NULL DEFAULT ''"},
+		{"group_layers", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := addColumnIfMissing(db, "profiles", c.col, c.decl); err != nil {
+			return fmt.Errorf("迁移 profiles.%s: %w", c.col, err)
 		}
+	}
+	// v2：proxy_groups 增加 source 列（语义同 rules.source）。
+	if err := addColumnIfMissing(db, "proxy_groups", "source", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("迁移 proxy_groups.source: %w", err)
 	}
 	// rule_providers 唯一索引：先按 (source, name) 去重，保留最小 id，避免老库重复行导致建索引失败。
 	if _, err := db.Exec("DELETE FROM rule_providers WHERE id NOT IN (SELECT MIN(id) FROM rule_providers GROUP BY source, name)"); err != nil {
 		return fmt.Errorf("去重 rule_providers: %w", err)
 	}
-	// 部分索引：只约束真正带 origin_key 的导入行；手工规则（origin_key=''）不被约束，允许多行共存。
-	// 先 DROP 再 CREATE：老库的索引是 (source, origin_key)，光靠 IF NOT EXISTS 会把旧索引留下来，
-	// 导致不同方案的「同来源同去重键」规则无法共存。DROP 每次启动执行，成本可接受。
+	// v2 去 profile_id：老库（v1）的 rules / proxy_groups 有 profile_id 列，
+	// 必须先 DROP 索引（SQLite 不允许 DROP 被索引的列）→ 跨方案去重 → DROP COLUMN。
+	rulesHasProfileID, err := columnExists(db, "rules", "profile_id")
+	if err != nil {
+		return fmt.Errorf("检查 rules.profile_id: %w", err)
+	}
+	groupsHasProfileID, err := columnExists(db, "proxy_groups", "profile_id")
+	if err != nil {
+		return fmt.Errorf("检查 proxy_groups.profile_id: %w", err)
+	}
+	if rulesHasProfileID || groupsHasProfileID {
+		// 老库的索引是 (profile_id, source, origin_key)，跨方案合并后同一
+		// (source, origin_key) 可能有多行，必须先 DROP 再重建，否则 DROP COLUMN 会被拒。
+		if _, err := db.Exec("DROP INDEX IF EXISTS idx_rules_origin"); err != nil {
+			return fmt.Errorf("删除旧索引 idx_rules_origin: %w", err)
+		}
+		if rulesHasProfileID {
+			// 去重：同 (source, origin_key) 只保留 id 最小的一行；origin_key='' 的手工行不参与。
+			if _, err := db.Exec("DELETE FROM rules WHERE origin_key <> '' AND id NOT IN " +
+				"(SELECT MIN(id) FROM rules WHERE origin_key <> '' GROUP BY source, origin_key)"); err != nil {
+				return fmt.Errorf("去重 rules 的 (source, origin_key): %w", err)
+			}
+			if _, err := db.Exec("ALTER TABLE rules DROP COLUMN profile_id"); err != nil {
+				return fmt.Errorf("删除 rules.profile_id: %w", err)
+			}
+		}
+		if groupsHasProfileID {
+			if _, err := db.Exec("ALTER TABLE proxy_groups DROP COLUMN profile_id"); err != nil {
+				return fmt.Errorf("删除 proxy_groups.profile_id: %w", err)
+			}
+		}
+	}
+	// 唯一索引（v2 两列版本）：只约束真正带 origin_key 的导入行；
+	// 手工规则（origin_key=''）不被约束，允许多行共存。
+	// 先 DROP 再 CREATE：老库的索引可能是三列 (profile_id, source, origin_key)，
+	// 光靠 IF NOT EXISTS 会把旧索引留下来，导致不同方案的「同来源同去重键」规则无法共存。
 	if _, err := db.Exec("DROP INDEX IF EXISTS idx_rules_origin"); err != nil {
 		return fmt.Errorf("删除旧索引 idx_rules_origin: %w", err)
 	}
-	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_origin ON rules(profile_id, source, origin_key) WHERE origin_key <> ''"); err != nil {
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_origin ON rules(source, origin_key) WHERE origin_key <> ''"); err != nil {
 		return fmt.Errorf("创建 idx_rules_origin: %w", err)
 	}
 	// 同理：只约束带 source 的导入行；手工 provider（source=''）可共存。

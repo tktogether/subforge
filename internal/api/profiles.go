@@ -1,7 +1,8 @@
-// 订阅方案（Profile）的 HTTP 层：/api/profiles 的 CRUD，
-// 以及规则/分组/令牌按方案隔离时共用的校验与回填助手。
+// 订阅方案（Profile）的 HTTP 层：/api/profiles 的 CRUD、层顺序校验，
+// 以及令牌绑方案时共用的校验与回填助手。
 //
-// 状态码与错误文案严格照 .tmp/ux-e2e/profiles/CONTRACT.md §2.1/§2.2/§2.3。
+// v2 契约：.tmp/ux-e2e/profiles2/CONTRACT-V2.md §4.1。
+// 方案不再拥有规则/分组（那是全局库），只声明「启用哪些层、按什么优先级」。
 package api
 
 import (
@@ -10,31 +11,108 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/tktogether/subforge/internal/subforge"
 )
 
-// errProfileNameEmpty 是方案名为空（去空格后）时的错误（契约 §2.1）。
+// errProfileNameEmpty 是方案名为空（去空格后）时的错误（契约 §4.1）。
 var errProfileNameEmpty = errors.New("方案名称不能为空")
-
-// errProfileIDInvalid 是 profile_id 过滤参数非法时的错误（契约 §2.2）。
-var errProfileIDInvalid = errors.New("profile_id 必须是非负整数")
 
 // profileBody 是 POST/PUT /api/profiles 的请求体。
 //
-// enabled 用 *bool：POST 缺省为 true（新建即启用），PUT 缺省保持原值（契约 §2.1）。
+// enabled 用 *bool：POST 缺省为 true（新建即启用），PUT 缺省保持原值（契约 §4.1）。
+// 两个层字段用 *[]string：nil=没给（保持/默认），空数组=恢复默认三层。
 type profileBody struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Config      string `json:"config"`
-	Pipeline    string `json:"pipeline"`
-	Enabled     *bool  `json:"enabled"`
-	SortOrder   int    `json:"sort_order"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Config      string    `json:"config"`
+	Pipeline    string    `json:"pipeline"`
+	Enabled     *bool     `json:"enabled"`
+	SortOrder   int       `json:"sort_order"`
+	RuleLayers  *[]string `json:"rule_layers"`
+	GroupLayers *[]string `json:"group_layers"`
 }
 
-// profileNameByID 读出全部方案的 id→名称映射，用于回填 profile_name。
+// 合法层键。规则层与分组层共用一套键。
+var knownLayers = []string{"custom", "airport", "template"}
+
+// normalizeLayers 校验一组层键并做规则层的 template 归一化。
+//
+//   - 空数组/空串：等价于默认值，返回 nil（由调用方/存储层补默认三层）；
+//   - 未知键 → 错误「未知的层 X」；重复键 → 错误「重复的层 X」；
+//   - lockTemplateLast=true（规则层）：template 若不在末位自动移到末位，不报错——
+//     模板里的 MATCH/FINAL 必须最后，否则模板规则之后的规则全成死规则。
+func normalizeLayers(layers []string, lockTemplateLast bool) ([]string, error) {
+	if len(layers) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(layers))
+	out := make([]string, 0, len(layers))
+	for _, raw := range layers {
+		layer := strings.TrimSpace(raw)
+		if layer == "" {
+			continue
+		}
+		if !isKnownLayer(layer) {
+			return nil, fmt.Errorf("未知的层 %s", layer)
+		}
+		if seen[layer] {
+			return nil, fmt.Errorf("重复的层 %s", layer)
+		}
+		seen[layer] = true
+		out = append(out, layer)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	if lockTemplateLast && out[len(out)-1] != "template" && seen["template"] {
+		moved := make([]string, 0, len(out))
+		for _, layer := range out {
+			if layer != "template" {
+				moved = append(moved, layer)
+			}
+		}
+		moved = append(moved, "template")
+		out = moved
+	}
+	return out, nil
+}
+
+// isKnownLayer 报告层键是否合法。
+func isKnownLayer(layer string) bool {
+	for _, known := range knownLayers {
+		if known == layer {
+			return true
+		}
+	}
+	return false
+}
+
+// validateProfileLayers 按契约校验请求里的两个层数组（只校验给了的）。
+// 返回 (ruleLayers, groupLayers, ok)：nil 表示「未提供」；ok=false 时已写出 400。
+func (s *Server) validateProfileLayers(w http.ResponseWriter, r *http.Request, body profileBody) ([]string, []string, bool) {
+	var ruleLayers, groupLayers []string
+	if body.RuleLayers != nil {
+		normalized, err := normalizeLayers(*body.RuleLayers, true)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("规则层顺序非法：%w", err))
+			return nil, nil, false
+		}
+		ruleLayers = normalized
+	}
+	if body.GroupLayers != nil {
+		normalized, err := normalizeLayers(*body.GroupLayers, false)
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("分组层顺序非法：%w", err))
+			return nil, nil, false
+		}
+		groupLayers = normalized
+	}
+	return ruleLayers, groupLayers, true
+}
+
+// profileNameByID 读出全部方案的 id→名称映射，用于回填令牌的 profile_name。
 func profileNameByID(ctx context.Context, m *subforge.Manager) (map[int64]string, error) {
 	profiles, err := m.ListProfiles(ctx)
 	if err != nil {
@@ -53,16 +131,8 @@ func isUniqueConstraintError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE")
 }
 
-// isDuplicateRuleMoveError 判断错误是否来自「移动规则撞上同源同去重键」的唯一冲突。
-// store 把这种冲突替换为固定文案（不再含 "UNIQUE"），这里按文案判 409。
-func isDuplicateRuleMoveError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "目标方案里已存在")
-}
-
 // profileExists 校验 id 绑定的方案是否存在。id <= 0 表示「未分配」，直接放行；
 // id > 0 且不存在时写出 400「订阅方案 N 不存在」并返回 false。
-//
-// 仅用于创建/移动前的事前校验：GET/PUT/DELETE 复用 m.GetProfile 自己的 404 文案。
 func (s *Server) profileExists(w http.ResponseWriter, r *http.Request, m *subforge.Manager, id int64) bool {
 	if id <= 0 {
 		return true
@@ -77,22 +147,6 @@ func (s *Server) profileExists(w http.ResponseWriter, r *http.Request, m *subfor
 		return false
 	}
 	return true
-}
-
-// parseProfileIDFilter 解析 query 上的可选 profile_id 过滤参数。
-// 返回 (profileID, present, ok)：present=false 表示「无该参数（返回全部）」；
-// ok=false 表示参数非法，已写出 400。
-func (s *Server) parseProfileIDFilter(w http.ResponseWriter, r *http.Request) (int64, bool, bool) {
-	raw := strings.TrimSpace(r.URL.Query().Get("profile_id"))
-	if raw == "" {
-		return 0, false, true
-	}
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 0 {
-		s.writeAPIError(w, r, http.StatusBadRequest, errProfileIDInvalid)
-		return 0, false, false
-	}
-	return id, true, true
 }
 
 // fillTokenProfileName 回填单个令牌的 profile_name（未绑定方案时为空串，由 omitempty 抑制）。
@@ -134,6 +188,10 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, errProfileNameEmpty)
 			return
 		}
+		ruleLayers, groupLayers, ok := s.validateProfileLayers(w, r, body)
+		if !ok {
+			return
+		}
 		// enabled 缺省 = true（新建即启用）；显式给 false 才停用。
 		enabled := true
 		if body.Enabled != nil {
@@ -142,11 +200,21 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 		p, err := m.AddProfile(r.Context(), name, body.Description, body.Config, body.Pipeline, enabled, body.SortOrder)
 		if err != nil {
 			if isUniqueConstraintError(err) {
-				s.writeAPIError(w, r, http.StatusConflict, fmt.Errorf("方案名称 “%s” 已存在", name))
+				s.writeAPIError(w, r, http.StatusConflict, fmt.Errorf("订阅方案 “%s” 已存在", name))
 				return
 			}
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
+		}
+		// 层配置单独写：AddProfile 只负责基本列，避免把「层」塞进多个函数签名。
+		if ruleLayers != nil || groupLayers != nil {
+			if err := m.SetProfileLayers(r.Context(), p.ID, ruleLayers, groupLayers); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+			if fresh, err := m.GetProfile(r.Context(), p.ID); err == nil {
+				p = fresh
+			}
 		}
 		s.writeJSON(w, http.StatusCreated, map[string]any{"profile": p})
 	default:
@@ -182,7 +250,11 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, errProfileNameEmpty)
 			return
 		}
-		// enabled 缺省 = 保持原值（契约 §2.1）：先读当前行，用它当兜底。
+		ruleLayers, groupLayers, ok := s.validateProfileLayers(w, r, body)
+		if !ok {
+			return
+		}
+		// enabled 缺省 = 保持原值（契约 §4.1）：先读当前行，用它当兜底。
 		enabled := true
 		if cur, err := m.GetProfile(r.Context(), id); err == nil {
 			enabled = cur.Enabled
@@ -197,11 +269,21 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if isUniqueConstraintError(err) {
-				s.writeAPIError(w, r, http.StatusConflict, fmt.Errorf("方案名称 “%s” 已存在", name))
+				s.writeAPIError(w, r, http.StatusConflict, fmt.Errorf("订阅方案 “%s” 已存在", name))
 				return
 			}
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
+		}
+		if ruleLayers != nil || groupLayers != nil {
+			if err := m.SetProfileLayers(r.Context(), id, ruleLayers, groupLayers); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		p, err := m.GetProfile(r.Context(), id)
 		if err != nil {
@@ -210,15 +292,27 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"profile": p})
 	case http.MethodDelete:
-		// 先取，既当「不存在→404」判断，也拿 rule_count/group_count 做删除前校验。
+		// 删除前只拦「还有令牌绑着」：v2 的规则/分组是全局库，方案里没有内容可清，
+		// 直接删方案不会丢数据；但令牌绑着被删的方案会让订阅静默失效，必须拦。
 		p, err := m.GetProfile(r.Context(), id)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return
 		}
-		if p.RuleCount > 0 || p.GroupCount > 0 {
+		tokens, terr := m.ListSubTokens(r.Context())
+		if terr != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, terr)
+			return
+		}
+		used := 0
+		for _, t := range tokens {
+			if t.ProfileID == id {
+				used++
+			}
+		}
+		if used > 0 {
 			s.writeAPIError(w, r, http.StatusConflict, fmt.Errorf(
-				"方案 “%s” 下还有 %d 条规则、%d 个分组，请先移动或删除", p.Name, p.RuleCount, p.GroupCount))
+				"订阅方案 “%s” 仍有 %d 个令牌在用，请先改绑或删除令牌", p.Name, used))
 			return
 		}
 		if err := m.DeleteProfile(r.Context(), id); err != nil {
@@ -233,39 +327,4 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/PUT/DELETE"))
 	}
-}
-
-// bulkGroupsBody 是 POST /api/groups/bulk 的请求体：把 ids 里的分组移到 profile_id。
-type bulkGroupsBody struct {
-	IDs       []int64 `json:"ids"`
-	ProfileID int64   `json:"profile_id"`
-}
-
-// handleAPIGroupsBulk 实现 POST /api/groups/bulk（批量移动分组的方案归属）。
-func (s *Server) handleAPIGroupsBulk(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
-		return
-	}
-	m, ok := s.subManagerOr503(w, r)
-	if !ok {
-		return
-	}
-	var body bulkGroupsBody
-	if !s.decodeBody(w, r, &body) {
-		return
-	}
-	if len(body.IDs) == 0 {
-		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("必须给出 ids"))
-		return
-	}
-	if !s.profileExists(w, r, m, body.ProfileID) {
-		return
-	}
-	moved, err := m.MoveGroupsToProfile(r.Context(), body.IDs, body.ProfileID)
-	if err != nil {
-		s.writeAPIError(w, r, http.StatusInternalServerError, err)
-		return
-	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"updated": moved})
 }

@@ -2,6 +2,7 @@ package subforge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -448,5 +449,132 @@ func TestImportRulesBatchDuplicateWithinOneImport(t *testing.T) {
 	}
 	if got := countImportRules(t, m); got != 2 {
 		t.Fatalf("rules 行数 = %d, want 2", got)
+	}
+}
+
+// TestImportRulesToLibraryEmptySource 覆盖导入来源必填：空串与纯空白都返回
+// ErrEmptyImportSource，且不落任何规则、不建分组。
+func TestImportRulesToLibraryEmptySource(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+
+	for _, source := range []string{"", "   ", "\t "} {
+		res, err := m.ImportRulesToLibrary(ctx, source, []string{"DOMAIN-SUFFIX,example.com,DIRECT"}, nil, true)
+		if !errors.Is(err, ErrEmptyImportSource) {
+			t.Fatalf("source=%q 应返回 ErrEmptyImportSource, 实际: %v", source, err)
+		}
+		if res.RulesAdded != 0 || res.GroupsCreated != 0 {
+			t.Fatalf("source=%q 不应落任何数据, 实际 added=%d groups=%d", source, res.RulesAdded, res.GroupsCreated)
+		}
+	}
+	// 旧薄封装同样校验来源
+	if _, err := m.ImportRules(ctx, "", []string{"DOMAIN-SUFFIX,example.com,DIRECT"}, nil); !errors.Is(err, ErrEmptyImportSource) {
+		t.Fatalf("ImportRules 空来源应返回 ErrEmptyImportSource, 实际: %v", err)
+	}
+	if got := countImportRules(t, m); got != 0 {
+		t.Fatalf("空来源导入后 rules 行数 = %d, want 0", got)
+	}
+}
+
+// TestImportRulesToLibraryCreateGroups 覆盖 createGroups=true：
+// 目标不是内置出站且分组库里没有同名分组时自动建 select 分组，
+// 新分组 source 跟随本次导入来源，规则 rule_config 指向新组。
+func TestImportRulesToLibraryCreateGroups(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+
+	res, err := m.ImportRulesToLibrary(ctx, "airport:HK", []string{
+		"DOMAIN-SUFFIX,example.com,MyPolicy",
+		"DOMAIN-SUFFIX,other.com,DIRECT",
+	}, nil, true)
+	if err != nil {
+		t.Fatalf("ImportRulesToLibrary: %v", err)
+	}
+	if res.RulesAdded != 2 {
+		t.Fatalf("RulesAdded = %d, want 2", res.RulesAdded)
+	}
+	if res.GroupsCreated != 1 {
+		t.Fatalf("GroupsCreated = %d, want 1（DIRECT 是内置出站，不建组）", res.GroupsCreated)
+	}
+
+	groups, err := m.ListProxyGroupsFiltered(ctx, SourceFilter{Source: "airport:HK"})
+	if err != nil {
+		t.Fatalf("ListProxyGroupsFiltered: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("应只建 1 个分组, got %d", len(groups))
+	}
+	if groups[0].Name != "MyPolicy" || groups[0].Type != "select" || groups[0].Regex != "." ||
+		groups[0].Source != "airport:HK" {
+		t.Fatalf("自动建分组字段不符: %+v", groups[0])
+	}
+
+	rules, err := m.ListRulesFiltered(ctx, SourceFilter{Source: "airport:HK"})
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("导入规则应按来源可查, got %d err=%v", len(rules), err)
+	}
+	for _, r := range rules {
+		if r.Source != "airport:HK" || r.Enabled {
+			t.Fatalf("导入规则 source/enabled 不符: %+v", r)
+		}
+		if r.Raw == "" || r.OriginKey == "" {
+			t.Fatalf("导入规则应保留 raw 与 origin_key: %+v", r)
+		}
+	}
+	var my *Rule
+	for i := range rules {
+		if rules[i].RuleParam == "example.com" {
+			my = &rules[i]
+		}
+	}
+	if my == nil {
+		t.Fatal("未找到 example.com 规则")
+	}
+	if my.RuleConfig != groups[0].ID {
+		t.Fatalf("规则 rule_config 应指向自动建的组 %d, 实际 %d", groups[0].ID, my.RuleConfig)
+	}
+}
+
+// TestImportRulesToLibraryReusesExistingGroup 覆盖同名分组复用：
+// 分组库里已有同名分组时不重建（GroupsCreated=0），规则直接指向已有分组。
+func TestImportRulesToLibraryReusesExistingGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+
+	existing, err := m.AddProxyGroup(ctx, "MyPolicy", "url-test", "example\\.(com|net)", "", 0, 0)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+
+	res, err := m.ImportRulesToLibrary(ctx, "airport:HK", []string{
+		"DOMAIN-SUFFIX,example.com,MyPolicy",
+	}, nil, true)
+	if err != nil {
+		t.Fatalf("ImportRulesToLibrary: %v", err)
+	}
+	if res.GroupsCreated != 0 {
+		t.Fatalf("已有同名分组时不应新建, GroupsCreated = %d", res.GroupsCreated)
+	}
+	all, err := m.ListProxyGroups(ctx)
+	if err != nil || len(all) != 1 || all[0].ID != existing.ID {
+		t.Fatalf("分组库应仍只有 1 个分组, got %+v err=%v", all, err)
+	}
+
+	rules, err := m.ListRulesFiltered(ctx, SourceFilter{Source: "airport:HK"})
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("导入规则应为 1 条, got %d err=%v", len(rules), err)
+	}
+	if rules[0].RuleConfig != existing.ID {
+		t.Fatalf("规则应指向已有分组 %d, 实际 %d", existing.ID, rules[0].RuleConfig)
+	}
+	// createGroups=false 时不建组，只汇总提示
+	res, err = m.ImportRulesToLibrary(ctx, "airport:JP", []string{
+		"DOMAIN-SUFFIX,fresh.com,NewPolicy",
+	}, nil, false)
+	if err != nil {
+		t.Fatalf("ImportRulesToLibrary(createGroups=false): %v", err)
+	}
+	if res.GroupsCreated != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("createGroups=false 应只提示不建组, groups=%d warnings=%v", res.GroupsCreated, res.Warnings)
 	}
 }
