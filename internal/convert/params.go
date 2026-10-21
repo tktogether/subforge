@@ -248,7 +248,21 @@ func BuildPipeline(p Params) (transform.Pipeline, error) {
 //
 // 指定了 pipeline=<name> 时用模板里的命名管线；否则把 BuildPipeline 的裸链
 // 包成默认策略（abort）的 Plan。两条路径都返回 Plan，Engine 只需一个执行入口。
+//
+// 本函数不带脚本库：命名管线里 ref=<脚本名> 的步骤会报「脚本步骤需要脚本库支持」。
+// CLI 与其它只认模板的调用方依赖这个签名不变；控制台链路用 BuildPlanWithResolver。
 func BuildPlan(p Params) (transform.Plan, error) {
+	return BuildPlanWithResolver(p, nil)
+}
+
+// BuildPlanWithResolver 同 BuildPlan，但允许注入 ScriptResolver 以支持命名管线里
+// ref=<脚本名> 的步骤。
+//
+// 为什么必须单独开一个入口而不是给 BuildPlan 加参数：脚本库只在控制台（serve）链路
+// 里存在，CLI 与既有调用方没有它。写成新函数既让控制台把脚本注入进来，又不动
+// BuildPlan 的签名——否则每个调用点都要跟着改，还会把「没脚本库」和「脚本被禁用」
+// 两种语义混在一个 nil 里。
+func BuildPlanWithResolver(p Params, res config.ScriptResolver) (transform.Plan, error) {
 	if p.Pipeline != "" {
 		spec, ok := p.Pipelines[p.Pipeline]
 		if !ok {
@@ -258,7 +272,7 @@ func BuildPlan(p Params) (transform.Plan, error) {
 				"未找到命名管线 %q：模板里没有 [pipeline:%s] 段落，控制台的「管线」页也没有启用的同名管线（GET /api/pipelines 可查现有名称）",
 				p.Pipeline, p.Pipeline)
 		}
-		return spec.Compile()
+		return spec.CompileWithResolver(res)
 	}
 	pipe, err := BuildPipeline(p)
 	if err != nil {

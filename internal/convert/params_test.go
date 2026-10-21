@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -315,6 +316,105 @@ func TestBuildPlan_DefaultFallsBackToBuildPipeline(t *testing.T) {
 	}
 	if res.Nodes.Len() != 3 {
 		t.Errorf("默认管线去重后节点数 = %d，want 3", res.Nodes.Len())
+	}
+}
+
+// fakeScriptResolver 是 convert 包内最小的 config.ScriptResolver 实现。
+// internal/config 的同名测试实现不能跨包复用，这里自带一个。
+type fakeScriptResolver struct {
+	enabled bool
+	scripts map[string]string
+}
+
+func (f *fakeScriptResolver) ScriptsEnabled() bool { return f.enabled }
+
+func (f *fakeScriptResolver) ResolveScript(name string) (string, error) {
+	if code, ok := f.scripts[name]; ok {
+		return code, nil
+	}
+	return "", fmt.Errorf("脚本 %q 不存在", name)
+}
+
+// refPipelineParams 造一条只含 filter.script ref=<脚本名> 的命名管线参数。
+// 这正是控制台「管线」页建出来的形状（steps_json -> PipelineStep.Kind=filter.script）。
+func refPipelineParams(name, ref string) Params {
+	return Params{
+		Pipeline: name,
+		Pipelines: map[string]config.PipelineSpec{
+			name: {
+				Name:    name,
+				OnError: "abort",
+				Steps: []config.PipelineStep{
+					{Kind: "filter.script", Args: map[string]string{"ref": ref}},
+				},
+			},
+		},
+	}
+}
+
+// TestBuildPlanWithResolver_RefScript 用例1：注入 resolver 后 ref=<脚本名> 编译成功，
+// 步骤数正确，且脚本真的参与过滤（只留下名字含 HK 的节点）。
+func TestBuildPlanWithResolver_RefScript(t *testing.T) {
+	p := refPipelineParams("hk-only", "e2e-hk-filter")
+	res := &fakeScriptResolver{enabled: true, scripts: map[string]string{
+		"e2e-hk-filter": "node.name.indexOf('HK') >= 0",
+	}}
+	plan, err := BuildPlanWithResolver(p, res)
+	if err != nil {
+		t.Fatalf("BuildPlanWithResolver: %v", err)
+	}
+	if len(plan.Steps) != 1 {
+		t.Fatalf("Plan.Steps = %d，want 1", len(plan.Steps))
+	}
+	out, err := plan.Run(testNodes())
+	if err != nil {
+		t.Fatalf("plan.Run: %v", err)
+	}
+	// testNodes 里 2 个 HK、1 个 JP、1 个 US；这条管线只有 filter.script，不做去重。
+	want := []string{"HK-香港-01 - 10Gbps", "HK-香港-01 - 10Gbps"}
+	if !sameStrings(out.Nodes.Names(), want) {
+		t.Errorf("脚本过滤后 = %v，want %v", out.Nodes.Names(), want)
+	}
+}
+
+// TestBuildPlanWithResolver_NilResolver 用例2：BuildPlan（nil resolver）对同一条管线
+// 必须报「脚本步骤需要脚本库支持」——这正是修复前网页链路的原始 502 文案。
+func TestBuildPlanWithResolver_NilResolver(t *testing.T) {
+	p := refPipelineParams("hk-only", "e2e-hk-filter")
+	_, err := BuildPlan(p)
+	if err == nil {
+		t.Fatal("nil resolver 下 ref= 应报错")
+	}
+	if !strings.Contains(err.Error(), "脚本步骤需要脚本库支持") {
+		t.Errorf("错误信息应含 脚本步骤需要脚本库支持: %v", err)
+	}
+}
+
+// TestBuildPlanWithResolver_ScriptsDisabled 用例3：安全开关关闭时，即使脚本存在也要拒绝。
+func TestBuildPlanWithResolver_ScriptsDisabled(t *testing.T) {
+	p := refPipelineParams("hk-only", "e2e-hk-filter")
+	res := &fakeScriptResolver{enabled: false, scripts: map[string]string{
+		"e2e-hk-filter": "node.name.indexOf('HK') >= 0",
+	}}
+	_, err := BuildPlanWithResolver(p, res)
+	if err == nil {
+		t.Fatal("script.enabled=false 时应报错")
+	}
+	if !strings.Contains(err.Error(), "脚本步骤已禁用（在「设置」里开启 script.enabled）") {
+		t.Errorf("错误信息应含 脚本步骤已禁用: %v", err)
+	}
+}
+
+// TestBuildPlanWithResolver_RefNotFound 用例4：脚本名不存在时报「解析脚本引用」。
+func TestBuildPlanWithResolver_RefNotFound(t *testing.T) {
+	p := refPipelineParams("hk-only", "missing-script")
+	res := &fakeScriptResolver{enabled: true, scripts: map[string]string{}}
+	_, err := BuildPlanWithResolver(p, res)
+	if err == nil {
+		t.Fatal("ref 不存在时应报错")
+	}
+	if !strings.Contains(err.Error(), "解析脚本引用") {
+		t.Errorf("错误信息应含 解析脚本引用: %v", err)
 	}
 }
 

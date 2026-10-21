@@ -112,6 +112,13 @@ func (s *Server) SetSubManager(m *subforge.Manager) {
 	if s.engine != nil {
 		s.engine.ExtraPipelines = s.uiPipelineSpecs
 	}
+	// 脚本库同样要注入：命名管线里的 ref=<脚本名> 只有拿到 resolver 才编译得出来。
+	// 不接这一步，「脚本」页建的脚本在转换/订阅链路里 100% 报「脚本步骤需要脚本库支持」；
+	// 顺带让 src= 内联脚本也真正受 script.enabled 这个安全开关约束（resolver 为 nil 时
+	// resolveScriptSrc 会跳过启用检查）。
+	if s.engine != nil {
+		s.engine.ScriptResolver = m.ScriptResolver()
+	}
 }
 
 // SetScheduler 注入定时调度器，供 GET /api/tasks 读取执行历史。

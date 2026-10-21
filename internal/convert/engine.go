@@ -53,6 +53,12 @@ type Engine struct {
 	// 停用的管线不在这里返回——界面上的「停用」意思是别拿它跑转换。
 	// 为 nil 时只认模板，纯 CLI 部署照常工作。
 	ExtraPipelines func(ctx context.Context) (map[string]config.PipelineSpec, error)
+	// ScriptResolver 解析命名管线里 ref=<脚本名> 的脚本，并回答脚本子系统是否启用。
+	//
+	// 由控制台（serve 路径）在注入订阅管理器时一并注入；为 nil 时行为与从前完全一致：
+	// 只有 ref= 的步骤报「脚本步骤需要脚本库支持」，src= 内联脚本照常跑（CLI 零迁移）。
+	// 没有它，网页「脚本」页建出来的脚本在转换/订阅链路里 100% 不可用。
+	ScriptResolver config.ScriptResolver
 }
 
 // Result 是一次转换的产物。
@@ -117,7 +123,9 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		return Result{}, err
 	}
 
-	plan, err := BuildPlan(eff)
+	// 走带 resolver 的入口：控制台注入过脚本库时 ref=<脚本名> 才能编译出脚本步骤，
+	// 否则整条「脚本 + 管线 ref= + 转换」链路会在这一步报「脚本步骤需要脚本库支持」。
+	plan, err := BuildPlanWithResolver(eff, e.ScriptResolver)
 	if err != nil {
 		return Result{}, err
 	}
