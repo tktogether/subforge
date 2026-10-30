@@ -8,7 +8,7 @@ const props = defineProps<{
 
 <template>
   <span v-if="props.text || props.example" class="sf-info-tip-wrap">
-    <v-tooltip location="top" max-width="360" open-on-click open-on-focus>
+    <v-tooltip location="top" max-width="360" open-on-click open-on-focus content-class="sf-tooltip">
       <template #activator="{ props: activatorProps }">
         <v-btn
           v-bind="activatorProps"

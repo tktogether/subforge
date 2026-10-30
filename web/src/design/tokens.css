@@ -32,6 +32,9 @@
   --sf-warn: #9A5B00;
   --sf-danger: #B42318;
   --sf-info: #0E7490;
+  --sf-tooltip-bg: #0F172A;
+  --sf-tooltip-fg: #F8FAFC;
+  --sf-tooltip-border: #334155;
   --sf-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
   --sf-radius: 6px;
   --sf-space: 16px;
@@ -63,6 +66,9 @@ html.v-theme--subforgeDark,
   --sf-warn: #F5C451;
   --sf-danger: #FF9B90;
   --sf-info: #6FD8E8;
+  --sf-tooltip-bg: #F1F5F9;
+  --sf-tooltip-fg: #0B1220;
+  --sf-tooltip-border: #CBD5E1;
   --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
   --sf-radius: 6px;
   --sf-space: 16px;

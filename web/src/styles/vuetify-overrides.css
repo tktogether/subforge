@@ -159,3 +159,24 @@
 .v-dialog > .v-overlay__content > form > .v-card > .v-card-text {
   overflow-y: auto;
 }
+
+
+/* ---- 悬浮提示：使用实色背景与高对比文字，避免半透明叠字 ---- */
+.v-overlay-container .sf-tooltip {
+  background: var(--sf-tooltip-bg) !important;
+  color: var(--sf-tooltip-fg) !important;
+  border: 1px solid var(--sf-tooltip-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
+  opacity: 1 !important;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.v-overlay-container .sf-tooltip .text-body-2,
+.v-overlay-container .sf-tooltip .text-caption {
+  color: var(--sf-tooltip-fg) !important;
+}
+.v-overlay-container .sf-tooltip .text-caption {
+  opacity: 0.82;
+}
