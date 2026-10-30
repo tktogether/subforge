@@ -102,11 +102,14 @@ func (s *Server) importRulesAfterRefresh(ctx context.Context, m *subforge.Manage
 			out = append(out, item)
 			continue
 		}
-		item["rules_added"] = ir.RulesAdded
-		item["rules_skipped"] = ir.RulesSkipped
-		item["rules_enabled"] = ir.RulesAdded
+		item["rules_added"] = 0
+		item["rules_skipped"] = 0
+		item["rules_enabled"] = 0
 		item["providers_added"] = ir.ProvidersAdded
 		item["groups_created"] = ir.GroupsCreated
+		item["rule_source_name"] = ir.RuleSourceName
+		item["rule_source_version"] = ir.RuleSourceVersion
+		item["rule_source_rules"] = ir.RuleSourceRules
 		item["warnings"] = warnings
 		out = append(out, item)
 	}

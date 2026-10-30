@@ -781,29 +781,32 @@ func TestAPIProfiles_ImportRulesToLibrary(t *testing.T) {
 		t.Fatalf("导入状态 = %d；body=%s", st, body)
 	}
 	var resp struct {
-		RulesAdded    int `json:"rules_added"`
-		RulesSkipped  int `json:"rules_skipped"`
-		GroupsCreated int `json:"groups_created"`
+		RulesAdded      int    `json:"rules_added"`
+		GroupsCreated   int    `json:"groups_created"`
+		RuleSourceName  string `json:"rule_source_name"`
+		RuleSourceRules int    `json:"rule_source_rules"`
 	}
 	mustDecode(t, body, &resp)
-	if resp.RulesAdded != 2 || resp.GroupsCreated != 1 {
-		t.Fatalf("导入结果 rules_added=%d groups_created=%d，应为 2/1；body=%s", resp.RulesAdded, resp.GroupsCreated, body)
+	if resp.RulesAdded != 0 || resp.RuleSourceRules != 2 || resp.GroupsCreated != 1 || resp.RuleSourceName == "" {
+		t.Fatalf("机场规则应全部进规则源：%+v body=%s", resp, body)
 	}
-
-	// 规则进全局库，来源是机场；自动建的组来源跟随规则来源，规则指向该组。
-	rules := listRules(t, ts, "?source=airport:auto")
-	if len(rules) != 2 {
-		t.Fatalf("airport:auto 应有 2 条规则：%+v", rules)
+	rules, warnings := mgr.RuleSourceRules(t.Context(), []string{resp.RuleSourceName})
+	if len(rules) != 2 || len(warnings) != 0 {
+		t.Fatalf("规则源规则数 = %d，warnings=%v", len(rules), warnings)
+	}
+	if !strings.Contains(strings.Join(rules, "\n"), "DOMAIN-SUFFIX,auto.test,🚀 节点选择") {
+		t.Fatalf("规则源缺少 auto.test：%v", rules)
+	}
+	// 旧行为是规则写 rules 表；现在机场规则只存在于规则源产品里。
+	if got := listRules(t, ts, "?source=airport:auto"); len(got) != 0 {
+		t.Fatalf("机场规则不应再写 rules 表：%+v", got)
 	}
 	groups := listGroups(t, ts, "?source=airport:auto")
 	if len(groups) != 1 || groups[0].Name != "🚀 节点选择" {
 		t.Fatalf("自动建组不对：%+v", groups)
 	}
-	if groups[0].ID != rules[0].RuleConfig && groups[0].ID != rules[1].RuleConfig {
-		t.Fatalf("导入规则未指向自动建的组：groups=%+v rules=%+v", groups, rules)
-	}
 
-	// profile_id 下线 → 400；非法 JSON → 400；空 body 兼容（重复导入全部跳过）。
+	// profile_id 下线 → 400；非法 JSON → 400；空 body 兼容（重复导入只会产生新版本）。
 	if st, body := postAPIJSON(t, ts, fmt.Sprintf("/api/airports/%d/import-rules", id),
 		map[string]any{"profile_id": 1}); st != http.StatusBadRequest {
 		t.Fatalf("导入带 profile_id 状态 = %d，应为 400；body=%s", st, body)
@@ -817,54 +820,13 @@ func TestAPIProfiles_ImportRulesToLibrary(t *testing.T) {
 	if st != http.StatusOK {
 		t.Fatalf("空 body 导入状态 = %d，应为 200；body=%s", st, body)
 	}
-	mustDecode(t, body, &resp)
-	if resp.RulesAdded != 0 || resp.RulesSkipped != 2 || resp.GroupsCreated != 0 {
-		t.Fatalf("重复导入应全部跳过，实际 %+v", resp)
+	var again struct {
+		GroupsCreated   int `json:"groups_created"`
+		RuleSourceRules int `json:"rule_source_rules"`
 	}
-	if len(listRules(t, ts, "?source=airport:auto")) != 2 {
-		t.Fatalf("重复导入不该新增规则")
-	}
-}
-
-// --- 跨来源移动撞唯一索引 → 409 ---
-
-func TestAPIProfiles_CrossSourceMove409(t *testing.T) {
-	ts, _, mgr := profileServer(t)
-	up := autoGroupUpstream(t)
-
-	// 同一条规则原文导入两个来源：origin_key 相同，但 source 不同，允许共存。
-	for _, name := range []string{"dup", "dup2"} {
-		id := addImportAirport(t, mgr, name, up.URL)
-		if st, body := postAPIJSON(t, ts, fmt.Sprintf("/api/airports/%d/import-rules", id),
-			map[string]any{}); st != http.StatusOK {
-			t.Fatalf("导入 %s 状态 = %d；body=%s", name, st, body)
-		}
-	}
-	rulesB := listRules(t, ts, "?source=airport:dup2")
-	if len(rulesB) != 2 {
-		t.Fatalf("airport:dup2 应有 2 条规则：%+v", rulesB)
-	}
-
-	// 把 dup2 的一条规则改到 dup：同来源同去重键 → 409。
-	target := rulesB[0]
-	if st, body := doJSON(t, ts, http.MethodPut, fmt.Sprintf("/api/rules/%d", target.ID), map[string]any{
-		"rule_type": target.RuleType, "rule_param": target.RuleParam,
-		"rule_config": target.RuleConfig, "enabled": false, "source": "airport:dup",
-	}); st != http.StatusConflict {
-		t.Fatalf("跨来源重复状态 = %d，应为 409；body=%s", st, body)
-	} else if !strings.Contains(body, "目标来源里已存在同来源同去重键的规则") {
-		t.Errorf("409 文案不对：%s", body)
-	}
-
-	// 改成自定义来源（没有同 origin 冲突）→ 200。
-	if st, body := doJSON(t, ts, http.MethodPut, fmt.Sprintf("/api/rules/%d", target.ID), map[string]any{
-		"rule_type": target.RuleType, "rule_param": target.RuleParam,
-		"rule_config": target.RuleConfig, "enabled": false, "source": "",
-	}); st != http.StatusOK {
-		t.Fatalf("改到自定义来源状态 = %d，应为 200；body=%s", st, body)
-	}
-	if len(listRules(t, ts, "?source=")) != 1 {
-		t.Fatalf("改到自定义来源后应能在 ?source= 查到")
+	mustDecode(t, body, &again)
+	if again.GroupsCreated != 0 || again.RuleSourceRules != 2 {
+		t.Fatalf("重复导入应只产生新版本，实际 %+v", again)
 	}
 }
 
@@ -930,7 +892,7 @@ const profileTemplateINI = "[custom]\n" +
 // layersSubServer 起一个方案订阅测试服务：
 //   - fixture 机场（45 节点）作为订阅来源；
 //   - 自定义层：1 组 + 1 条已启用规则；
-//   - 机场层：1 条导入规则（目标自动建组）并已启用；
+//   - 机场规则：导入为版本化规则源（不再写 rules 表，需显式绑定）；
 //   - 模板层：profileTemplateINI（🚀 手动选择 / ♻️ 自动选择 + FINAL）。
 func layersSubServer(t *testing.T) (*httptest.Server, string, *subforge.Manager) {
 	t.Helper()
@@ -946,11 +908,6 @@ func layersSubServer(t *testing.T) (*httptest.Server, string, *subforge.Manager)
 	if st, body := postAPIJSON(t, ts, fmt.Sprintf("/api/airports/%d/import-rules", up),
 		map[string]any{"create_groups": true}); st != http.StatusOK {
 		t.Fatalf("导入机场规则状态 = %d；body=%s", st, body)
-	}
-	if st, body := postAPIJSON(t, ts, "/api/rules/bulk", map[string]any{
-		"source": "airport:auto", "enabled": true,
-	}); st != http.StatusOK {
-		t.Fatalf("启用机场规则状态 = %d；body=%s", st, body)
 	}
 
 	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1009,20 +966,58 @@ func TestAPIProfiles_SubscribeLayers(t *testing.T) {
 		t.Errorf("模板层订阅串进了自定义分组")
 	}
 
-	// 3) 默认三层（不设层）：三层叠加，模板规则排在 DB 规则之后（MATCH 必须最后）。
+	// 3) 默认层（不设层、不绑规则源）：自定义 + 模板叠加；机场规则是规则源，
+	// 未显式绑定就不出现。模板规则排在 DB 规则之后（MATCH 必须最后）。
 	p3 := mustProfilePayload(t, ts, map[string]any{"name": "默认层", "config": tplURL})
 	mustToken(t, ts, "t3", p3.ID)
 	st, body = subscribe(t, ts, "t3")
 	if st != http.StatusOK {
 		t.Fatalf("默认层订阅状态 = %d；body=%s", st, body)
 	}
-	for _, want := range []string{"DOMAIN-SUFFIX,c.test,🅰 自定义组", "auto.test", "tplonly.test", `name: "🅰 自定义组"`, `name: "🚀 手动选择"`} {
+	for _, want := range []string{"DOMAIN-SUFFIX,c.test,🅰 自定义组", "tplonly.test", `name: "🅰 自定义组"`, `name: "🚀 手动选择"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("默认层订阅缺少 %q", want)
 		}
 	}
+	if strings.Contains(body, "auto.test") {
+		t.Errorf("未绑定机场规则源时不应出现 auto.test")
+	}
 	if strings.Index(body, "tplonly.test") > strings.Index(body, "MATCH,") {
 		t.Errorf("模板规则应排在 DB 规则之后（MATCH 最后）")
+	}
+
+	// 3b) 显式绑定机场规则源：规则内联；绑定源后模板规则让位（现有语义）。
+	sources, err := mgr.ListRuleSources(t.Context())
+	if err != nil {
+		t.Fatalf("ListRuleSources: %v", err)
+	}
+	airportSource := ""
+	for _, s := range sources {
+		if s.Origin == "airport" {
+			airportSource = s.Name
+			break
+		}
+	}
+	if airportSource == "" {
+		t.Fatalf("机场规则源未生成：%+v", sources)
+	}
+	p3b := mustProfilePayload(t, ts, map[string]any{
+		"name": "绑定机场源", "config": tplURL,
+		"rule_sources": []string{airportSource},
+	})
+	mustToken(t, ts, "t3b", p3b.ID)
+	st, body = subscribe(t, ts, "t3b")
+	if st != http.StatusOK {
+		t.Fatalf("绑定机场源订阅状态 = %d；body=%s", st, body)
+	}
+	if !strings.Contains(body, "DOMAIN-SUFFIX,auto.test,🚀 节点选择") {
+		t.Errorf("绑定机场源后订阅缺少 auto.test")
+	}
+	if !strings.Contains(body, "DOMAIN-SUFFIX,c.test,🅰 自定义组") {
+		t.Errorf("绑定机场源后自定义规则应保留")
+	}
+	if strings.Contains(body, "tplonly.test") {
+		t.Errorf("绑定规则源后模板规则应让位（现有语义）")
 	}
 
 	// 4) 规则层给 template,custom → 归一化成 custom,template。

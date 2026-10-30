@@ -1,0 +1,113 @@
+package subforge
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/tktogether/subforge/internal/manifest"
+)
+
+// AirportRuleSourceResult 是一次机场规则源写入的结果。
+type AirportRuleSourceResult struct {
+	Name    string `json:"name"`
+	Label   string `json:"label"`
+	Version string `json:"version"`
+	Rules   int    `json:"rules"`
+	Path    string `json:"path"`
+}
+
+// SaveAirportRuleSource 把机场订阅里的规则写成一个版本化规则源产品。
+//
+// 机场规则不再进入 rules 表：它们和远程规则源一样有版本、当前指针和保留策略，
+// 由方案显式绑定后在订阅里内联。规则条目的目标仍是原分组名，分组由机场导入路径
+// 单独维护。
+func (m *Manager) SaveAirportRuleSource(ctx context.Context, airportName string, airportID int64, url string, rules []string) (AirportRuleSourceResult, error) {
+	name := AirportRuleSourceName(airportName, airportID)
+	if err := m.upsertManifestSource(ctx, manifest.Source{
+		Name: name, URL: url, Type: "clash", InputFormat: "clash",
+	}); err != nil {
+		return AirportRuleSourceResult{}, err
+	}
+	mf, err := m.LoadRuleManifest(ctx)
+	if err != nil {
+		return AirportRuleSourceResult{}, err
+	}
+	dir, err := m.ResolveRulesOutputDir(ctx)
+	if err != nil {
+		return AirportRuleSourceResult{}, err
+	}
+	ext := extForRuleSourceFormat(mf.Output.Format)
+	var content []byte
+	if ext == "txt" {
+		content = []byte(strings.Join(rules, "\n") + "\n")
+	} else {
+		content, err = yaml.Marshal(struct {
+			Rules []string `yaml:"rules"`
+		}{Rules: rules})
+		if err != nil {
+			return AirportRuleSourceResult{}, fmt.Errorf("序列化机场规则源 %s: %w", name, err)
+		}
+	}
+	res, err := manifest.SaveProduct(dir, name, ext, content, manifest.DefaultRetention)
+	if err != nil {
+		return AirportRuleSourceResult{}, err
+	}
+	if err := setCurrentVersion(dir, name, filepath.Base(res.Path)); err != nil {
+		return AirportRuleSourceResult{}, fmt.Errorf("记录规则源 %s 的当前版本: %w", name, err)
+	}
+	return AirportRuleSourceResult{
+		Name:    name,
+		Label:   AirportRuleSourceLabel(name),
+		Version: res.Version,
+		Rules:   len(rules),
+		Path:    res.Path,
+	}, nil
+}
+
+// upsertManifestSource 按内部名新增或更新 manifest source。
+// 机场源使用保留前缀，重名时更新 URL/类型（机场地址可能被用户改过）。
+func (m *Manager) upsertManifestSource(ctx context.Context, src manifest.Source) error {
+	path, err := m.ResolveRuleManifestPath(ctx)
+	if err != nil {
+		return err
+	}
+	mf := &manifest.Manifest{
+		Output: manifest.Output{Format: "clash-meta", Path: "./rules"},
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		loaded, lerr := manifest.LoadManifestRaw(path)
+		if lerr != nil {
+			return fmt.Errorf("读取规则源清单 %s: %w", path, lerr)
+		}
+		mf = loaded
+	}
+	if strings.TrimSpace(mf.Output.Format) == "" {
+		mf.Output.Format = "clash-meta"
+	}
+	if strings.TrimSpace(mf.Output.Path) == "" {
+		mf.Output.Path = "./rules"
+	}
+	found := false
+	for i := range mf.Sources {
+		if mf.Sources[i].SourceName() != src.Name {
+			continue
+		}
+		mf.Sources[i].URL = src.URL
+		mf.Sources[i].Type = src.Type
+		mf.Sources[i].InputFormat = src.InputFormat
+		found = true
+		break
+	}
+	if !found {
+		mf.Sources = append(mf.Sources, src)
+	}
+	if err := mf.ValidateForWrite(); err != nil {
+		return err
+	}
+	return manifest.SaveManifest(path, mf)
+}

@@ -61,6 +61,9 @@ func (m *Manager) AddRuleSource(ctx context.Context, src manifest.Source) (strin
 // 不存在返回错误（消息含「不存在」）；删空返回错误（消息含「至少保留」）。
 func (m *Manager) RemoveRuleSource(ctx context.Context, name string) (string, error) {
 	name = strings.TrimSpace(name)
+	if isAirportRuleSource(name) {
+		return "", fmt.Errorf("机场规则源由机场维护，不能单独删除")
+	}
 	path, err := m.ResolveRuleManifestPath(ctx)
 	if err != nil {
 		return "", err

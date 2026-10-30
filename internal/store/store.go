@@ -479,6 +479,26 @@ func (d *DB) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf
 	return nil
 }
 
+// UpdateRuleFromSource 用规则源里的新行覆盖一条自定义规则，包含 raw/origin_key。
+// 规则源更新后重复挑选时，目标可能变化（甚至变成 DIRECT），必须同时刷新 raw，
+// 否则渲染层在 rule_config=0 时会继续使用旧目标。
+func (d *DB) UpdateRuleFromSource(ctx context.Context, id int64, ruleType, ruleParam string, ruleConfig int64, resolveDNS bool, raw, originKey string) error {
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE rules SET rule_type = ?, rule_param = ?, rule_config = ?, resolve_dns = ?, raw = ?, origin_key = ?, enabled = 1, updated_at = ? WHERE id = ? AND source = ''",
+		ruleType, ruleParam, ruleConfig, resolveDNS, raw, originKey, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // GetRule 按 id 返回规则；不存在时返回 sql.ErrNoRows。
 func (d *DB) GetRule(ctx context.Context, id int64) (*Rule, error) {
 	var r Rule

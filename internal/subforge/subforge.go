@@ -369,6 +369,17 @@ func (m *Manager) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, err
 	return g, nil
 }
 
+// UpdateRuleFromSource 用规则源的新行覆盖自定义规则（含 raw/origin_key）。
+func (m *Manager) UpdateRuleFromSource(ctx context.Context, id int64, ruleType, ruleParam string, ruleConfig int64, resolveDNS bool, raw, originKey string) error {
+	if err := m.db.UpdateRuleFromSource(ctx, id, ruleType, ruleParam, ruleConfig, resolveDNS, raw, originKey); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("规则 %d 不存在或不是自定义规则", id)
+		}
+		return err
+	}
+	return nil
+}
+
 // UpdateProxyGroup 更新代理分组。sortOrder>0 覆盖，<=0 保持原值。
 func (m *Manager) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex, url string, interval, sortOrder int) error {
 	if err := m.db.UpdateProxyGroup(ctx, id, name, gtype, regex, url, interval, sortOrder); err != nil {

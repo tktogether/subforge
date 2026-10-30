@@ -47,13 +47,17 @@ func TestImportSubscribePreservesUpstreamGroups(t *testing.T) {
 		t.Fatalf("导入状态=%d body=%s", rr.Code, rr.Body.String())
 	}
 	var imported struct {
-		GroupsCreated int `json:"groups_created"`
+		GroupsCreated  int    `json:"groups_created"`
+		RuleSourceName string `json:"rule_source_name"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &imported); err != nil {
 		t.Fatalf("解析导入响应: %v", err)
 	}
 	if imported.GroupsCreated != 3 {
 		t.Fatalf("groups_created=%d，应为 3；body=%s", imported.GroupsCreated, rr.Body.String())
+	}
+	if imported.RuleSourceName == "" {
+		t.Fatalf("机场规则未生成规则源：%s", rr.Body.String())
 	}
 	groups, err := mgr.ListProxyGroups(t.Context())
 	if err != nil || len(groups) != 3 {
@@ -75,9 +79,10 @@ func TestImportSubscribePreservesUpstreamGroups(t *testing.T) {
 
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
-	if err := mgr.CreateSubTokenWithProfile(t.Context(), "t-proxy", "", "", "", "", "", "", 0); err != nil {
-		t.Fatalf("CreateSubToken: %v", err)
-	}
+	p := mustProfilePayload(t, ts, map[string]any{
+		"name": "proxy-src", "rule_sources": []string{imported.RuleSourceName},
+	})
+	mustToken(t, ts, "t-proxy", p.ID)
 	st, body := subscribe(t, ts, "t-proxy")
 	if st != http.StatusOK {
 		t.Fatalf("订阅状态=%d body=%s", st, body)

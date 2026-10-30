@@ -55,9 +55,20 @@ func (s *Server) importRulesToLibrary(ctx context.Context, m *subforge.Manager, 
 			opts.UpstreamNodeNames = append(opts.UpstreamNodeNames, parse.NameOf(n))
 		}
 	}
+	// 机场规则不再写 rules 表；解析规则只为按目标名补建分组。
+	opts.SkipRules = true
 	ir, err := m.ImportRulesToLibraryWithOptions(ctx, "airport:"+a.Name, dec.Rules, dec.RuleProviders, opts)
 	if err != nil {
 		return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusInternalServerError, fmt.Errorf("导入失败: %w", err)}
+	}
+	if len(dec.Rules) > 0 {
+		src, serr := m.SaveAirportRuleSource(ctx, a.Name, a.ID, a.SubscriptionURL, dec.Rules)
+		if serr != nil {
+			return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusInternalServerError, fmt.Errorf("保存机场规则源失败: %w", serr)}
+		}
+		ir.RuleSourceName = src.Name
+		ir.RuleSourceVersion = src.Version
+		ir.RuleSourceRules = src.Rules
 	}
 	warnings := make([]string, 0, len(dec.Warnings)+len(ir.Warnings))
 	warnings = append(warnings, dec.Warnings...)
@@ -120,16 +131,15 @@ func (s *Server) handleAPIImportRules(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, status, err)
 		return
 	}
-	rulesEnabled := 0
-	if body.EnableRules {
-		rulesEnabled = ir.RulesAdded
-	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"rules_added":     ir.RulesAdded,
-		"rules_skipped":   ir.RulesSkipped,
-		"rules_enabled":   rulesEnabled,
-		"providers_added": ir.ProvidersAdded,
-		"groups_created":  ir.GroupsCreated,
-		"warnings":        warnings,
+		"rules_added":         ir.RulesAdded,
+		"rules_skipped":       ir.RulesSkipped,
+		"rules_enabled":       0,
+		"providers_added":     ir.ProvidersAdded,
+		"groups_created":      ir.GroupsCreated,
+		"rule_source_name":    ir.RuleSourceName,
+		"rule_source_version": ir.RuleSourceVersion,
+		"rule_source_rules":   ir.RuleSourceRules,
+		"warnings":            warnings,
 	})
 }

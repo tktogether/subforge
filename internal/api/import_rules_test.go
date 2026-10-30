@@ -146,9 +146,9 @@ func TestImportRules_Success(t *testing.T) {
 	}
 }
 
-// TestImportRules_EnableRules 覆盖“导入后立即启用”请求：rules_enabled 计数正确，
-// 且落库规则确实 enabled=true。默认不传 enable_rules 时仍只进候选。
-func TestImportRules_EnableRules(t *testing.T) {
+// TestImportRules_AirportRulesBecomeSource 机场规则现在落成版本化规则源，
+// 不再写 rules 表；方案需要显式绑定该源后订阅才会内联。
+func TestImportRules_AirportRulesBecomeSource(t *testing.T) {
 	srv, mgr := importTestServer(t)
 	up := rulesUpstream(t)
 	id := addImportAirport(t, mgr, "enable", up.URL)
@@ -162,26 +162,40 @@ func TestImportRules_EnableRules(t *testing.T) {
 		t.Fatalf("状态码 = %d；body=%s", rr.Code, rr.Body.String())
 	}
 	var resp struct {
-		RulesAdded   int `json:"rules_added"`
-		RulesEnabled int `json:"rules_enabled"`
+		RulesAdded      int    `json:"rules_added"`
+		RulesEnabled    int    `json:"rules_enabled"`
+		RuleSourceName  string `json:"rule_source_name"`
+		RuleSourceRules int    `json:"rule_source_rules"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("解析响应: %v", err)
 	}
-	if resp.RulesAdded != 2 || resp.RulesEnabled != 2 {
-		t.Fatalf("added/enabled = %d/%d，应为 2/2；body=%s", resp.RulesAdded, resp.RulesEnabled, rr.Body.String())
+	if resp.RulesAdded != 0 || resp.RulesEnabled != 0 || resp.RuleSourceRules != 2 || resp.RuleSourceName == "" {
+		t.Fatalf("机场规则应全部进规则源：%+v body=%s", resp, rr.Body.String())
 	}
-	rules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"})
+	rules, warnings := mgr.RuleSourceRules(t.Context(), []string{resp.RuleSourceName})
+	if len(rules) != 2 {
+		t.Fatalf("规则源规则数 = %d，应为 2；warnings=%v", len(rules), warnings)
+	}
+	dbRules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"})
 	if err != nil {
 		t.Fatalf("ListRulesByLayers: %v", err)
 	}
-	if len(rules) != 2 {
-		t.Fatalf("规则数 = %d，应为 2", len(rules))
+	if len(dbRules) != 0 {
+		t.Fatalf("机场规则不应再写 rules 表：%+v", dbRules)
 	}
-	for _, r := range rules {
-		if !r.Enabled {
-			t.Fatalf("规则应 enabled=true，实际 %+v", r)
+	sources, err := mgr.ListRuleSources(t.Context())
+	if err != nil {
+		t.Fatalf("ListRuleSources: %v", err)
+	}
+	found := false
+	for _, s := range sources {
+		if s.Name == resp.RuleSourceName && s.Origin == "airport" && s.RuleCount == 2 && s.Latest != "" {
+			found = true
 		}
+	}
+	if !found {
+		t.Fatalf("规则源状态未出现或规则数不对：%+v", sources)
 	}
 }
 
@@ -269,11 +283,17 @@ func TestImportRulesFromAirportHelper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("importRulesFromAirport err: %v", err)
 	}
-	if ir.RulesAdded != 2 {
-		t.Fatalf("rules_added = %d，应为 2", ir.RulesAdded)
+	if ir.RulesAdded != 0 || ir.RuleSourceRules != 2 || ir.RuleSourceName == "" {
+		t.Fatalf("机场规则应只进规则源：%+v", ir)
 	}
 	if ir.ProvidersAdded != 1 {
 		t.Fatalf("providers_added = %d，应为 1", ir.ProvidersAdded)
+	}
+	if rules, _ := mgr.RuleSourceRules(t.Context(), []string{ir.RuleSourceName}); len(rules) != 2 {
+		t.Fatalf("规则源规则数 = %d，应为 2", len(rules))
+	}
+	if dbRules, _ := mgr.ListRulesByLayers(t.Context(), []string{"airport"}); len(dbRules) != 0 {
+		t.Fatalf("机场规则不应写 rules 表：%+v", dbRules)
 	}
 	if warnings == nil {
 		t.Fatalf("warnings 必须是非 nil 切片")

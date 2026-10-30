@@ -30,6 +30,9 @@ type ImportOptions struct {
 	// 是否覆盖全部机场节点：覆盖的组（通常是主节点组/漏网之鱼）默认在订阅里
 	// 追加方案选中的自建节点，子集组保持原样。
 	UpstreamNodeNames []string
+	// SkipRules 只建分组/写 providers，不把规则写进 rules 表。
+	// 机场规则改由版本化规则源产品承载；这里保留规则解析是为了按目标名补建分组。
+	SkipRules bool
 }
 
 // ImportResult 汇总一次订阅规则导入的结果。
@@ -38,8 +41,12 @@ type ImportResult struct {
 	RulesSkipped   int `json:"rules_skipped"`
 	ProvidersAdded int `json:"providers_added"`
 	// GroupsCreated 是本次导入自动新建的目标分组个数（仅 createGroups=true 时可能非 0）。
-	GroupsCreated int      `json:"groups_created"`
-	Warnings      []string `json:"warnings"`
+	GroupsCreated int `json:"groups_created"`
+	// 机场规则源的写入结果（仅有机场订阅的导入路径会填）。
+	RuleSourceName    string   `json:"rule_source_name,omitempty"`
+	RuleSourceVersion string   `json:"rule_source_version,omitempty"`
+	RuleSourceRules   int      `json:"rule_source_rules,omitempty"`
+	Warnings          []string `json:"warnings"`
 }
 
 // coversAllNodes 判断分组成员是否覆盖全部给定节点名。
@@ -246,6 +253,9 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 			}
 		}
 
+		if opts.SkipRules {
+			continue
+		}
 		pending = append(pending, store.ImportedRuleRow{
 			RuleType:   ruleType,
 			RuleParam:  ruleParam,

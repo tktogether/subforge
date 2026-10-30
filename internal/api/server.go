@@ -262,6 +262,8 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/api/suggestions/{index}/confirm", s.handleAPIConfirmSuggestion)
 	r.Post("/api/suggestions/{index}/reject", s.handleAPIRejectSuggestion)
 	r.Get("/api/rule-sources", s.handleAPIRuleSources)
+	r.Get("/api/rule-sources/rules", s.handleAPIRuleSourceRules)
+	r.Post("/api/rule-sources/import-rules", s.handleAPIRuleSourceImport)
 	r.Post("/api/rule-sources/init", s.handleAPIRuleSourcesInit)
 	r.Post("/api/rule-sources/update", s.handleAPIRuleSourcesUpdate)
 	r.Post("/api/rule-sources/rollback", s.handleAPIRuleSourcesRollback)

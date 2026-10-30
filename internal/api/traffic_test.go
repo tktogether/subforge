@@ -496,14 +496,17 @@ func TestAPIAirportsRefreshWithoutWithRulesHasNoImportsKey(t *testing.T) {
 }
 
 type refreshImportItem struct {
-	AirportID      int64    `json:"airport_id"`
-	Name           string   `json:"name"`
-	RulesAdded     int      `json:"rules_added"`
-	RulesSkipped   int      `json:"rules_skipped"`
-	ProvidersAdded int      `json:"providers_added"`
-	GroupsCreated  int      `json:"groups_created"`
-	Warnings       []string `json:"warnings"`
-	Err            string   `json:"err"`
+	AirportID         int64    `json:"airport_id"`
+	Name              string   `json:"name"`
+	RulesAdded        int      `json:"rules_added"`
+	RulesSkipped      int      `json:"rules_skipped"`
+	ProvidersAdded    int      `json:"providers_added"`
+	GroupsCreated     int      `json:"groups_created"`
+	RuleSourceName    string   `json:"rule_source_name"`
+	RuleSourceRules   int      `json:"rule_source_rules"`
+	RuleSourceVersion string   `json:"rule_source_version"`
+	Warnings          []string `json:"warnings"`
+	Err               string   `json:"err"`
 }
 
 type refreshWithImports struct {
@@ -536,8 +539,8 @@ func TestAPIAirportsRefreshWithRulesImports(t *testing.T) {
 	if item.Err != "" {
 		t.Fatalf("imports[0].err = %q，应为空", item.Err)
 	}
-	if item.RulesAdded != 2 {
-		t.Fatalf("rules_added = %d，应为 2", item.RulesAdded)
+	if item.RulesAdded != 0 || item.RuleSourceRules != 2 || item.RuleSourceName == "" {
+		t.Fatalf("机场规则应写入规则源：%+v", item)
 	}
 	if item.ProvidersAdded != 1 {
 		t.Fatalf("providers_added = %d，应为 1", item.ProvidersAdded)
@@ -605,19 +608,28 @@ func TestAPIAirportsRefreshWithRulesCreatesGroups(t *testing.T) {
 	if !found {
 		t.Fatalf("自动导入未创建目标分组，groups=%+v", groups)
 	}
-	rules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"})
-	if err != nil {
+	if rules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"}); err != nil {
 		t.Fatalf("ListRulesByLayers: %v", err)
+	} else if len(rules) != 0 {
+		t.Fatalf("机场规则不应写 rules 表：%+v", rules)
 	}
-	foundEnabled := false
-	for _, r := range rules {
-		if r.RuleParam == "auto-group.test" && r.Enabled {
-			foundEnabled = true
+	sources, err := mgr.ListRuleSources(t.Context())
+	if err != nil {
+		t.Fatalf("ListRuleSources: %v", err)
+	}
+	var srcName string
+	for _, s := range sources {
+		if s.Origin == "airport" {
+			srcName = s.Name
 			break
 		}
 	}
-	if !foundEnabled {
-		t.Fatalf("自动导入的规则应 enabled=true，rules=%+v", rules)
+	if srcName == "" {
+		t.Fatalf("自动导入未生成机场规则源：%+v", sources)
+	}
+	rules, _ := mgr.RuleSourceRules(t.Context(), []string{srcName})
+	if !strings.Contains(strings.Join(rules, "\n"), "DOMAIN-SUFFIX,auto-group.test,自动建组") {
+		t.Fatalf("机场规则源缺少 auto-group.test：%v", rules)
 	}
 }
 
