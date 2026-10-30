@@ -6,6 +6,7 @@ import * as directives from 'vuetify/directives'
 import SettingsPage from './SettingsPage.vue'
 import { endpoints } from '../api/endpoints'
 import { pageHelp } from '../content/help'
+import { notifyState } from '../composables/useNotify'
 
 vi.mock('../api/endpoints', () => ({
   endpoints: {
@@ -13,6 +14,8 @@ vi.mock('../api/endpoints', () => ({
     stats: vi.fn(),
     listSettings: vi.fn(),
     updateSettings: vi.fn(),
+    getTemplate: vi.fn(),
+    putTemplate: vi.fn(),
   },
 }))
 
@@ -45,6 +48,10 @@ describe('SettingsPage', () => {
     vi.clearAllMocks()
     vi.mocked(endpoints.listSettings).mockResolvedValue({ settings: sampleSettings } as any)
     vi.mocked(endpoints.updateSettings).mockResolvedValue({ ok: true } as any)
+    vi.mocked(endpoints.targets).mockResolvedValue([])
+    vi.mocked(endpoints.stats).mockResolvedValue({ history: { total: 0 } } as any)
+    vi.mocked(endpoints.getTemplate).mockResolvedValue({ path: '/data/template.ini', content: '[custom]\n' } as any)
+    vi.mocked(endpoints.putTemplate).mockResolvedValue({ ok: true } as any)
   })
 
   const sampleStats = { history: { total: 7 } } as any
@@ -52,6 +59,43 @@ describe('SettingsPage', () => {
     { key: 'script.enabled', kind: 'bool', label: '脚本', description: '脚本开关', value: 'true', is_default: true, placeholder: '' },
     { key: 'rules.manifest_path', kind: 'path', label: 'manifest', description: 'manifest 路径', value: '/tmp/m', is_default: false, placeholder: '/default/m' },
   ] as any
+
+  it('模板卡片：已配置时加载路径/内容，保存调用 putTemplate 并提示', async () => {
+    vi.mocked(endpoints.getTemplate).mockResolvedValue({ path: '/data/template.ini', content: '[custom]\n' } as any)
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    const vm = w.vm as any
+    await flushPromises()
+    expect(vm.templateAvailable).toBe(true)
+    expect(vm.templatePath).toBe('/data/template.ini')
+    expect(w.find('[data-testid="template-content"]').exists()).toBe(true)
+    await w.find('[data-testid="template-content"] textarea').setValue('[custom]\nruleset=x,[]FINAL')
+    await flushPromises()
+    expect(vm.templateContent).toBe('[custom]\nruleset=x,[]FINAL')
+    await w.find('[data-testid="template-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.putTemplate).toHaveBeenCalledWith('[custom]\nruleset=x,[]FINAL')
+    expect(endpoints.getTemplate).toHaveBeenCalledTimes(2)
+    expect(notifyState.text).toBe('模板已保存')
+  })
+
+  it('模板卡片：未配置 -config 时给出引导，不渲染编辑器', async () => {
+    vi.mocked(endpoints.getTemplate).mockRejectedValueOnce(new Error('模板路径未配置'))
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="template-unavailable"]').exists()).toBe(true)
+    expect(w.find('[data-testid="template-content"]').exists()).toBe(false)
+    expect(w.find('[data-testid="template-error"]').text()).toContain('模板路径未配置')
+  })
+
+  it('模板卡片：保存失败显示语法错误', async () => {
+    vi.mocked(endpoints.getTemplate).mockResolvedValue({ path: '/data/template.ini', content: '[custom]' } as any)
+    vi.mocked(endpoints.putTemplate).mockRejectedValueOnce(new Error('模板语法错误: bad'))
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="template-save"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="template-error"]').text()).toContain('模板语法错误')
+  })
 
   it('onMounted 调用 load：targets 与 stats 并发调用，结果写入，error 为空', async () => {
     vi.mocked(endpoints.targets).mockResolvedValue(['clash', 'yaml'])

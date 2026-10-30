@@ -18,6 +18,47 @@ const settings = ref<SettingItem[]>([])
 const saving = ref(false)
 const theme = useThemeMode()
 
+// 转换模板（INI）：只有启动时指定 -config 才存在；保存后若路径就是 -config，服务会热重载。
+const templatePath = ref('')
+const templateContent = ref('')
+const templateAvailable = ref(false)
+const templateLoading = ref(false)
+const templateSaving = ref(false)
+const templateError = ref('')
+
+async function loadTemplate(): Promise<void> {
+  templateLoading.value = true
+  templateError.value = ''
+  try {
+    const r = await endpoints.getTemplate()
+    templatePath.value = r.path
+    templateContent.value = r.content
+    templateAvailable.value = true
+  } catch (err) {
+    templateAvailable.value = false
+    templatePath.value = ''
+    templateContent.value = ''
+    templateError.value = errorMessage(err)
+  } finally {
+    templateLoading.value = false
+  }
+}
+
+async function saveTemplate(): Promise<void> {
+  templateSaving.value = true
+  templateError.value = ''
+  try {
+    await endpoints.putTemplate(templateContent.value)
+    notify('模板已保存', 'ok')
+    await loadTemplate()
+  } catch (err) {
+    templateError.value = errorMessage(err)
+    notify(errorMessage(err), 'error')
+  } finally {
+    templateSaving.value = false
+  }
+}
+
 const emptyState = computed(() => help.emptyState)
 
 async function load(): Promise<void> {
@@ -70,6 +111,7 @@ async function save(): Promise<void> {
 
 onMounted(() => {
   void load()
+  void loadTemplate()
 })
 </script>
 
@@ -104,6 +146,34 @@ onMounted(() => {
     </div>
     <div class="text-caption text-medium-emphasis mt-2">清空 = 恢复默认</div>
   </AsyncSection>
+  <v-card class="pa-4 mt-4" data-testid="template-card">
+    <div class="d-flex align-center ga-2 mb-2">
+      <span class="text-subtitle-1">转换模板（INI）</span>
+      <v-spacer />
+      <v-btn data-testid="template-reload" variant="text" size="small" :loading="templateLoading" @click="loadTemplate">重新加载</v-btn>
+    </div>
+    <div v-if="templateLoading" class="text-medium-emphasis">加载中…</div>
+    <template v-else-if="templateAvailable">
+      <div data-testid="template-path" class="text-caption text-medium-emphasis mb-2">路径：{{ templatePath }}</div>
+      <v-textarea
+        v-model="templateContent"
+        data-testid="template-content"
+        rows="16"
+        variant="outlined"
+        class="template-editor"
+        spellcheck="false"
+      />
+      <div class="d-flex align-center ga-2">
+        <v-btn data-testid="template-save" color="primary" :loading="templateSaving" @click="saveTemplate">保存模板</v-btn>
+        <span class="text-caption text-medium-emphasis">保存后若该路径就是启动时的 -config，服务会在约 1 秒内热重载。</span>
+      </div>
+    </template>
+    <v-alert v-else type="info" variant="tonal" data-testid="template-unavailable">
+      未启用转换模板：启动时没有指定 -config。纯控制台模式不需要模板；
+      需要自定义模板时，用 <code>-config /data/template.ini</code> 启动后再回来编辑。
+    </v-alert>
+    <div v-if="templateError !== ''" data-testid="template-error" class="text-error mt-2">{{ templateError }}</div>
+  </v-card>
   <v-card class="pa-4 mt-4">
     <div class="mb-2">支持的目标格式：{{ targets.length === 0 ? '（无）' : targets.join(', ') }}</div>
     <div class="mb-2">历史条数：{{ statsHistory }}</div>
@@ -115,3 +185,11 @@ onMounted(() => {
   </v-card>
   <div v-if="error !== ''" class="text-error mt-2">{{ error }}</div>
 </template>
+
+<style scoped>
+.template-editor :deep(textarea) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+</style>

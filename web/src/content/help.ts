@@ -185,7 +185,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     faq: [
       { q: '上游挂了规则集会变空吗？', a: '不会。单个规则源更新失败时该源保留上一版本，产物不受影响；每个源保留最近 5 个版本，失败原因会逐行显示。' },
       { q: '规则源支持 INI 吗？', a: '支持。input_format=ini 或 auto 命中 INI 时，会先展开 ruleset 再按 output.format 落盘；落盘扩展名：clash-meta → .yaml，clash-json / sing-box → .json，mrs → .mrs，text → .txt。' },
-      { q: 'INI 转换模板在哪里管理？', a: 'INI 转换模板（不是规则源）通过启动参数 -config / 配置文件维护；控制台暂不提供模板编辑器。' },
+      { q: 'INI 转换模板在哪里管理？', a: 'INI 转换模板（不是规则源）由启动参数 -config 指定；已指定时可在「设置」页预览/编辑并热重载，未指定时纯控制台模式不需要模板。' },
     ],
     concepts: [
       { term: '规则源', explain: '外部规则文件的 URL（如 ACL4SSR、blackmatrix7），SubForge 定期拉取并按清单里的 output.format 落盘。' },
@@ -267,15 +267,17 @@ export const PAGE_HELP: Record<string, PageHelp> = {
   settings: {
     page: 'settings',
     title: '设置',
-    oneLiner: '配置 4 项运行参数（规则清单路径、输出目录等）。',
-    whenToUse: '调整数据目录、规则清单路径或开关。',
+    oneLiner: '配置 5 项运行参数，并查看/编辑转换模板（需 -config）。',
+    whenToUse: '调整数据目录、规则清单路径、开关，或编辑 INI 转换模板。',
     steps: [
       { title: '查看设置', detail: '页面列出所有可配置项与当前值/默认值。' },
       { title: '修改并保存', detail: '修改后立即 PUT /api/settings，回显刷新。' },
+      { title: '转换模板', detail: '启动时指定 -config 后，可在设置页预览/编辑 INI 模板；保存后约 1 秒热重载。未指定时纯控制台模式不需要模板。' },
     ],
     concepts: [
       { term: '默认值', explain: '未显式配置时使用的值，显示「使用默认值」标记。' },
       { term: '即时生效', explain: '修改后立即 PUT /api/settings 保存，无需重启服务。' },
+      { term: '模板热重载', explain: '模板路径与启动时的 -config 相同时，保存后服务轮询到变化并重载模板。' },
     ],
     faq: [
       { q: '改了设置要重启吗？', a: '不用，修改后立即保存并生效。' },
