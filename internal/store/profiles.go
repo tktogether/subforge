@@ -20,8 +20,13 @@ type Profile struct {
 	Description string `json:"description"`
 	Config      string `json:"config"`
 	Pipeline    string `json:"pipeline"`
-	Enabled     bool   `json:"enabled"`
-	SortOrder   int    `json:"sort_order"`
+	// Target/Include/Exclude 是方案的输出定制（原令牌字段迁移而来）。
+	// 令牌字段仍作为旧版兼容保留，但 Web 只在这里维护。
+	Target    string `json:"target"`
+	Include   string `json:"include"`
+	Exclude   string `json:"exclude"`
+	Enabled   bool   `json:"enabled"`
+	SortOrder int    `json:"sort_order"`
 	// RuleLayers / GroupLayers 是层的优先级列表（高到低），库内以 JSON 文本保存；
 	// 空串解析为 nil，由调用方按契约补默认三层。
 	RuleLayers  []string `json:"rule_layers"`
@@ -43,7 +48,9 @@ type Profile struct {
 // profileSelectCols 是方案列表/详情共用的列。
 // 规则数与分组数不再用 profile_id 子查询（v2 已无该列），
 // 改为读出层配置后由 CountRulesByLayers / CountGroupsByLayers 实时统计。
-const profileSelectCols = `SELECT p.id, p.name, p.description, p.config, p.pipeline, p.enabled, p.sort_order,
+const profileSelectCols = `SELECT p.id, p.name, p.description, p.config, p.pipeline,
+       COALESCE(p.target, ''), COALESCE(p.include, ''), COALESCE(p.exclude, ''),
+       p.enabled, p.sort_order,
        COALESCE(p.rule_layers, ''),
        COALESCE(p.group_layers, ''),
        COALESCE(p.rule_sources, ''),
@@ -58,7 +65,9 @@ func scanProfile(row interface {
 }) (Profile, error) {
 	var p Profile
 	var ruleLayers, groupLayers, ruleSources, airportIDs, selfNodeIDs string
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Config, &p.Pipeline, &p.Enabled, &p.SortOrder,
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Config, &p.Pipeline,
+		&p.Target, &p.Include, &p.Exclude,
+		&p.Enabled, &p.SortOrder,
 		&ruleLayers, &groupLayers, &ruleSources, &airportIDs, &selfNodeIDs, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return Profile{}, err
 	}
@@ -277,6 +286,38 @@ func (d *DB) CreateSubTokenWithProfile(ctx context.Context, token, name, target,
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		token, name, target, pipeline, configName, include, exclude, profileID)
 	return err
+}
+
+// SetProfileRenderOptions 保存方案的 target/include/exclude；nil = 不修改该列。
+func (d *DB) SetProfileRenderOptions(ctx context.Context, id int64, target, include, exclude *string) error {
+	if target == nil && include == nil && exclude == nil {
+		return nil
+	}
+	sets := make([]string, 0, 4)
+	args := make([]any, 0, 5)
+	for _, f := range []struct {
+		col string
+		val *string
+	}{{"target", target}, {"include", include}, {"exclude", exclude}} {
+		if f.val != nil {
+			sets = append(sets, f.col+" = ?")
+			args = append(args, strings.TrimSpace(*f.val))
+		}
+	}
+	sets = append(sets, "updated_at = ?")
+	args = append(args, time.Now(), id)
+	res, err := d.db.ExecContext(ctx, "UPDATE profiles SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // SetProfileSources 保存方案使用的机场/自建节点来源。

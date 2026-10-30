@@ -33,6 +33,10 @@ type profileBody struct {
 	RuleLayers  *[]string `json:"rule_layers"`
 	GroupLayers *[]string `json:"group_layers"`
 	RuleSources *[]string `json:"rule_sources"`
+	// 输出定制：nil = 不修改（PUT）；显式空串 = 清空。
+	Target  *string `json:"target"`
+	Include *string `json:"include"`
+	Exclude *string `json:"exclude"`
 	// 节点来源：nil = 不限制（全部启用来源）；空数组 = 明确不使用该类来源。
 	AirportIDs  *[]int64 `json:"airport_ids"`
 	SelfNodeIDs *[]int64 `json:"self_node_ids"`
@@ -357,7 +361,18 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if ruleLayers != nil || groupLayers != nil || ruleSourcesProvided || airportIDs != nil || selfNodeIDs != nil {
+		if body.Target != nil || body.Include != nil || body.Exclude != nil {
+			if err := m.SetProfileRenderOptions(r.Context(), p.ID, body.Target, body.Include, body.Exclude); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", p.ID))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if ruleLayers != nil || groupLayers != nil || ruleSourcesProvided || airportIDs != nil || selfNodeIDs != nil ||
+			body.Target != nil || body.Include != nil || body.Exclude != nil {
 			if fresh, err := m.GetProfile(r.Context(), p.ID); err == nil {
 				p = fresh
 			}
@@ -462,6 +477,16 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		if airportIDs != nil || selfNodeIDs != nil {
 			if err := m.SetProfileSources(r.Context(), id, airportIDs, selfNodeIDs); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if body.Target != nil || body.Include != nil || body.Exclude != nil {
+			if err := m.SetProfileRenderOptions(r.Context(), id, body.Target, body.Include, body.Exclude); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
 					return

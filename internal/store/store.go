@@ -705,6 +705,9 @@ func migrate(db *sql.DB) error {
 			description TEXT NOT NULL DEFAULT '',
 			config      TEXT NOT NULL DEFAULT '',
 			pipeline    TEXT NOT NULL DEFAULT '',
+			target      TEXT NOT NULL DEFAULT '',
+			include     TEXT NOT NULL DEFAULT '',
+			exclude     TEXT NOT NULL DEFAULT '',
 			enabled     INTEGER NOT NULL DEFAULT 1,
 			sort_order  INTEGER NOT NULL DEFAULT 0,
 			airport_ids TEXT NOT NULL DEFAULT '',
@@ -724,6 +727,9 @@ func migrate(db *sql.DB) error {
 	}
 	// profiles 来源列：老库幂等补齐。空串 = 未限制（全部启用来源）。
 	for _, c := range []struct{ col, decl string }{
+		{"target", "TEXT NOT NULL DEFAULT ''"},
+		{"include", "TEXT NOT NULL DEFAULT ''"},
+		{"exclude", "TEXT NOT NULL DEFAULT ''"},
 		{"airport_ids", "TEXT NOT NULL DEFAULT ''"},
 		{"self_node_ids", "TEXT NOT NULL DEFAULT ''"},
 	} {

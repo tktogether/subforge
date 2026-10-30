@@ -861,6 +861,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = strings.TrimSpace(subTok.Target)
 	}
+	if target == "" && profile != nil {
+		target = strings.TrimSpace(profile.Target)
+	}
 	if target == "" {
 		target = "clash.meta"
 	}
@@ -896,9 +899,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if len(includeList) == 0 {
 		includeList = splitListQuery(subTok.Include)
 	}
+	if len(includeList) == 0 && profile != nil {
+		includeList = splitListQuery(profile.Include)
+	}
 	excludeList := splitListQuery(r.URL.Query().Get("exclude"))
 	if len(excludeList) == 0 {
 		excludeList = splitListQuery(subTok.Exclude)
+	}
+	if len(excludeList) == 0 && profile != nil {
+		excludeList = splitListQuery(profile.Exclude)
 	}
 
 	// 1. 启用的订阅源（ListAirports 已按 sort_order, id 排序）。

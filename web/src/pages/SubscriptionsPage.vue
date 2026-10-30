@@ -60,119 +60,43 @@ const resource = {
 interface TokenForm {
   token: string
   name: string
-  target: string
-  pipeline: string
-  config: string
-  include: string
-  exclude: string
   // 绑定的方案 id：0 = 未分配（旧的全局池）。
   profile_id: number
 }
 const tokenDialog = ref(false)
 const editingToken = ref<SubToken | null>(null)
 function emptyTokenForm(): TokenForm {
-  return { token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '', profile_id: 0 }
+  return { token: '', name: '', profile_id: 0 }
 }
 const tokenForm = ref<TokenForm>(emptyTokenForm())
-// target 候选来自 GET /api/targets（endpoints.ts:340 现成封装）；弹窗首次打开时懒加载一次，
-// 失败不阻塞弹窗（下拉退化成「留空 = 默认 clash.meta」），失败后下次打开会重试。
-const targetOptions = ref<string[]>([])
-const targetsLoaded = ref(false)
-const loadingTargets = ref(false)
-async function loadTargets(): Promise<void> {
-  if (targetsLoaded.value || loadingTargets.value) return
-  loadingTargets.value = true
-  try {
-    targetOptions.value = await endpoints.targets()
-    targetsLoaded.value = true
-  } catch {
-    targetOptions.value = []
-  } finally {
-    loadingTargets.value = false
-  }
-}
-// pipeline / config 候选：弹窗打开时懒加载，失败退化空数组不阻塞表单（与 target 一致）。
-const pipelineOptions = ref<string[]>([])
-const loadingPipelines = ref(false)
-async function loadPipelineOptions(): Promise<void> {
-  loadingPipelines.value = true
-  try {
-    const list = await endpoints.pipelines('')
-    pipelineOptions.value = list.map((p: { name: string }) => p.name)
-  } catch {
-    pipelineOptions.value = []
-  } finally {
-    loadingPipelines.value = false
-  }
-}
-const configOptions = ref<string[]>([])
-const loadingConfigs = ref(false)
-async function loadConfigOptions(): Promise<void> {
-  loadingConfigs.value = true
-  try {
-    const r = await endpoints.configs()
-    configOptions.value = r.configs ?? []
-  } catch {
-    configOptions.value = []
-  } finally {
-    loadingConfigs.value = false
-  }
-}
 function openCreateToken(): void {
   editingToken.value = null
   tokenForm.value = emptyTokenForm()
   tokenDialog.value = true
-  void loadTargets()
-  void loadPipelineOptions()
-  void loadConfigOptions()
 }
 function openEditToken(t: SubToken): void {
   editingToken.value = t
   tokenForm.value = {
     token: t.token,
     name: t.name,
-    target: t.target ?? '',
-    pipeline: t.pipeline ?? '',
-    config: t.config ?? '',
-    include: t.include ?? '',
-    exclude: t.exclude ?? '',
     profile_id: t.profile_id ?? 0,
   }
   tokenDialog.value = true
-  void loadTargets()
-  void loadPipelineOptions()
-  void loadConfigOptions()
-}
-// v-select 带 clearable 时，清空给的是 null；后端 *string 语义里 null/缺失等于「不改动」，
-// 只有空串才是「清空该定制」。所以提交前统一归一成空串。
-function textOrEmpty(v: string | null | undefined): string {
-  return v ?? ''
 }
 async function saveToken(): Promise<void> {
   try {
+    const f = tokenForm.value
     if (editingToken.value === null) {
-      // 新建分支：全部字段原样提交（5 个定制字段 + 方案），修掉「新建令牌丢字段」。
-      const f = tokenForm.value
+      // 令牌只做凭据；输出配置（目标/模板/管线/包含/排除）在方案页维护。
       await endpoints.createToken({
         token: f.token,
         name: f.name,
-        target: textOrEmpty(f.target),
-        pipeline: textOrEmpty(f.pipeline),
-        config: textOrEmpty(f.config),
-        include: textOrEmpty(f.include),
-        exclude: textOrEmpty(f.exclude),
         profile_id: f.profile_id,
       })
     } else {
-      const f = tokenForm.value
-      // 编辑分支 6 个字段全部显式发送：空串=清空，字段缺失=不改动（后端 *string 语义）。
+      // 编辑只提交凭据字段与绑定方案；旧版令牌上的 target 等字段保持原值，避免静默清空。
       await endpoints.updateToken(f.token, {
-        name: textOrEmpty(f.name),
-        target: textOrEmpty(f.target),
-        pipeline: textOrEmpty(f.pipeline ?? ''),
-        config: textOrEmpty(f.config ?? ''),
-        include: textOrEmpty(f.include),
-        exclude: textOrEmpty(f.exclude),
+        name: f.name,
         profile_id: f.profile_id,
       })
     }
@@ -410,16 +334,6 @@ onMounted(() => {
         <v-text-field v-model="tokenForm.token" label="令牌" hint="建议留空由后端生成，或自定义（唯一）" persistent-hint data-testid="token-field" />
         <v-text-field v-model="tokenForm.name" label="名称" hint="自己认得出的备注，例如「手机」「给朋友」" persistent-hint data-testid="name-field" />
         <v-select
-          v-model="tokenForm.target"
-          :items="targetOptions"
-          label="目标格式"
-          hint="留空 = 默认 clash.meta"
-          persistent-hint
-          clearable
-          :loading="loadingTargets"
-          data-testid="target-select"
-        />
-        <v-select
           v-model="tokenForm.profile_id"
           :items="profileOptions"
           item-title="title"
@@ -429,37 +343,8 @@ onMounted(() => {
           data-testid="token-profile"
         />
         <div data-testid="token-profile-hint" class="text-caption text-medium-emphasis mb-2">
-          绑定方案后，订阅只使用该方案的规则与分组；方案里的模板/管线在令牌未填时兜底
+          令牌只做凭据。目标格式、模板、管线、包含/排除都在「方案」页维护；旧版令牌上的定制仍会生效。
         </div>
-        <v-expansion-panels class="mt-2" data-testid="token-advanced">
-          <v-expansion-panel>
-            <v-expansion-panel-title>高级选项</v-expansion-panel-title>
-            <v-expansion-panel-text eager>
-              <v-combobox
-                data-testid="token-pipeline"
-                v-model="tokenForm.pipeline"
-                :items="pipelineOptions"
-                :loading="loadingPipelines"
-                label="处理管线"
-                clearable
-                persistent-hint
-                hint="留空用默认；可从下拉选模板里定义的命名管线"
-              />
-              <v-combobox
-                data-testid="token-config"
-                v-model="tokenForm.config"
-                :items="configOptions"
-                :loading="loadingConfigs"
-                label="配置模板"
-                clearable
-                persistent-hint
-                hint="留空用默认；可下拉选模板推荐的，也可手填远程 URL"
-              />
-              <v-text-field v-model="tokenForm.include" label="包含" hint="逗号分隔列表，例如 香港,日本；留空 = 不筛选" persistent-hint data-testid="include-field" />
-              <v-text-field v-model="tokenForm.exclude" label="排除" hint="逗号分隔列表，例如 过期,剩余；留空 = 不排除" persistent-hint data-testid="exclude-field" />
-            </v-expansion-panel-text>
-          </v-expansion-panel>
-        </v-expansion-panels>
       </v-card-text>
       <v-card-actions>
         <v-spacer />

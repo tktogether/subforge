@@ -46,6 +46,9 @@ const EMPTY_PROFILE: Profile = {
   description: '',
   config: '',
   pipeline: '',
+  target: '',
+  include: '',
+  exclude: '',
   enabled: true,
   sort_order: 0,
   rule_layers: [...LAYER_KEYS],
@@ -67,6 +70,15 @@ const ruleSourceOptions = ref<string[]>([])
 // 节点来源选项：机场/自建节点。加载失败只降级为空选项，不阻断方案编辑。
 const airportOptions = ref<{ title: string; value: number }[]>([])
 const selfNodeOptions = ref<{ title: string; value: number }[]>([])
+const targetOptions = ref<string[]>([])
+
+async function loadTargetOptions(): Promise<void> {
+  try {
+    targetOptions.value = await endpoints.targets()
+  } catch {
+    targetOptions.value = []
+  }
+}
 
 async function loadSourceOptions(): Promise<void> {
   const [airports, selfNodes] = await Promise.allSettled([endpoints.listAirports(), endpoints.listSelfNodes()])
@@ -86,6 +98,9 @@ const draft = ref({
   description: '',
   config: '',
   pipeline: '',
+  target: '',
+  include: '',
+  exclude: '',
   enabled: true,
   sort_order: 0,
   // 规则源（D-33）：方案绑定的规则源名列表；空 = 未绑定。
@@ -254,6 +269,9 @@ function openCreate(): void {
     description: '',
     config: '',
     pipeline: '',
+    target: '',
+    include: '',
+    exclude: '',
     enabled: true,
     sort_order: 0,
     rule_sources: [],
@@ -266,6 +284,7 @@ function openCreate(): void {
   // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
   void loadSourceOptions()
+  void loadTargetOptions()
   dialog.value = true
 }
 
@@ -276,6 +295,9 @@ function openEdit(row: Profile): void {
     description: row.description,
     config: row.config,
     pipeline: row.pipeline,
+    target: row.target ?? '',
+    include: row.include ?? '',
+    exclude: row.exclude ?? '',
     enabled: row.enabled,
     sort_order: row.sort_order,
     rule_sources: [...(row.rule_sources ?? [])],
@@ -288,6 +310,7 @@ function openEdit(row: Profile): void {
   // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
   void loadSourceOptions()
+  void loadTargetOptions()
   dialog.value = true
 }
 
@@ -303,6 +326,9 @@ async function save(): Promise<void> {
     description: draft.value.description,
     config: draft.value.config,
     pipeline: draft.value.pipeline,
+    target: draft.value.target,
+    include: draft.value.include,
+    exclude: draft.value.exclude,
     enabled: draft.value.enabled,
     sort_order: draft.value.sort_order,
     rule_layers,
@@ -475,6 +501,38 @@ loadRuleSourceOptions()
             density="comfortable"
             class="mb-2"
             data-testid="profile-pipeline"
+          />
+          <v-select
+            v-model="draft.target"
+            :items="targetOptions"
+            label="目标格式"
+            hint="留空 = clash.meta；与旧版令牌上的 target 同时存在时，旧令牌优先"
+            persistent-hint
+            clearable
+            variant="outlined"
+            density="comfortable"
+            class="mb-2"
+            data-testid="profile-target"
+          />
+          <v-text-field
+            v-model="draft.include"
+            label="包含节点"
+            hint="逗号分隔的节点名正则，例如 香港,日本；留空 = 不筛选"
+            persistent-hint
+            variant="outlined"
+            density="comfortable"
+            class="mb-2"
+            data-testid="profile-include"
+          />
+          <v-text-field
+            v-model="draft.exclude"
+            label="排除节点"
+            hint="逗号分隔的节点名正则，例如 过期,剩余；留空 = 不排除"
+            persistent-hint
+            variant="outlined"
+            density="comfortable"
+            class="mb-2"
+            data-testid="profile-exclude"
           />
           <v-select
             v-model="draft.rule_sources"

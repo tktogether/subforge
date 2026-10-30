@@ -17,6 +17,7 @@ vi.mock('../api/endpoints', () => ({
     listRuleSources: vi.fn(),
     listAirports: vi.fn(),
     listSelfNodes: vi.fn(),
+    targets: vi.fn(),
   },
 }))
 
@@ -27,6 +28,9 @@ interface Draft {
   description: string
   config: string
   pipeline: string
+  target: string
+  include: string
+  exclude: string
   enabled: boolean
   sort_order: number
   rule_sources: string[]
@@ -55,6 +59,9 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
     description: '说明A',
     config: '',
     pipeline: '',
+    target: '',
+    include: '',
+    exclude: '',
     enabled: true,
     sort_order: 3,
     rule_layers: [...DEFAULT_LAYERS],
@@ -112,6 +119,7 @@ describe('ProfilesPage', () => {
     ;(endpoints.listSelfNodes as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 22, name: '节点A', enabled: true },
     ])
+    ;(endpoints.targets as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(['clash.meta', 'sing-box'])
   })
 
   it('渲染方案表格：模板/管线空值显示默认、模板超长截断、启用停用、顺序>1e12 显示未设置、层列顺序', async () => {
@@ -225,6 +233,9 @@ describe('ProfilesPage', () => {
       description: '新说明',
       config: 'cfg',
       pipeline: 'pipe',
+      target: '',
+      include: '',
+      exclude: '',
       enabled: false,
       sort_order: 9,
       rule_layers: ['custom', 'airport', 'template'],
@@ -398,6 +409,39 @@ describe('ProfilesPage', () => {
       rule_layers: ['custom', 'template'],
       group_layers: ['custom', 'airport', 'template'],
     }))
+  })
+
+  it('新建方案：target/include/exclude 随保存提交', async () => {
+    ;(endpoints.createProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile({ id: 9 }))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as any
+    vm.draft.name = '输出定制'
+    const targetSel = w.findAllComponents({ name: 'VSelect' })
+      .find((s) => s.attributes('data-testid') === 'profile-target')
+    expect(targetSel).toBeTruthy()
+    targetSel!.vm.$emit('update:modelValue', 'sing-box')
+    await w.find('[data-testid="profile-include"] input').setValue('香港,日本')
+    await w.find('[data-testid="profile-exclude"] input').setValue('过期')
+    await flushPromises()
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.createProfile).toHaveBeenCalledWith(expect.objectContaining({
+      target: 'sing-box',
+      include: '香港,日本',
+      exclude: '过期',
+    }))
+  })
+
+  it('target 候选加载失败时降级为空选项', async () => {
+    ;(endpoints.targets as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('targets down'))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).targetOptions).toEqual([])
   })
 
   it('新建方案：限制来源后提交所选机场/自建节点', async () => {

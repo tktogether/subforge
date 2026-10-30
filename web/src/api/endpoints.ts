@@ -364,6 +364,9 @@ export interface Profile {
   description: string
   config: string
   pipeline: string
+  target: string
+  include: string
+  exclude: string
   enabled: boolean
   sort_order: number
   rule_layers: string[]
@@ -384,6 +387,9 @@ export interface ProfileInput {
   description?: string
   config?: string
   pipeline?: string
+  target?: string
+  include?: string
+  exclude?: string
   enabled?: boolean
   sort_order?: number
   rule_layers?: string[]

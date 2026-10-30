@@ -39,6 +39,9 @@ type profileJSON struct {
 	Description string   `json:"description"`
 	Config      string   `json:"config"`
 	Pipeline    string   `json:"pipeline"`
+	Target      string   `json:"target"`
+	Include     string   `json:"include"`
+	Exclude     string   `json:"exclude"`
 	Enabled     bool     `json:"enabled"`
 	SortOrder   int      `json:"sort_order"`
 	RuleLayers  []string `json:"rule_layers"`
@@ -361,6 +364,53 @@ func TestAPIProfiles_SourceSelection(t *testing.T) {
 		"name": "坏来源", "airport_ids": []int64{999999},
 	}); st != http.StatusBadRequest || !strings.Contains(body, "机场 999999 不存在") {
 		t.Fatalf("不存在的机场应 400，实际 status=%d body=%s", st, body)
+	}
+}
+
+// TestAPIProfiles_RenderOptions 覆盖方案的 target/include/exclude：
+// 方案值生效；旧版令牌字段仍优先（兼容）；清空令牌字段后回落到方案。
+func TestAPIProfiles_RenderOptions(t *testing.T) {
+	ts, _, mgr := profileServer(t)
+	ctx := t.Context()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("proxies:\n" +
+			"  - {name: HK-1, type: ss, server: 127.0.0.1, port: 30011, cipher: aes-256-gcm, password: pass}\n" +
+			"  - {name: JP-1, type: ss, server: 127.0.0.1, port: 30012, cipher: aes-256-gcm, password: pass}\n"))
+	}))
+	t.Cleanup(up.Close)
+	if _, err := mgr.AddAirport(ctx, "fx-opts", up.URL, "", true); err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+
+	p := mustProfilePayload(t, ts, map[string]any{
+		"name": "输出定制", "target": "clash.meta", "include": "HK", "exclude": "",
+	})
+	if p.Target != "clash.meta" || p.Include != "HK" {
+		t.Fatalf("方案输出字段未落库：%+v", p)
+	}
+	mustToken(t, ts, "t-opts", p.ID)
+	st, body := subscribe(t, ts, "t-opts")
+	if st != http.StatusOK || !strings.Contains(body, "HK-1") || strings.Contains(body, "JP-1") {
+		t.Fatalf("include 未生效；status=%d body=%s", st, body)
+	}
+	if !strings.Contains(body, "proxies:") {
+		t.Fatalf("方案 target=clash.meta 未生效：%s", body)
+	}
+
+	// 旧版令牌 target 优先；清空后回落到方案。
+	if st, body := doJSON(t, ts, http.MethodPut, "/api/tokens/t-opts", map[string]any{"target": "sing-box"}); st != http.StatusOK {
+		t.Fatalf("更新令牌 target 状态=%d body=%s", st, body)
+	}
+	st, body = subscribe(t, ts, "t-opts")
+	if st != http.StatusOK || !strings.Contains(body, `"outbounds"`) {
+		t.Fatalf("旧令牌 target=sing-box 应优先；status=%d body=%s", st, body)
+	}
+	if st, body := doJSON(t, ts, http.MethodPut, "/api/tokens/t-opts", map[string]any{"target": ""}); st != http.StatusOK {
+		t.Fatalf("清空令牌 target 状态=%d body=%s", st, body)
+	}
+	st, body = subscribe(t, ts, "t-opts")
+	if st != http.StatusOK || !strings.Contains(body, "proxies:") {
+		t.Fatalf("清空令牌 target 后应回落到方案 clash.meta；status=%d body=%s", st, body)
 	}
 }
 

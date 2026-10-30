@@ -53,6 +53,15 @@ func (m *Manager) UpdateProfile(ctx context.Context, id int64, name, description
 	return m.db.UpdateProfile(ctx, id, name, description, configName, pipeline, enabled, sortOrder)
 }
 
+// SetProfileRenderOptions 保存方案的 target/include/exclude；nil = 不修改该列。
+func (m *Manager) SetProfileRenderOptions(ctx context.Context, id int64, target, include, exclude *string) error {
+	err := m.db.SetProfileRenderOptions(ctx, id, target, include, exclude)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("订阅方案 %d 不存在", id)
+	}
+	return err
+}
+
 // SetProfileSources 保存方案使用的机场/自建节点来源；nil = 不修改该列。
 func (m *Manager) SetProfileSources(ctx context.Context, id int64, airportIDs, selfNodeIDs *[]int64) error {
 	err := m.db.SetProfileSources(ctx, id, airportIDs, selfNodeIDs)
