@@ -36,12 +36,13 @@ chmod +x subforge-linux-amd64 && ./subforge-linux-amd64 version
 **二、使用容器镜像**：镜像已预设监听地址与数据目录，裸跑即可：
 
 ```sh
-docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+docker run -d --name subforge -p 25500:25500 -v "$(pwd)/data:/data" \
   ghcr.io/tktogether/subforge:latest
 ```
 
 不需要再传 `-listen` 或 `-data-dir`：镜像里 `SUBFORGE_LISTEN=0.0.0.0:25500` 让端口发布直达容器，
-`SUBFORGE_DATA_DIR=/data` 让订阅管理默认启用，SQLite 落在挂载的 `/data`。对外提供服务前请加
+`SUBFORGE_DATA_DIR=/data` 让订阅管理默认启用，SQLite 落在宿主机的 `./data` 目录；备份或迁移时
+直接复制这个目录即可。对外提供服务前请加
 `-e SUBFORGE_TOKEN=<YOUR_TOKEN>` 开启鉴权。`:latest` 基于 alpine 运行层、双架构、自带版本号与根证书；
 `:latest-scratch` 体积更小但没有根证书，只能配合 `http://` 上游或本地文件。自行构建镜像则用
 `docker build -t subforge:local -f Dockerfile.alpine .`。

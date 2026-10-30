@@ -7,9 +7,9 @@
 #   docker build -f Dockerfile.alpine -t subforge:alpine .
 #   docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.alpine -t subforge:alpine .
 # 运行：
-#   docker run -d --name subforge -p 25500:25500 -v subforge-data:/data subforge:alpine
+#   docker run -d --name subforge -p 25500:25500 -v "$PWD/data:/data" subforge:alpine
 #   docker run -d -p 25500:25500 -e SUBFORGE_TOKEN=<YOUR_TOKEN> \
-#       -v subforge-data:/data subforge:alpine
+#       -v "$PWD/data:/data" subforge:alpine
 #
 # 开箱即用：下面的 ENV 是 `serve` 真正读取的环境变量，无需额外参数即可从宿主机访问，
 # 且订阅管理默认启用（SQLite 落在 /data）。命令行参数优先级更高。

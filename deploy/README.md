@@ -80,7 +80,7 @@ systemd 会报 `Unknown key name ... ignoring` 并静默忽略限流配置。
 
 ```sh
 docker pull ghcr.io/tktogether/subforge:latest
-docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+docker run -d --name subforge -p 25500:25500 -v "$PWD/data:/data" \
     ghcr.io/tktogether/subforge:latest serve -listen 0.0.0.0:25500 -token <YOUR_TOKEN>
 ```
 
@@ -137,10 +137,10 @@ docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.alpine -t s
 （`Dockerfile:76`、`:79`，`Dockerfile.alpine:69`、`:72`），所以**自行构建的镜像裸跑就可用**：
 
 ```sh
-docker run -d -p 25500:25500 -v subforge-data:/data subforge:alpine
+docker run -d -p 25500:25500 -v "$PWD/data:/data" subforge:alpine
 ```
 
-订阅管理随之默认启用，数据库落在 `/data`（配合 `VOLUME` 持久化）；`-data-dir` 指向的目录
+订阅管理随之默认启用，数据库落在宿主机的 `./data` 目录（直接复制该目录即可迁移/备份）；`-data-dir` 指向的目录
 **不存在时会自动创建**，不需要提前 `mkdir`（`cmd/subforge/serve.go:170`）。**裸二进制没有
 这些默认值**：不给 `-data-dir` 也不给 `SUBFORGE_DATA_DIR` 时订阅管理不启用，控制台的订阅、
 规则、令牌、任务等接口返回 503，启动日志会打印一行提示（`cmd/subforge/serve.go:247-248`）。
@@ -151,7 +151,7 @@ docker run -d -p 25500:25500 -v subforge-data:/data subforge:alpine
 其他子命令：
 
 ```sh
-docker run --rm -v subforge-data:/data subforge:alpine convert \
+docker run --rm -v "$PWD/data:/data" subforge:alpine convert \
     -file /data/nodes.txt -format sing-box -out /data/cfg.json
 ```
 

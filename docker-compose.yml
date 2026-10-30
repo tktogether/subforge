@@ -2,7 +2,7 @@
 #
 # 开箱即用：镜像已把 SUBFORGE_LISTEN 设为 0.0.0.0:25500、SUBFORGE_DATA_DIR 设为 /data，
 # 因此 `docker compose up -d` 之后直接访问 http://127.0.0.1:25500 就能看到控制台，
-# 订阅管理（SQLite）默认启用，数据落在具名卷里，容器重建不丢。
+# 订阅管理（SQLite）默认启用。数据落在宿主机目录 ./data，迁移/备份直接复制该目录即可。
 services:
   subforge:
     build:
@@ -23,10 +23,11 @@ services:
     ports:
       - "25500:25500"
     volumes:
-      # 具名卷挂到数据目录：subforge.db 与规则源缓存都在这里，容器重建后数据仍在。
-      - subforge-data:/data
-      # 只读挂载配置目录，供下面可选的 SUBFORGE_CONFIG 使用。
-      - ./config:/config:ro
+      # 宿主机目录挂到数据目录：subforge.db、规则源缓存都在这里。
+      # 用目录而不是具名卷/单文件，备份和迁移时直接复制 ./data 即可。
+      - ./data:/data
+      # 需要自定义 INI 模板时再取消注释，并把 SUBFORGE_CONFIG 指到文件：
+      # - ./config:/config:ro
     environment:
       # 订阅管理数据目录。serve 只认 SUBFORGE_DATA_DIR 这个名字。
       - SUBFORGE_DATA_DIR=/data
@@ -39,5 +40,3 @@ services:
       # - SUBFORGE_TOKEN=<YOUR_TOKEN>
       # - SUBFORGE_CONFIG=/config/subforge.ini
     restart: unless-stopped
-volumes:
-  subforge-data:

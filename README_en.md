@@ -39,13 +39,14 @@ chmod +x subforge-linux-amd64 && ./subforge-linux-amd64 version
 works:
 
 ```sh
-docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+docker run -d --name subforge -p 25500:25500 -v "$(pwd)/data:/data" \
   ghcr.io/tktogether/subforge:latest
 ```
 
 No `-listen` or `-data-dir` is needed: `SUBFORGE_LISTEN=0.0.0.0:25500` makes the published port reach the
 container, and `SUBFORGE_DATA_DIR=/data` enables subscription management by default, with SQLite stored in the
-mounted `/data` volume. Add `-e SUBFORGE_TOKEN=<YOUR_TOKEN>` before exposing the service. `:latest` uses an
+host directory `./data`. To back up or migrate, copy that directory. Add `-e SUBFORGE_TOKEN=<YOUR_TOKEN>`
+before exposing the service. `:latest` uses an
 alpine runtime layer, ships both `linux/amd64` and `linux/arm64`, and carries the version string and root
 certificates; `:latest-scratch` is smaller but has no root certificates and only works with `http://` upstreams
 or local files. To build the image yourself, use

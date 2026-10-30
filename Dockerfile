@@ -8,8 +8,8 @@
 #   docker build --build-arg VERSION=1.0.0 --build-arg COMMIT=$(git rev-parse --short HEAD) -t subforge:latest .
 #   docker buildx build --platform linux/amd64,linux/arm64 -t subforge:latest .
 # 运行：
-#   docker run -d --name subforge -p 25500:25500 -v subforge-data:/data subforge:latest
-#   docker run --rm -v subforge-data:/data subforge:latest \
+#   docker run -d --name subforge -p 25500:25500 -v "$PWD/data:/data" subforge:latest
+#   docker run --rm -v "$PWD/data:/data" subforge:latest \
 #       convert -file /data/sub.txt -format sing-box -out /data/cfg.json
 #
 # 开箱即用：下面三个 ENV 是 `serve` 真正读取的环境变量，镜像因此无需额外参数即可
