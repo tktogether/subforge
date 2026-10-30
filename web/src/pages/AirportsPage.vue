@@ -13,6 +13,7 @@ import { notify } from '../composables/useNotify'
 import { pageHelp, fieldHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import InfoTip from '../components/InfoTip.vue'
 import { formatBytes, formatDuration, formatExpire } from '../format'
 
 type AirportRow = Airport & {
@@ -326,14 +327,17 @@ async function restoreLastCheck(): Promise<void> {
         <v-btn data-testid="add" color="primary" prepend-icon="mdi-plus" @click="openCreate">新增</v-btn>
         <v-btn data-testid="refresh" variant="tonal" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
         <v-btn data-testid="refresh-traffic-all" variant="tonal" prepend-icon="mdi-traffic-light" :loading="refreshing" @click="refreshAll">刷新全部流量</v-btn>
-        <v-btn data-testid="check-all" variant="tonal" prepend-icon="mdi-pulse" :loading="checking" @click="checkAll">测活全部</v-btn>
+        <v-btn data-testid="check-all" variant="tonal" prepend-icon="mdi-pulse" :loading="checking" @click="checkAll">检测全部</v-btn>
       </template>
     </PageHeader>
 
     <div class="airports-page__toolbar">
-      <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时更新机场规则源" density="compact"
-        :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="airports-page__switch"
-        @update:model-value="saveWithRules"></v-switch>
+      <div class="d-flex align-center ga-1">
+        <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时更新机场规则源" density="compact"
+          hide-details class="airports-page__switch"
+          @update:model-value="saveWithRules"></v-switch>
+        <InfoTip :text="fieldHelp('airport.with_rules')?.hint ?? ''" label="刷新时同时更新机场规则源" />
+      </div>
     </div>
 
     <v-alert v-if="manualImport" data-testid="manual-import-result" type="success" variant="tonal" closable
@@ -372,7 +376,7 @@ async function restoreLastCheck(): Promise<void> {
             <span :data-testid="item.expire <= 0 ? 'expire-unknown' : 'expire-value'">{{ expireText(item) }}</span>
           </template>
           <template #item.updated="{ item }">
-            <span v-if="item.traffic_at <= 0" data-testid="traffic-at">从未采集</span>
+            <span v-if="item.traffic_at <= 0" data-testid="traffic-at">尚未采集</span>
             <span v-else data-testid="traffic-stale">上次成功：{{ formatExpire(item.traffic_at) }}（{{ relativeTime(item.traffic_at) }}前）</span>
           </template>
           <template #item.status="{ item }">
@@ -391,7 +395,7 @@ async function restoreLastCheck(): Promise<void> {
               <v-btn size="small" variant="text" color="error" data-testid="delete" @click="askDelete(item)">删除</v-btn>
               <v-btn size="small" variant="text" data-testid="refresh-traffic" @click="refreshOne(item)">刷新流量</v-btn>
               <v-btn size="small" variant="text" data-testid="import-rules" @click="openImportDialog(item)">更新规则源</v-btn>
-              <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">测活</v-btn>
+              <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">检测</v-btn>
             </div>
           </template>
         </v-data-table>
@@ -426,7 +430,7 @@ async function restoreLastCheck(): Promise<void> {
 
       <div v-if="checkError !== ''" data-testid="check-error" class="text-error">{{ checkError }}</div>
       <div v-if="checkSummary !== null" data-testid="check-summary" class="airports-page__summary">
-        测活完成：{{ checkSummary.ok }} 个可用 / {{ checkSummary.fail }} 个失败（共 {{ checkSummary.total }} 个）
+        检测完成：{{ checkSummary.ok }} 个可用 / {{ checkSummary.fail }} 个失败（共 {{ checkSummary.total }} 个）
       </div>
       <div v-if="checkResults.length > 0" data-testid="check-results" class="airports-page__checks">
         <div v-for="res in checkResults" :key="res.url" data-testid="check-result-row" class="airports-page__check">
@@ -474,10 +478,10 @@ async function restoreLastCheck(): Promise<void> {
       <v-card>
         <v-card-title>更新规则源{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
         <v-card-text>
-          <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组（select，匹配全部节点）"
+          <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组"
             data-testid="import-rules-create-groups" density="compact"></v-checkbox>
           <div class="text-medium-emphasis" data-testid="import-rules-hint">
-            从机场订阅提取规则，保存为一个版本化规则源（不再写入规则页）。到「方案」里绑定该规则源后生效。
+            系统会从机场订阅提取规则并保存为规则源；在方案中绑定后生效。
           </div>
         </v-card-text>
         <v-card-actions>

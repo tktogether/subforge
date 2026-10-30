@@ -186,11 +186,11 @@ describe('SubscriptionsPage', () => {
     w.unmount()
   })
 
-  it('模板：selected 为 null 时显示「请选择一个令牌」', async () => {
+  it('模板：selected 为 null 时提示先新建令牌', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
     await flushPromises()
-    expect(w.text()).toContain('请选择一个令牌')
+    expect(w.text()).toContain('暂无订阅令牌。请先新建令牌')
     w.unmount()
   })
 
@@ -199,7 +199,7 @@ describe('SubscriptionsPage', () => {
     const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
     await flushPromises()
     expect(w.find('[data-testid="block-url"]').text()).toContain('长期重复使用')
-    expect(w.find('[data-testid="block-url"]').text()).toContain('不必每次使用都新建令牌')
+    expect(w.find('[data-testid="block-url"]').text()).toContain('同一地址可以长期重复使用')
     w.unmount()
   })
 
@@ -274,7 +274,7 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     await vm.refreshAll()
     await flushPromises()
-    expect(w.text()).toContain('刷新失败不会把下游余额清零')
+    expect(w.text()).toContain('刷新失败时保留上一次成功获取的余额')
     const errs = w.findAll('[data-testid="refresh-error"]')
     expect(errs.length).toBeGreaterThan(0)
     expect(w.text()).toContain('boom')
@@ -319,7 +319,7 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     const note = w.find('[data-testid="field-zero-note"]')
     expect(note.exists()).toBe(true)
-    expect(note.text()).toContain('跳过值为 0 的机场')
+    expect(note.text()).toContain('数值为 0 的机场不参与计算')
     w.unmount()
   })
 
@@ -705,7 +705,7 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
   }
 
-  it('方案：页面加载拉取 profiles，弹窗下拉给出「未分配 + 各方案」', async () => {
+  it('方案：页面加载拉取 profiles，弹窗下拉给出「未绑定方案 + 各方案」', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     vi.mocked(endpoints.listProfiles).mockResolvedValue([
       { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], target: '', include: '', exclude: '', rule_sources: [], airport_ids: null, self_node_ids: null, group_layers: ['custom', 'airport', 'template'] },
@@ -717,15 +717,15 @@ describe('SubscriptionsPage', () => {
     await openTokenDialog(w, 'create')
     const sel = selectByTestId(w, 'token-profile')
     expect(sel.props('items')).toEqual([
-      { title: '未分配', value: 0 },
+      { title: '未绑定方案', value: 0 },
       { title: 'A-方案', value: 1 },
       { title: 'B-方案', value: 2 },
     ])
-    expect(w.find('[data-testid="token-profile-hint"]').text()).toContain('令牌只做凭据')
+    expect(w.find('[data-testid="token-profile-hint"]').text()).toContain('令牌只作为访问凭据')
     w.unmount()
   })
 
-  it('方案：profiles 拉取失败降级为仅未分配，令牌列表不受影响', async () => {
+  it('方案：profiles 拉取失败降级为仅未绑定方案，令牌列表不受影响', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1' }])
     vi.mocked(endpoints.listProfiles).mockRejectedValue(new Error('pfail'))
     const w = mountSubsPage()
@@ -733,11 +733,11 @@ describe('SubscriptionsPage', () => {
     expect(w.find('[data-testid="token-row"]').exists()).toBe(true)
     await openTokenDialog(w, 'create')
     const sel = selectByTestId(w, 'token-profile')
-    expect(sel.props('items')).toEqual([{ title: '未分配', value: 0 }])
+    expect(sel.props('items')).toEqual([{ title: '未绑定方案', value: 0 }])
     w.unmount()
   })
 
-  it('方案：令牌表格显示方案列，未分配显示「未分配」', async () => {
+  it('方案：令牌表格显示方案列，空方案显示「未绑定方案」', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([
       { token: 'tk1', name: 'n1', profile_id: 1, profile_name: 'A-方案' },
       { token: 'tk2', name: 'n2' },
@@ -747,7 +747,7 @@ describe('SubscriptionsPage', () => {
     const cells = w.findAll('[data-testid="token-profile-name"]')
     expect(cells.length).toBe(2)
     expect(cells[0].text()).toBe('A-方案')
-    expect(cells[1].text()).toBe('未分配')
+    expect(cells[1].text()).toBe('未绑定方案')
     w.unmount()
   })
 

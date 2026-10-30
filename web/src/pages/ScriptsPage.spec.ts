@@ -61,7 +61,7 @@ describe('ScriptsPage', () => {
     const w = mount(ScriptsPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } } })
     await flushPromises()
 
-    expect(w.text()).toContain('还没有脚本')
+    expect(w.text()).toContain('暂无脚本')
     w.unmount()
   })
 
@@ -311,7 +311,7 @@ describe('ScriptsPage', () => {
     const w = mount(ScriptsPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } } })
     await flushPromises()
 
-    expect(w.text()).toContain('脚本在服务端 goja 沙箱执行')
+    expect(w.text()).toContain('脚本在服务端沙箱中执行')
     w.unmount()
   })
 
@@ -427,6 +427,12 @@ describe('ScriptsPage', () => {
     expect(w.find('[data-testid="scripts-return-rules"]').exists()).toBe(true)
     expect(w.find('[data-testid="scripts-writeback"]').exists()).toBe(true)
     expect(w.find('[data-testid="scripts-variables"]').text()).toContain('只读')
+    await w.find('[data-testid="scripts-reference"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).referenceOpen).toBe(true)
+    await w.find('[data-testid="scripts-reference-close"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).referenceOpen).toBe(false)
     w.unmount()
   })
 
@@ -435,7 +441,7 @@ describe('ScriptsPage', () => {
     const w = mountPage()
     await flushPromises()
     const vm = w.vm as unknown as ScriptsVm
-    vm.onExampleSelect('改写 SNI')
+    vm.onExampleSelect('修改 SNI')
     await nextTick()
     expect(vm.formKind).toBe('operate')
     expect(vm.formCode).toBe("if (node.raw.sni) { node.raw.sni = 'example.com' }")
@@ -814,9 +820,9 @@ describe('ScriptsPage', () => {
       vm2.testDialog = true
       await flushPromises()
       expect(w2.find('[data-testid="test-result"]').exists()).toBe(false)
-      const close = w2.findAll('button').find((b) => b.text().includes('关闭'))
-      expect(close).toBeDefined()
-      await close!.trigger('click')
+      const close = w2.find('[data-testid="test-close"]')
+      expect(close.exists()).toBe(true)
+      await close.trigger('click')
       await flushPromises()
       expect(vm2.testDialog).toBe(false)
       w2.unmount()

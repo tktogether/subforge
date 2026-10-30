@@ -5,6 +5,7 @@ import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { useCrud, type CrudResource } from '../composables/useCrud'
 import PageHeader from '../components/PageHeader.vue'
+import InfoTip from '../components/InfoTip.vue'
 import { fieldHelp } from '../content/help'
 import AsyncSection from '../components/AsyncSection.vue'
 
@@ -414,7 +415,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageHeader title="规则" subtitle="规则行 / 规则集 / Rule-Bot 建议" help-key="rules" />
+  <PageHeader title="规则" subtitle="管理分流规则、规则集与规则建议" help-key="rules">
+    <template #actions>
+      <template v-if="tab === 0">
+        <v-btn color="primary" prepend-icon="mdi-plus" data-testid="add" @click="openRuleCreate">新增</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" data-testid="refresh" @click="reloadRules">刷新</v-btn>
+      </template>
+    </template>
+  </PageHeader>
   <div class="mb-4 d-flex ga-2 align-center flex-wrap">
     <v-select
       v-model="sourceFilter"
@@ -428,29 +436,17 @@ onMounted(() => {
       style="max-width: 260px"
       data-testid="rules-source-filter"
     ></v-select>
-    <span class="text-caption text-medium-emphasis">全部来源 = 不带过滤；自定义 = 手工录入或从规则源挑选的规则；其它为历史来源。</span>
+    <span class="text-caption text-medium-emphasis">全部来源不筛选；自定义为手工录入或从规则源复制的规则。</span>
   </div>
   <v-tabs v-model="tab" class="mb-4">
     <v-tab>规则行</v-tab>
     <v-tab>规则集</v-tab>
-    <v-tab>Rule-Bot 建议</v-tab>
+    <v-tab>规则建议</v-tab>
   </v-tabs>
 
   <!-- Block 1: 规则行 -->
   <div v-if="tab === 0">
-    <v-alert type="info" variant="tonal" density="comfortable" class="mb-4">
-      <div>一行规则最终长这样：rule_type,rule_param,目标分组；勾了「解析DNS」会在末尾追加 no-resolve。</div>
-      <div>rule_config 选目标代理分组；选「无分组（DIRECT）」表示该行直连。选不到对应分组（分组 id 已不存在）时同样退化为 DIRECT。</div>
-      <div>禁用（enabled=false）的规则完全不参与输出。</div>
-    </v-alert>
-    <PageHeader title="规则行" subtitle="每行 = 输出的一条规则" help-key="rules">
-      <template #actions>
-        <v-btn color="primary" prepend-icon="mdi-plus" data-testid="add" @click="openRuleCreate">新增</v-btn>
-        <v-btn variant="text" prepend-icon="mdi-refresh" data-testid="refresh" @click="reloadRules">刷新</v-btn>
-      </template>
-    </PageHeader>
-
-      <div class="mb-2 d-flex ga-2 align-center flex-wrap">
+    <div class="mb-2 d-flex ga-2 align-center flex-wrap">
         <v-text-field
           v-model="ruleSearch"
           label="搜索规则"
@@ -537,77 +533,38 @@ onMounted(() => {
       <v-card>
         <v-card-title>{{ editingRule === null ? '新增' : '编辑' }}</v-card-title>
         <v-card-text>
-          <v-text-field
-            v-model="ruleDraft.rule_type"
-            label="类型"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="field-text"
-          ></v-text-field>
-          <div v-if="fieldHint('rule_type') !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
-            {{ fieldHint('rule_type') }}
+          <div class="sf-rule-field">
+            <div class="sf-rule-field__label">类型 <InfoTip :text="fieldHint('rule_type')" :example="fieldExample('rule_type')" label="规则类型" /></div>
+            <v-text-field v-model="ruleDraft.rule_type" variant="outlined" density="comfortable" hide-details data-testid="field-text" />
           </div>
-          <div v-if="fieldExample('rule_type') !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
-            示例：{{ fieldExample('rule_type') }}
+          <div class="sf-rule-field">
+            <div class="sf-rule-field__label">参数 <InfoTip :text="fieldHint('rule_param')" :example="fieldExample('rule_param')" label="规则参数" /></div>
+            <v-text-field v-model="ruleDraft.rule_param" variant="outlined" density="comfortable" hide-details data-testid="field-text" />
           </div>
-          <v-text-field
-            v-model="ruleDraft.rule_param"
-            label="参数"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="field-text"
-          ></v-text-field>
-          <div v-if="fieldHint('rule_param') !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
-            {{ fieldHint('rule_param') }}
+          <div class="sf-rule-field">
+            <div class="sf-rule-field__label">目标分组 <InfoTip :text="fieldHint('rule_config')" label="目标分组" /></div>
+            <v-select
+              v-model="ruleDraft.rule_config"
+              :items="groupOptions"
+              item-title="title"
+              item-value="value"
+              variant="outlined"
+              density="comfortable"
+              hide-details
+              data-testid="field-select"
+            />
           </div>
-          <div v-if="fieldExample('rule_param') !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
-            示例：{{ fieldExample('rule_param') }}
+          <div class="sf-rule-field sf-rule-field--switch">
+            <span>解析 DNS</span>
+            <InfoTip :text="fieldHint('resolve_dns')" label="解析 DNS" />
+            <v-spacer />
+            <v-switch v-model="ruleDraft.resolve_dns" color="primary" hide-details data-testid="field-switch" />
           </div>
-          <v-select
-            v-model="ruleDraft.rule_config"
-            :items="groupOptions"
-            item-title="title"
-            item-value="value"
-            label="配置"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            hide-details
-            data-testid="field-select"
-          ></v-select>
-          <div v-if="fieldHint('rule_config') !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
-            {{ fieldHint('rule_config') }}
-          </div>
-          <div v-if="fieldExample('rule_config') !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
-            示例：{{ fieldExample('rule_config') }}
-          </div>
-          <v-switch
-            v-model="ruleDraft.resolve_dns"
-            label="解析DNS"
-            color="primary"
-            hide-details
-            data-testid="field-switch"
-          ></v-switch>
-          <div v-if="fieldHint('resolve_dns') !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
-            {{ fieldHint('resolve_dns') }}
-          </div>
-          <div v-if="fieldExample('resolve_dns') !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
-            示例：{{ fieldExample('resolve_dns') }}
-          </div>
-          <v-switch
-            v-model="ruleDraft.enabled"
-            label="启用"
-            color="primary"
-            hide-details
-            data-testid="field-switch"
-          ></v-switch>
-          <div v-if="fieldHint('enabled') !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
-            {{ fieldHint('enabled') }}
-          </div>
-          <div v-if="fieldExample('enabled') !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
-            示例：{{ fieldExample('enabled') }}
+          <div class="sf-rule-field sf-rule-field--switch">
+            <span>启用</span>
+            <InfoTip :text="fieldHint('enabled')" label="启用" />
+            <v-spacer />
+            <v-switch v-model="ruleDraft.enabled" color="primary" hide-details data-testid="field-switch" />
           </div>
         </v-card-text>
         <v-card-actions>
@@ -652,7 +609,7 @@ onMounted(() => {
       <div class="mb-2">
         <v-btn size="small" variant="tonal" class="mr-2" @click="providerEnabledFilter = 'all'; loadProviders()">全部</v-btn>
         <v-btn size="small" variant="tonal" class="mr-2" @click="providerEnabledFilter = 'enabled'; loadProviders()">已启用</v-btn>
-        <v-btn size="small" variant="tonal" @click="providerEnabledFilter = 'disabled'; loadProviders()">已禁用</v-btn>
+        <v-btn size="small" variant="tonal" @click="providerEnabledFilter = 'disabled'; loadProviders()">已停用</v-btn>
       </div>
       <v-list>
         <v-list-item v-for="p in providers" :key="p.id" :title="p.name" :subtitle="p.source + (p.enabled ? ' · 启用' : ' · 禁用')">
@@ -686,11 +643,11 @@ onMounted(() => {
     </v-card>
   </v-dialog>
 
-  <!-- Block 3: Rule-Bot 建议 -->
+  <!-- Block 3: 规则建议 -->
   <div v-if="tab === 2">
     <v-card v-if="suggestionsUnsupported" data-testid="suggestions-unsupported" class="pa-4">
-      <div class="text-h6">Rule-Bot 建议队列未启用</div>
-      <div class="mt-2">建议来自定时任务失败检测；服务启动时会自动启用。如果你看到这条，说明当前进程没有装配调度器。</div>
+      <div class="text-h6">规则建议队列未启用</div>
+      <div class="mt-2">建议由定时任务生成；当前进程未启用调度器。</div>
       <v-btn size="small" color="primary" class="mt-2" @click="loadSuggestions">重试</v-btn>
     </v-card>
     <AsyncSection v-else :loading="suggestionsLoading" :error="suggestionsError" :empty="suggestions.length === 0" empty-text="暂无建议" @retry="loadSuggestions">
@@ -707,7 +664,7 @@ onMounted(() => {
           <span class="sf-status__dot sf-status__dot--muted"></span>
           <span>自动应用</span>
         </span>
-        <div class="text-caption text-medium-emphasis mt-2">确认只是标记；要让规则真正生效还要点顶部「应用已确认建议」。</div>
+        <div class="text-caption text-medium-emphasis mt-2">确认后仍需点击「应用已确认建议」才会写入规则。</div>
         <div class="mt-2">
           <v-btn size="small" color="success" class="mr-2" data-testid="suggestion-confirm" @click="confirmSuggestion(i)">确认</v-btn>
           <v-btn size="small" color="error" data-testid="suggestion-reject" @click="rejectSuggestion(i)">拒绝</v-btn>
@@ -716,3 +673,26 @@ onMounted(() => {
     </AsyncSection>
   </div>
 </template>
+
+<style scoped>
+.sf-rule-field {
+  margin-bottom: 12px;
+}
+.sf-rule-field__label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+.sf-rule-field--switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+</style>

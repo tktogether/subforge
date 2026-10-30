@@ -29,22 +29,13 @@ const resource: any = {
 
 <template>
   <div class="self-nodes-page">
-    <v-alert type="info" variant="tonal" class="mb-4" data-testid="self-node-help">
-      <div class="text-body-2">
-        <p class="mb-1"><strong>和机场节点的区别（最关键）：</strong></p>
-        <ul class="mb-2">
-          <li><strong>机场节点</strong>：来自「机场」页配置的订阅地址，整份订阅一起拉取、一起更新。</li>
-          <li><strong>自建节点</strong>：这里一行一条，<strong>直接填节点分享链接</strong>（<code>ss://</code>、<code>vmess://</code>、<code>vless://</code>、<code>trojan://</code>、<code>hysteria2://</code> 等）。服务会把它写成临时文件交给同一套解析引擎，<strong>和机场节点走完全相同的去重、管线、分组、规则流程</strong>。</li>
-          <li>两者的节点在输出里<strong>没有区别</strong>，只是来源不同。</li>
-        </ul>
-        <p class="mb-1"><strong>什么时候用它：</strong>机场里没有的机器（自己的 VPS）、临时补一个节点、或者不想把链接放进机场订阅时。</p>
-        <p class="mb-0"><strong>链接格式：</strong>必须是<strong>标准分享链接</strong>（客户端里「复制链接」得到的那一串）。保存时服务端会逐条解析校验：名称或链接为空、链接解析失败、节点字段校验不通过，都会<strong>直接返回 400 并报错</strong>（提示形如「分享链接格式不正确：…」），<strong>不会静默入列表</strong>——加完可以去「概览」页核对节点数。</p>
-      </div>
-    </v-alert>
+    <p class="text-body-2 text-medium-emphasis mb-3">
+      自建节点与机场节点合并输出。分享链接需为标准格式，保存时会校验名称、链接与必要字段。
+    </p>
 
     <ResourcePage
       title="自建节点"
-      subtitle="手动添加的节点，与机场节点合并输出"
+      :subtitle="help.oneLiner"
       help-key="self-nodes"
       :columns="selfNodeColumns"
       :fields="selfNodeFields"

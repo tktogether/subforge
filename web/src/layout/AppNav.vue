@@ -25,7 +25,7 @@ function onUpdate(value: boolean): void {
     data-testid="nav"
     @update:model-value="onUpdate"
   >
-    <v-list-item title="SubForge" subtitle="订阅转换与规则工厂" prepend-icon="mdi-anvil" nav />
+    <v-list-item title="SubForge" subtitle="订阅转换与规则管理" prepend-icon="mdi-anvil" nav />
     <v-divider />
     <template v-for="group in groups" :key="group.name">
       <v-list-subheader class="nav-group-label">{{ group.name }}</v-list-subheader>

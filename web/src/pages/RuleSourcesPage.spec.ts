@@ -392,11 +392,14 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
-  it('MRS 格式说明与保留策略可见', async () => {
+  it('MRS 与版本保留说明在帮助弹窗中提供', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('Meta Rule Set')
-    expect(w.text()).toContain('每个源保留最近 5 个版本')
+    expect(w.find('[data-testid="help-toggle"]').exists()).toBe(true)
+    const h = PAGE_HELP['rule-sources']
+    const text = [...(h.concepts ?? []).map((c) => c.term + c.explain), ...(h.faq ?? []).map((f) => f.q + f.a)].join('\n')
+    expect(text).toContain('mihomo')
+    expect(text).toContain('保留最近 5 个版本')
     w.unmount()
   })
 
@@ -414,29 +417,18 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
-  it('coverage: rollbackDialog v-model setter', async () => {
+  it('coverage: 所有对话框 v-model setter', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify], stubs: { teleport: true } }, attachTo: document.body })
     await flushPromises()
     const dlgs = w.findAllComponents({ name: 'VDialog' })
-    if (dlgs.length >= 2 && dlgs[1].exists()) {
-      await dlgs[1].setValue(true)
-      await flushPromises()
-      await new Promise(r => setTimeout(r, 50))
-      await flushPromises()
+    for (const dlg of dlgs) {
+      await dlg.setValue(true)
     }
-    w.unmount()
-  })
-
-  it('coverage: mrsDialog v-model setter', async () => {
-    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify], stubs: { teleport: true } }, attachTo: document.body })
     await flushPromises()
-    const dlgs = w.findAllComponents({ name: 'VDialog' })
-    if (dlgs.length >= 3 && dlgs[2].exists()) {
-      await dlgs[2].setValue(true)
-      await flushPromises()
-      await new Promise(r => setTimeout(r, 50))
-      await flushPromises()
+    for (const dlg of dlgs) {
+      await dlg.setValue(false)
     }
+    await flushPromises()
     w.unmount()
   })
 

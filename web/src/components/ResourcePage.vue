@@ -4,6 +4,7 @@ import { useCrud, type CrudResource } from '../composables/useCrud'
 import { notify } from '../composables/useNotify'
 import PageHeader from './PageHeader.vue'
 import AsyncSection from './AsyncSection.vue'
+import InfoTip from './InfoTip.vue'
 import { fieldHelp, type EmptyStateHelp } from '../content/help'
 
 type Row = Record<string, any>
@@ -242,11 +243,14 @@ reload()
     <v-card>
       <v-card-title>{{ editing === null ? '新增' : '编辑' }}</v-card-title>
       <v-card-text>
-        <template v-for="field in props.fields" :key="field.key">
+        <div v-for="field in props.fields" :key="field.key" class="sf-field">
+          <div class="sf-field__label">
+            <span>{{ field.label }}</span>
+            <InfoTip :text="fieldHint(field)" :example="fieldExample(field)" :label="field.label" />
+          </div>
           <v-switch
             v-if="field.type === 'switch'"
             v-model="draft[field.key]"
-            :label="field.label"
             color="primary"
             hide-details
             data-testid="field-switch"
@@ -254,11 +258,10 @@ reload()
           <v-text-field
             v-else-if="field.type === 'number'"
             v-model.number="draft[field.key]"
-            :label="field.label"
             type="number"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
             data-testid="field-number"
           />
           <v-select
@@ -267,29 +270,21 @@ reload()
             :items="field.options ?? []"
             item-title="title"
             item-value="value"
-            :label="field.label"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
             hide-details
             data-testid="field-select"
           />
           <v-text-field
             v-else
             v-model="draft[field.key]"
-            :label="field.label"
+            :placeholder="fieldExample(field)"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
             data-testid="field-text"
           />
-          <div v-if="fieldHint(field) !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
-            {{ fieldHint(field) }}
-          </div>
-          <div v-if="fieldExample(field) !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
-            示例：{{ fieldExample(field) }}
-          </div>
-        </template>
+        </div>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
@@ -314,6 +309,18 @@ reload()
 
 
 <style scoped>
+.sf-field {
+  margin-bottom: 12px;
+}
+.sf-field__label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
 .resource-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);

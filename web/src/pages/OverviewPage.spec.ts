@@ -102,12 +102,12 @@ describe('OverviewPage', () => {
     w.unmount()
   })
 
-  it('模板：指标口径含「上限 20，重启清零，不是累计」', async () => {
+  it('模板：指标口径含「上限 20，重启后清空」', async () => {
     vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
     vi.mocked(endpoints.history).mockResolvedValue(sampleHistory)
     const w = mount(OverviewPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('上限 20，重启清零')
+    expect(w.text()).toContain('上限 20，服务重启后清空')
     w.unmount()
   })
 
@@ -137,7 +137,7 @@ describe('OverviewPage', () => {
     const w = mount(OverviewPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect(w.text()).toContain('还没有转换记录')
-    expect(w.text()).toContain('转换页点一次')
+    expect(w.text()).toContain('在转换页执行一次转换')
     w.unmount()
   })
 

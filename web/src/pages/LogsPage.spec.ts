@@ -40,7 +40,7 @@ describe('LogsPage', () => {
     const w = mount(LogsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect(w.text()).toContain('暂无日志')
-    expect(w.text()).toContain('服务刚启动时日志缓冲区可能是空的')
+    expect(w.text()).toContain('执行转换或请求订阅后，日志会显示在这里。')
     w.unmount()
   })
 
@@ -249,15 +249,15 @@ describe('LogsPage', () => {
   })
 
 
-  it('v-alert 三条说明', async () => {
+  it('页面说明只保留一行摘要，详细说明在帮助弹窗', async () => {
     logsMock.mockResolvedValue({ logs: [] })
     const w = mount(LogsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     const t = w.text()
-    expect(t).toContain('不区分级别')
     expect(t).toContain('最多显示最近 200 行')
-    expect(t).toContain('跟到底')
-    expect(t).toContain('纯前端关键字高亮')
+    expect(t).toContain('不代表日志级别')
+    expect(t).not.toContain('跟到底')
+    expect(w.find('[data-testid="help-toggle"]').exists()).toBe(true)
     w.unmount()
   })
 

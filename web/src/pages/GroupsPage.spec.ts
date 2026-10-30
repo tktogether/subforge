@@ -6,6 +6,7 @@ import * as directives from 'vuetify/directives'
 import GroupsPage from './GroupsPage.vue'
 import ResourcePage from '../components/ResourcePage.vue'
 import { endpoints } from '../api/endpoints'
+import { pageHelp } from '../content/help'
 
 vi.mock('../api/endpoints', async () => {
   const actual = await vi.importActual<any>('../api/endpoints')
@@ -39,7 +40,7 @@ describe('GroupsPage', () => {
     const rp = w.findComponent(ResourcePage)
     expect(rp.exists()).toBe(true)
     expect(rp.props('title')).toBe('代理分组')
-    expect(rp.props('subtitle')).toBe('决定客户端里的策略组与节点归组')
+    expect(rp.props('subtitle')).toBe(pageHelp('groups').oneLiner)
     expect(rp.props('helpKey')).toBe('groups')
     expect(rp.props('columns')).toEqual([
       { key: 'name', title: '名称' },
@@ -48,38 +49,36 @@ describe('GroupsPage', () => {
       { key: 'regex', title: '匹配正则' },
       { key: 'members_text', title: '成员' },
       { key: 'expand_text', title: '成员扩展' },
-      { key: 'url', title: '测活地址' },
+      { key: 'url', title: '检测地址' },
       { key: 'interval', title: '间隔(秒)' },
       { key: 'sort_order', title: '顺序' },
     ])
     expect(rp.props('fields')).toEqual([
-      { key: 'name', label: '名称', type: 'text', hint: '客户端里显示的策略组名；规则行的目标分组就是按这个名找的', example: '香港' },
-      { key: 'type', label: '类型', type: 'text', hint: 'select=手动选；url-test=自动选延迟最低；fallback=按顺序回退；load-balance=负载均衡', example: 'select' },
-      { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名匹配成员；留空则不自动收节点', example: '香港|HK' },
-      { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
-      { key: 'interval', label: '测活间隔（秒）', type: 'number', hint: '仅 url-test 需要；太小会频繁测活', example: '300' },
+      { key: 'name', label: '名称', type: 'text', hint: '客户端中显示的策略组名称；规则通过该名称选择目标分组。', example: '香港' },
+      { key: 'type', label: '类型', type: 'text', hint: 'select 手动选择；url-test 自动选择延迟最低；fallback 按顺序故障切换；load-balance 负载均衡。', example: 'select' },
+      { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名称匹配成员；留空时不按正则选择成员。', example: '香港|HK' },
+      { key: 'url', label: '检测地址', type: 'text', hint: '自动测速使用的检测地址；仅 url-test 与 fallback 需要。', example: 'http://www.gstatic.com/generate_204' },
+      { key: 'interval', label: '检测间隔（秒）', type: 'number', hint: '自动测速间隔，单位秒。', example: '300' },
       {
         key: 'include_all_sources',
         label: '包含全部来源节点',
         type: 'switch',
         default: false,
-        hint: '开启后，订阅会把方案里所有机场的节点都并入该组。成员覆盖了本机场全部节点的「全部节点」组（如守候网络的「守候网络」）导入时默认开启；子集组默认关闭。',
+        hint: '将方案中所有机场的节点加入该分组。成员覆盖本机场全部节点的分组在导入时默认开启。',
       },
       {
         key: 'include_self',
         label: '包含自建节点',
         type: 'switch',
         default: false,
-        hint: '开启后，订阅会在该分组成员末尾追加方案选中的自建节点。只影响自建；其他机场由「包含全部来源节点」控制。',
+        hint: '将方案中选中的自建节点加入该分组。',
       },
-      { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
+      { key: 'sort_order', label: '排序', type: 'number', hint: '数值越小越靠前。' },
     ])
     const resource = rp.props('resource') as any
     expect(resource.list).not.toBe(endpoints.listGroups)
     expect(resource.create).toBe(endpoints.createGroup)
-    expect(w.text()).toContain('分组是什么')
-    expect(w.text()).toContain('rule_config')
-    expect(w.text()).toContain('DIRECT')
+    expect(w.text()).toContain('代理分组')
     w.unmount()
   })
 
@@ -253,7 +252,7 @@ describe('GroupsPage', () => {
   it('help-panel 渲染 oneLiner', async () => {
     const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('决定客户端里的策略组与节点归组')
+    expect(w.text()).toContain(pageHelp('groups').oneLiner)
     w.unmount()
   })
 

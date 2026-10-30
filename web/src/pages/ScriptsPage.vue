@@ -39,6 +39,7 @@ const testNodeText = ref('{"name":"ss-node","type":"ss","server":"1.2.3.4","port
 const testTimeout = ref(0)
 const testResult = ref<ScriptTestResult | null>(null)
 const testing = ref(false)
+const referenceOpen = ref(false)
 
 async function load(): Promise<void> {
   loading.value = true
@@ -179,45 +180,59 @@ onMounted(() => {
 <template>
   <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="scripts">
     <template #actions>
+      <v-btn variant="tonal" data-testid="scripts-reference" @click="referenceOpen = true">脚本参考</v-btn>
       <v-btn color="primary" data-testid="new-script" @click="openCreate">新建脚本</v-btn>
       <v-btn variant="tonal" @click="load">刷新</v-btn>
     </template>
   </PageHeader>
 
-  <div data-testid="scripts-sandbox" class="mb-4">
-    <v-alert type="warning" variant="tonal" class="mb-2">脚本在服务端 goja 沙箱执行，请只运行可信代码；默认由 script.enabled 关闭。</v-alert>
-    <div v-for="(s, i) in SCRIPTS_HELP.sandbox" :key="i" data-testid="scripts-sandbox-item" class="text-body-2 mb-1">{{ s }}</div>
-  </div>
+  <p class="text-body-2 text-medium-emphasis mb-3">脚本在服务端沙箱中执行，请只运行可信代码。</p>
 
-  <div data-testid="scripts-variables" class="mb-4">
-    <div class="text-subtitle-1 mb-2">变量</div>
-    <table>
-      <thead><tr><th>变量</th><th>类型</th><th>可写</th><th>说明</th></tr></thead>
-      <tbody>
-        <tr v-for="v in SCRIPTS_HELP.variables" :key="v.name" data-testid="scripts-variable-row">
-          <td>{{ v.name }}</td>
-          <td>{{ v.type }}</td>
-          <td>{{ v.writable ? '可写' : '只读' }}</td>
-          <td>{{ v.explain }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div data-testid="scripts-return-rules" class="mb-4">
-    <div v-for="r in SCRIPTS_HELP.returnRules" :key="r.kind" class="mb-3">
-      <div class="text-subtitle-1">{{ r.kind }}</div>
-      <div>脚本体：{{ r.body }}</div>
-      <div>返回值：{{ r.ret }}</div>
-      <div>生效：{{ r.how }}</div>
-      <div data-testid="return-good">正确示例：{{ r.good }}</div>
-      <div data-testid="return-bad">错误示例：{{ r.bad }}</div>
-    </div>
-  </div>
-
-  <div data-testid="scripts-writeback" class="mb-4">
-    <div v-for="(w, i) in SCRIPTS_HELP.writeback" :key="i" class="text-body-2 mb-1">{{ w }}</div>
-  </div>
+  <v-dialog v-model="referenceOpen" max-width="760" scrollable data-testid="scripts-reference-dialog">
+    <v-card>
+      <v-card-title>脚本参考</v-card-title>
+      <v-card-text>
+        <p class="text-body-2 mb-3">{{ SCRIPTS_HELP.intro }}</p>
+        <div class="text-subtitle-2 mb-1">运行环境</div>
+        <ul class="help-list mb-4" data-testid="scripts-sandbox">
+          <li v-for="(s, i) in SCRIPTS_HELP.sandbox" :key="i" data-testid="scripts-sandbox-item">{{ s }}</li>
+        </ul>
+        <div class="text-subtitle-2 mb-1">可用变量</div>
+        <div data-testid="scripts-variables">
+          <v-table density="compact" class="mb-4">
+            <thead><tr><th>变量</th><th>类型</th><th>可写</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr v-for="v in SCRIPTS_HELP.variables" :key="v.name" data-testid="scripts-variable-row">
+                <td><code>{{ v.name }}</code></td>
+                <td>{{ v.type }}</td>
+                <td>{{ v.writable ? '可写' : '只读' }}</td>
+                <td>{{ v.explain }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </div>
+        <div class="text-subtitle-2 mb-1">返回值规则</div>
+        <div data-testid="scripts-return-rules">
+          <div v-for="r in SCRIPTS_HELP.returnRules" :key="r.kind" class="mb-3">
+            <div class="font-weight-medium">{{ r.kind === 'filter' ? '过滤脚本' : '改写脚本' }}</div>
+            <div>脚本内容：{{ r.body }}</div>
+            <div>返回值：{{ r.ret }}</div>
+            <div>生效方式：{{ r.how }}</div>
+            <div data-testid="return-good">正确示例：{{ r.good }}</div>
+            <div data-testid="return-bad">错误示例：{{ r.bad }}</div>
+          </div>
+        </div>
+        <div class="text-subtitle-2 mb-1">字段写回</div>
+        <ul class="help-list mb-0" data-testid="scripts-writeback">
+          <li v-for="(w, i) in SCRIPTS_HELP.writeback" :key="i">{{ w }}</li>
+        </ul>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="scripts-reference-close" @click="referenceOpen = false">关闭</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 
   <AsyncSection
     :loading="loading"
@@ -258,7 +273,7 @@ onMounted(() => {
       <v-card-title>{{ editing === null ? '新建脚本' : '编辑脚本' }}</v-card-title>
       <v-card-text>
         <v-text-field v-model="formName" label="名称" class="mb-2" :hint="fieldHelp('script.name')?.hint" persistent-hint data-testid="field-hint" />
-        <v-select v-model="formKind" :items="['filter', 'operate']" label="类型" class="mb-2" />
+        <v-select v-model="formKind" :items="[{ title: '过滤脚本', value: 'filter' }, { title: '改写脚本', value: 'operate' }]" label="类型" class="mb-2" />
         <div class="text-body-2 mb-2">{{ SCRIPTS_HELP.returnRules.find((r) => r.kind === formKind)?.body }}</div>
         <v-textarea v-model="formCode" label="代码" rows="8" />
         <v-btn data-testid="example-insert" variant="tonal" class="mb-2" @click="toggleExamples">插入示例</v-btn>
@@ -290,10 +305,10 @@ onMounted(() => {
       <v-card-title>试运行脚本</v-card-title>
       <v-card-text>
         <div data-testid="scripts-test">
-          <v-select v-model="testKind" :items="['filter', 'operate']" label="类型" class="mb-2" />
+          <v-select v-model="testKind" :items="[{ title: '过滤脚本', value: 'filter' }, { title: '改写脚本', value: 'operate' }]" label="类型" class="mb-2" />
           <v-textarea v-model="testCode" label="代码" rows="8" class="mb-2" />
           <v-textarea v-model="testNodeText" label="节点 JSON" rows="4" class="mb-2" />
-          <v-text-field v-model.number="testTimeout" label="超时毫秒" type="number" class="mb-2" />
+          <v-text-field v-model.number="testTimeout" label="超时（毫秒）" type="number" class="mb-2" />
           <v-btn color="primary" :loading="testing" @click="runTest">运行</v-btn>
         </div>
         <!-- D-23：结果区固定最大高度并可滚动，长结果不再被对话框底边裁切。 -->
@@ -305,8 +320,8 @@ onMounted(() => {
         >
           <div v-if="testResult.error" data-testid="test-error" class="text-error">{{ testResult.error }}</div>
           <div v-if="testResult.ok && testKind === 'filter'">
-            <span v-if="testResult.kept === true" data-testid="test-kept">保留 ✅</span>
-            <span v-else data-testid="test-dropped">丢弃 ⛔</span>
+            <span v-if="testResult.kept === true" data-testid="test-kept" class="text-success">保留</span>
+            <span v-else data-testid="test-dropped" class="text-medium-emphasis">丢弃</span>
           </div>
           <div v-if="testResult.ok && testKind === 'operate'">
             <div>变更字段</div>
@@ -320,13 +335,16 @@ onMounted(() => {
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="testDialog = false">关闭</v-btn>
+        <v-btn variant="text" data-testid="test-close" @click="testDialog = false">关闭</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 </template>
 
 <style scoped>
+.help-list {
+  padding-left: 20px;
+}
 /* D-23：结果区可滚动 + 限高，保证 0 结果和多结果都能看全。 */
 .test-result-scroll {
   max-height: 40vh;

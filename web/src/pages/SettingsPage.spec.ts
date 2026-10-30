@@ -338,13 +338,13 @@ describe('SettingsPage', () => {
     w.unmount()
   })
 
-  it('模板：fieldHelp 为 undefined 时 hint 回落空串', async () => {
+  it('模板：fieldHelp 为 undefined 时不渲染说明图标', async () => {
     vi.mocked(endpoints.targets).mockResolvedValue([])
     vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
     vi.mocked(endpoints.listSettings).mockResolvedValue({ settings: [{ key: 'unknown.key', kind: 'path', label: 'u', description: 'd', value: '', is_default: false }] } as any)
     const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.find('[data-testid="setting-hint"]').text()).toBe('')
+    expect(w.find('[data-testid="info-tip"]').exists()).toBe(false)
     w.unmount()
   })
 })

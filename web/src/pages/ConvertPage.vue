@@ -10,6 +10,7 @@ import { errorMessage } from '../composables/useAsync'
 import { pageHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import InfoTip from '../components/InfoTip.vue'
 
 const help = pageHelp('convert')
 
@@ -36,7 +37,11 @@ const loading = ref(false)
 const error = ref('')
 const result = ref<ConvertResponse | null>(null)
 const copied = ref(false)
-const meaningsOpen = ref(false)
+const targetHelpOpen = ref(false)
+
+function closeTargetHelp(): void {
+  targetHelpOpen.value = false
+}
 
 const objectUrl = ref<string | null>(null)
 
@@ -201,49 +206,60 @@ onUnmounted(() => {
     <v-row>
       <v-col cols="12" md="6">
         <v-card class="pa-4" data-testid="convert-input-card">
-          <div class="d-flex align-center target-meanings-toggle" data-testid="target-meanings-toggle" @click="meaningsOpen = !meaningsOpen">
-            <v-icon size="small" class="mr-1">{{ meaningsOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-            <span class="text-subtitle-1">目标格式取值含义</span>
-            <span class="text-caption text-medium-emphasis ml-2">默认收起，点击展开</span>
-          </div>
-          <div v-show="meaningsOpen" class="mt-2">
-            <v-table density="compact" data-testid="target-meanings">
-              <thead>
-                <tr>
-                  <th>target</th>
-                  <th>产物形态</th>
-                  <th>用在哪</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="m in targetMeanings" :key="m.target">
-                  <td><code>{{ m.target }}</code></td>
-                  <td>{{ m.form }}</td>
-                  <td>{{ m.where }}</td>
-                </tr>
-              </tbody>
-            </v-table>
-            <div class="text-caption text-medium-emphasis mt-2">
-              服务端也会按客户端 UA 自动推断 target（/sub 走的就是这条路）；网页转换页里显式选了就用选的。
-            </div>
+          <div class="d-flex align-center mb-3">
+            <span class="text-subtitle-1">转换参数</span>
+            <v-spacer />
+            <v-btn variant="text" size="small" prepend-icon="mdi-help-circle-outline" data-testid="target-meanings-toggle" @click="targetHelpOpen = true">目标格式说明</v-btn>
           </div>
 
-          <v-select v-model="selectedTarget" :items="targets" label="目标格式" data-testid="target-select" class="mt-4" />
-          <v-textarea v-model="urls" label="订阅 URL（每行一个）" rows="4" data-testid="urls" hint="支持 http(s)，也支持本地路径；一行一个" persistent-hint />
-          <v-textarea v-model="text" label="粘贴文本" rows="3" data-testid="text" hint="把订阅内容直接粘进来，服务端会落到临时文件再解析，请求结束即删除" persistent-hint />
-          <v-text-field v-model="types" label="类型过滤 types" data-testid="types" hint="只保留指定协议类型，逗号分隔，例如 ss,vmess；留空不过滤" persistent-hint />
-          <v-text-field v-model="include" label="包含正则 include" data-testid="include" hint="按节点名匹配，逗号分隔；include 命中才留" persistent-hint />
-          <v-text-field v-model="exclude" label="排除正则 exclude" data-testid="exclude" hint="按节点名匹配，逗号分隔；exclude 命中就丢；两个都填时先 include 再 exclude" persistent-hint />
-          <v-select v-model="pipeline" :items="pipelineItems" label="管线" data-testid="pipeline" hint="管线是节点进来之后、渲染之前的一串处理步骤，详见「管线」页" persistent-hint />
-          <v-select v-model="configValue" :items="configs" label="配置 config" data-testid="config" hint="渲染配置模板；留空用默认" persistent-hint />
-          <div class="d-flex align-center">
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">目标格式 <InfoTip text="留空时使用 clash.meta。" label="目标格式" /></div>
+            <v-select v-model="selectedTarget" :items="targets" hide-details data-testid="target-select" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">订阅地址 <InfoTip text="每行填写一个上游订阅地址，支持 http 与 https。" example="https://example.com/sub?token=xxx" label="订阅地址" /></div>
+            <v-textarea v-model="urls" rows="4" hide-details data-testid="urls" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">粘贴文本 <InfoTip text="直接粘贴订阅内容；服务端写入临时文件后解析，请求结束后删除。" label="粘贴文本" /></div>
+            <v-textarea v-model="text" rows="3" hide-details data-testid="text" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">协议类型 <InfoTip text="只保留指定协议类型；逗号分隔，留空表示不过滤。" example="ss,vmess" label="协议类型" /></div>
+            <v-text-field v-model="types" hide-details data-testid="types" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">包含节点 <InfoTip text="按节点名称匹配的逗号分隔正则；匹配的节点才会保留。" label="包含节点" /></div>
+            <v-text-field v-model="include" hide-details data-testid="include" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">排除节点 <InfoTip text="按节点名称匹配的逗号分隔正则；匹配的节点会被移除。" label="排除节点" /></div>
+            <v-text-field v-model="exclude" hide-details data-testid="exclude" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">管线 <InfoTip text="在节点进入渲染前执行的处理步骤；留空表示不使用管线。" label="管线" /></div>
+            <v-select v-model="pipeline" :items="pipelineItems" hide-details data-testid="pipeline" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">转换模板 <InfoTip text="渲染使用的配置模板；留空表示使用默认模板。" label="转换模板" /></div>
+            <v-select v-model="configValue" :items="configs" hide-details data-testid="config" />
+          </div>
+          <div class="mb-3">
             <router-link to="/pipelines" class="text-caption" data-testid="pipeline-link">打开管线页</router-link>
           </div>
-          <v-switch v-model="list" label="输出节点列表" color="primary" data-testid="list" hint="打开后只输出节点列表（target=list 的分享链接形态），不生成完整配置" persistent-hint />
-          <v-select v-model="sort" :items="['false', 'true']" label="排序 sort" data-testid="sort" hint="按节点名排序；默认保持来源顺序" persistent-hint />
+          <div class="sf-convert-field sf-convert-field--switch">
+            <span>仅输出节点列表</span>
+            <InfoTip text="只输出节点分享链接列表，不生成完整配置。" label="仅输出节点列表" />
+            <v-spacer />
+            <v-switch v-model="list" color="primary" hide-details data-testid="list" />
+          </div>
+          <div class="sf-convert-field">
+            <div class="sf-convert-label">节点排序 <InfoTip text="选择保持来源顺序或按节点名称排序。" label="节点排序" /></div>
+            <v-select v-model="sort" :items="[{ title: '保持来源顺序', value: 'false' }, { title: '按节点名称排序', value: 'true' }]" hide-details data-testid="sort" />
+          </div>
           <v-btn color="primary" :loading="loading" data-testid="submit" class="mt-2" @click="submit">转换</v-btn>
           <div v-if="urls.trim() === '' && text.trim() === ''" class="text-caption text-medium-emphasis mt-2">
-            至少要给一个来源：URL 与文本不能同时为空。
+            订阅地址与粘贴文本不能同时为空。
           </div>
         </v-card>
       </v-col>
@@ -252,23 +268,23 @@ onUnmounted(() => {
         <AsyncSection :loading="loading" :error="error" :empty="result === null ? (help.emptyState ?? false) : false" empty-text="结果将显示在这里" @retry="submit">
           <v-textarea :model-value="result?.body ?? ''" readonly rows="12" data-testid="result-body" />
           <div v-if="result !== null" class="mt-2" data-testid="result-summary">
-            <div>生效格式：{{ result.format }}</div>
-            <div>节点 {{ result.nodes }}（原始 {{ result.rawNodes }}）</div>
-            <div>缓存命中 {{ result.cached }}</div>
+            <div>输出格式：{{ result.format }}</div>
+            <div>节点：{{ result.nodes }}（原始 {{ result.rawNodes }}）</div>
+            <div>缓存命中：{{ result.cached }}</div>
           </div>
           <div v-if="result !== null" class="mt-2 d-flex gap-2">
             <v-btn variant="text" data-testid="copy" @click="copy">{{ copied ? '已复制' : '复制' }}</v-btn>
             <v-btn variant="text" data-testid="download" @click="download">下载</v-btn>
           </div>
           <div v-if="result?.failures && result.failures.length" data-testid="convert-failures">
-            <div class="text-subtitle-2">失败</div>
-            <div class="text-caption text-medium-emphasis">失败来源的原因；其余来源的节点照常输出——部分失败不影响整次转换</div>
+            <div class="text-subtitle-2">失败来源</div>
+            <div class="text-caption text-medium-emphasis">以下来源未成功获取；其他来源的节点仍会正常输出。</div>
             <ul><li v-for="(f, i) in result.failures" :key="i">{{ f }}</li></ul>
           </div>
           <div v-else-if="result !== null" data-testid="convert-failures-ok" class="text-caption text-success">全部来源成功</div>
           <div v-if="result?.warnings && result.warnings.length" data-testid="convert-warnings">
             <div class="text-subtitle-2">告警</div>
-            <div class="text-caption text-medium-emphasis">渲染阶段跳过或降级的项 + 模板/管线/覆盖告警；不影响产物正确性，但静默丢弃没人会发现</div>
+            <div class="text-caption text-medium-emphasis">以下内容被跳过或降级，不影响其他节点的输出。</div>
             <ul><li v-for="(w, i) in result.warnings" :key="i">{{ w }}</li></ul>
           </div>
         </AsyncSection>
@@ -276,7 +292,10 @@ onUnmounted(() => {
     </v-row>
 
     <v-card class="pa-4 mt-4" data-testid="diff-card">
-      <div class="text-subtitle-1 mb-2">与上一次产物对比（diff）</div>
+      <div class="d-flex align-center mb-2">
+        <span class="text-subtitle-1">产物对比</span>
+        <InfoTip text="「-」表示仅在左侧存在，「+」表示仅在右侧存在；同一行被修改时会先删除再新增。" label="产物对比" />
+      </div>
       <v-row>
         <v-col cols="12" md="6">
           <v-textarea v-model="diffA" label="基线 A" rows="6" data-testid="diff-a" />
@@ -287,9 +306,6 @@ onUnmounted(() => {
       </v-row>
       <v-btn color="primary" :loading="diffLoading" data-testid="diff-run" @click="runDiff">对比</v-btn>
       <div v-if="diffError !== ''" data-testid="diff-error" class="text-error mt-2">{{ diffError }}</div>
-      <div class="text-caption text-medium-emphasis mt-2" data-testid="diff-help">
-        「-」表示这行只在左边（基线）有，「+」表示只在右边（当前）有；顺序是「先删后增」，所以看到「-」紧跟「+」通常就是一行被改写了。
-      </div>
       <div v-if="diffRan && diffLines.length === 0 && diffError === ''" data-testid="diff-empty" class="text-caption text-medium-emphasis mt-2">
         没有可对比的内容
       </div>
@@ -299,14 +315,60 @@ onUnmounted(() => {
         </div>
       </div>
     </v-card>
+
+    <v-dialog :model-value="targetHelpOpen" max-width="760" scrollable data-testid="target-meanings-dialog" @update:model-value="closeTargetHelp">
+      <v-card>
+        <v-card-title>目标格式说明</v-card-title>
+        <v-card-text>
+          <p class="text-body-2 text-medium-emphasis mb-3">
+            订阅地址会根据客户端类型自动选择目标格式；在本页选择后以本页设置为准。
+          </p>
+          <v-table density="compact" data-testid="target-meanings">
+            <thead>
+              <tr><th>取值</th><th>产物形态</th><th>适用客户端</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in targetMeanings" :key="m.target">
+                <td><code>{{ m.target }}</code></td>
+                <td>{{ m.form }}</td>
+                <td>{{ m.where }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" data-testid="target-meanings-close" @click="closeTargetHelp">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <style scoped>
-.target-meanings-toggle { cursor: pointer; user-select: none; }
+.sf-convert-field {
+  margin-bottom: 12px;
+}
+.sf-convert-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+.sf-convert-field--switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
 .diff-line { font-family: monospace; white-space: pre; }
 .diff-type { display: inline-block; width: 1.2em; }
-.line-same { color: grey; }
-.line-del { color: #d32f2f; }
-.line-add { color: #2e7d32; }
+.line-same { color: var(--sf-text-faint); }
+.line-del { color: var(--sf-danger); }
+.line-add { color: var(--sf-ok); }
 </style>

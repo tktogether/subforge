@@ -2,9 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import InfoTip from '../components/InfoTip.vue'
+import { pageHelp } from '../content/help'
 import { endpoints, type Profile } from '../api/endpoints'
 import { notify } from '../composables/useNotify'
 import { errorMessage } from '../composables/useAsync'
+
+const help = pageHelp('profiles')
 
 // 模板列的显示上限：超过就截断，完整内容放在 title 里。
 const TEMPLATE_MAX = 60
@@ -118,6 +122,7 @@ const groupLayers = ref<LayerRow[]>(defaultLayers(GROUP_LAYER_KEYS))
 
 const confirmOpen = ref(false)
 const deleteTarget = ref<Profile>(EMPTY_PROFILE)
+const conflictDialogOpen = ref(false)
 
 const headers = [
   { key: 'name', title: '名称' },
@@ -480,7 +485,7 @@ loadRuleSourceOptions()
 
 <template>
   <div class="profiles-page">
-    <PageHeader title="订阅方案" subtitle="一个方案 = 节点来源 + 模板/输出定制 + 层顺序 + 规则源；令牌绑定后彼此隔离">
+    <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="profiles">
       <template #actions>
         <v-btn color="primary" prepend-icon="mdi-plus" data-testid="profile-new" @click="openCreate">
           新增
@@ -490,17 +495,6 @@ loadRuleSourceOptions()
         </v-btn>
       </template>
     </PageHeader>
-
-    <v-alert type="info" variant="tonal" class="mb-4" data-testid="profiles-help">
-      <div class="text-body-2">
-        <p class="mb-1"><strong>方案是什么：</strong>一个订阅方案 = 节点来源（机场/自建节点）+ 模板/管线/目标格式/包含排除 + 规则层与分组层的顺序 + 规则源绑定；令牌绑定方案后，订阅按该方案的来源、层顺序与规则源生成。</p>
-        <p class="mb-1"><strong>规则与分组：</strong>它们是全局库，用来源（自定义 / airport:机场名）区分；方案只选择启用哪些层以及层的顺序，不拥有规则/分组。</p>
-        <p class="mb-1"><strong>未分配：</strong>profile_id = 0 的令牌不绑定方案，使用全部启用来源和默认三层顺序，与旧行为一致。</p>
-        <p class="mb-1"><strong>删除方案：</strong>只有仍有令牌绑定时才会拒绝；规则/分组是全局库，不会随方案删除。</p>
-        <p class="mb-1"><strong>模板留空：</strong>模板留空 = 用默认配置；管线留空 = 用全局回落。</p>
-        <p class="mb-0"><strong>层顺序：</strong>规则层 = 按顺序拼接，先出现者优先；分组层 = 同名分组先出现者胜出；模板层 = INI 模板里的规则/分组。</p>
-      </div>
-    </v-alert>
 
     <AsyncSection
       :loading="loading"
@@ -589,55 +583,65 @@ loadRuleSourceOptions()
           <v-text-field
             v-model="draft.config"
             label="模板"
+            hint="留空时使用默认模板"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
+            class="mb-3"
             data-testid="profile-config"
           />
           <v-text-field
             v-model="draft.pipeline"
             label="管线"
+            hint="留空时不使用管线"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
+            class="mb-3"
             data-testid="profile-pipeline"
           />
+          <div class="sf-form-label">
+            <span>目标格式</span>
+            <InfoTip text="留空时使用 clash.meta。" label="目标格式" />
+          </div>
           <v-select
             v-model="draft.target"
             :items="targetOptions"
-            label="目标格式"
-            hint="留空 = clash.meta；与旧版令牌上的 target 同时存在时，旧令牌优先"
-            persistent-hint
-            clearable
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            clearable
+            hide-details
+            class="mb-3"
             data-testid="profile-target"
           />
+          <div class="sf-form-label">
+            <span>包含节点</span>
+            <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不筛选。" example="香港,日本" label="包含节点" />
+          </div>
           <v-text-field
             v-model="draft.include"
-            label="包含节点"
-            hint="逗号分隔的节点名正则，例如 香港,日本；留空 = 不筛选"
-            persistent-hint
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
+            class="mb-3"
             data-testid="profile-include"
           />
+          <div class="sf-form-label">
+            <span>排除节点</span>
+            <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不排除。" example="过期,剩余" label="排除节点" />
+          </div>
           <v-text-field
             v-model="draft.exclude"
-            label="排除节点"
-            hint="逗号分隔的节点名正则，例如 过期,剩余；留空 = 不排除"
-            persistent-hint
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
+            class="mb-3"
             data-testid="profile-exclude"
           />
           <div class="mb-3">
-            <div class="text-subtitle-2 mb-1">规则源（顺序即优先级）</div>
-            <div class="text-caption text-medium-emphasis mb-2">
-              靠前的源先命中重复规则；机场规则源显示为「机场规则 · 名称」。
+            <div class="sf-form-label">
+              <span>规则源（顺序即优先级）</span>
+              <InfoTip text="同一匹配条件出现在多个规则源时，按列表顺序由先出现的源生效。机场规则源显示为「机场规则 · 名称」。" label="规则源优先级" />
             </div>
             <div class="sf-source-list" data-testid="profile-rule-sources">
               <div
@@ -695,24 +699,29 @@ loadRuleSourceOptions()
               class="mt-2"
               data-testid="profile-source-conflicts"
             >
-              发现 {{ sourceConflictTotal }} 条跨源重复规则；按当前顺序先出现的源优先。
-              <div v-if="sourceConflictSamples.length > 0" class="text-caption">
-                示例：{{ sourceConflictSamples.map((s) => s.type + ',' + s.param + '（' + s.first + ' vs ' + s.second + '）').join('；') }}
-              </div>
+              发现 {{ sourceConflictTotal }} 条跨源重复规则，当前按列表顺序由先出现的源生效。
+              <v-btn
+                v-if="sourceConflictSamples.length > 0"
+                variant="text"
+                size="small"
+                class="ml-2"
+                data-testid="profile-source-conflicts-detail"
+                @click="conflictDialogOpen = true"
+              >查看示例</v-btn>
             </v-alert>
           </div>
           <v-divider class="mb-3" />
           <div class="text-subtitle-2 mb-1">节点来源</div>
-          <v-switch
-            v-model="draft.limit_sources"
-            label="限制机场/自建节点来源"
-            color="primary"
-            density="compact"
-            hide-details
-            data-testid="profile-limit-sources"
-          />
-          <div class="text-caption text-medium-emphasis mb-3">
-            关闭 = 使用所有启用的来源；打开 = 只使用下面勾选的来源，全不选表示不使用该类来源。
+          <div class="d-flex align-center ga-1 mb-2">
+            <v-switch
+              v-model="draft.limit_sources"
+              label="限制机场与自建节点来源"
+              color="primary"
+              density="compact"
+              hide-details
+              data-testid="profile-limit-sources"
+            />
+            <InfoTip text="关闭时使用全部启用的来源；开启后只使用下方选择的来源，均不选择表示不使用该类来源。" label="节点来源" />
           </div>
           <v-select
             v-model="draft.airport_ids"
@@ -759,8 +768,10 @@ loadRuleSourceOptions()
           />
 
           <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3">
-            <div class="text-subtitle-2 mb-1">{{ editor.caption }}</div>
-            <div class="text-caption text-medium-emphasis mb-1">{{ editor.hint }}</div>
+            <div class="sf-form-label">
+              <span>{{ editor.caption }}</span>
+              <InfoTip :text="editor.hint" :label="editor.caption" />
+            </div>
             <div class="sf-layer-editor" :data-testid="editor.testid">
             <div
               v-for="(row, index) in editor.rows"
@@ -841,6 +852,34 @@ loadRuleSourceOptions()
     </v-card>
   </v-dialog>
 
+  <v-dialog v-model="conflictDialogOpen" max-width="640" scrollable data-testid="profile-source-conflicts-dialog">
+    <v-card>
+      <v-card-title>跨源重复规则示例</v-card-title>
+      <v-card-text>
+        <p class="text-body-2 text-medium-emphasis mb-3">
+          以下匹配条件同时存在于两个规则源。订阅生成时按规则源顺序取先出现的定义。
+        </p>
+        <v-table density="compact">
+          <thead>
+            <tr><th>类型</th><th>参数</th><th>先出现</th><th>后出现</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(s, i) in sourceConflictSamples" :key="i">
+              <td>{{ s.type }}</td>
+              <td>{{ s.param }}</td>
+              <td>{{ s.first }}</td>
+              <td>{{ s.second }}</td>
+            </tr>
+          </tbody>
+        </v-table>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="profile-source-conflicts-close" @click="conflictDialogOpen = false">关闭</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
   <v-dialog v-model="confirmOpen" max-width="420">
       <v-card>
         <v-card-title>确认删除</v-card-title>
@@ -872,6 +911,15 @@ loadRuleSourceOptions()
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.sf-form-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
 }
 .sf-layer-editor {
   border: 1px solid var(--sf-border);

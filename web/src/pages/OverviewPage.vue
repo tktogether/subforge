@@ -55,10 +55,10 @@ onMounted(() => {
     <v-card class="mb-4 pa-4" data-testid="block-intro">
       <div class="text-subtitle-2 mb-1">首次使用路径</div>
       <ol class="pl-4 mb-2">
-        <li><router-link to="/airports">机场</router-link> —— 添加上游订阅地址（这是所有节点的来源）</li>
-        <li><router-link to="/groups">分组 / 规则</router-link> —— 决定节点怎么归组、流量怎么分流</li>
-        <li><router-link to="/subscriptions">订阅</router-link> —— 生成令牌，拿到客户端要填的订阅地址</li>
-        <li><router-link to="/pipelines">管线</router-link> —— 需要改名/过滤/排序时，在节点进来之后加处理步骤</li>
+        <li><router-link to="/airports">机场</router-link>：添加上游订阅地址（节点来源）</li>
+        <li><router-link to="/groups">分组</router-link>与<router-link to="/rules">规则</router-link>：设置节点分组与流量分流</li>
+        <li><router-link to="/subscriptions">订阅</router-link>：创建令牌并获取订阅地址</li>
+        <li><router-link to="/pipelines">管线</router-link>：需要过滤、改名或排序时添加处理步骤</li>
       </ol>
       <div class="text-caption text-medium-emphasis">概览页只读，所有修改都在对应页面做。</div>
     </v-card>
@@ -68,22 +68,22 @@ onMounted(() => {
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">最近记录条数</div>
         <div class="text-h5" data-testid="metric-history-total">{{ stats?.history.total ?? 0 }}</div>
-        <div class="text-caption">服务进程内存里保留的最近转换记录条数（上限 20，重启清零），不是历史累计。</div>
+        <div class="text-caption">内存中保留的最近转换记录数，上限 20，服务重启后清空。</div>
       </v-card>
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">缓存命中率</div>
         <div class="text-h5" data-testid="metric-cache-hit-rate">{{ ((stats?.history.cacheHitRate ?? 0) * 100).toFixed(1) }}%</div>
-        <div class="text-caption">命中磁盘缓存的来源 URL 数 ÷ 总来源 URL 数。缓存命中意味着没有真的去上游拉取。</div>
+        <div class="text-caption">最近一次转换中命中缓存的来源比例。</div>
       </v-card>
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">来源 URL 总数</div>
         <div class="text-h5" data-testid="metric-url-total">{{ stats?.history.urlTotal ?? 0 }}</div>
-        <div class="text-caption">这些转换请求里一共出现过多少个来源 URL（含重复）。</div>
+        <div class="text-caption">最近一次转换使用的来源地址数量。</div>
       </v-card>
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">日志行数</div>
         <div class="text-h5" data-testid="metric-logs">{{ stats?.logs ?? 0 }}</div>
-        <div class="text-caption">日志缓冲区里的行数（有上限，超出后最早的会被丢弃）。</div>
+        <div class="text-caption">日志缓冲区中的行数，上限 200。</div>
       </v-card>
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">节点数</div>
@@ -93,12 +93,12 @@ onMounted(() => {
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">原始节点数</div>
         <div class="text-h5" data-testid="metric-raw-nodes">{{ lastOrDash(stats?.last?.rawNodes) }}</div>
-        <div class="text-caption">去重/过滤之前解析到的节点数；两者差得越多，说明去重或管线过滤越有效。</div>
+        <div class="text-caption">去重与过滤前解析到的节点数。</div>
       </v-card>
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">分组数</div>
         <div class="text-h5" data-testid="metric-groups">{{ lastOrDash(stats?.last?.groups) }}</div>
-        <div class="text-caption">最近一次转换实际生效的分组数（模板与请求取并集后的结果）。</div>
+        <div class="text-caption">最近一次转换实际生效的分组数。</div>
       </v-card>
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">规则数</div>
@@ -108,7 +108,7 @@ onMounted(() => {
       <v-card class="metric-card pa-4">
         <div class="text-caption text-medium-emphasis">最近一次缓存命中</div>
         <div class="text-h5" data-testid="metric-last-cached">{{ stats?.last == null ? '—' : (stats.last.cached + '/' + stats.last.urlCount) }}</div>
-        <div class="text-caption">最近一次转换里，命中缓存的来源数 ÷ 来源总数。</div>
+        <div class="text-caption">最近一次转换中命中缓存的来源数与来源总数之比。</div>
       </v-card>
     </div>
     <div v-if="stats?.last == null" class="text-caption text-medium-emphasis mb-4" data-testid="no-records-hint">还没有转换记录</div>
@@ -119,7 +119,7 @@ onMounted(() => {
       <v-card-text>
         <div v-if="history.length === 0" data-testid="history-empty" class="text-center pa-4">
           <div class="text-subtitle-1">还没有转换记录</div>
-          <div class="text-caption text-medium-emphasis">转换页点一次「转换」，或让客户端请求一次订阅地址，这里就会出现记录。</div>
+          <div class="text-caption text-medium-emphasis">在转换页执行一次转换，或请求一次订阅地址后，这里会显示记录。</div>
           <router-link to="/convert" data-testid="history-empty-action">转换</router-link>
         </div>
         <v-data-table v-else :items="history" density="comfortable" hover show-expand :expanded="expanded" @update:expanded="(v: readonly string[]) => (expanded = [...v])" data-testid="history-table" class="history-table">
@@ -152,7 +152,7 @@ onMounted(() => {
     <!-- Block 4: health/version info -->
     <v-card class="pa-4" data-testid="block-health">
       <div class="text-subtitle-2 mb-1">服务状态</div>
-      <div class="text-caption text-medium-emphasis">如果这里能看到数据，说明服务在正常工作；请求不通请看「日志」页。</div>
+      <div class="text-caption text-medium-emphasis">能够显示数据表示服务正常运行；请求失败请查看日志页。</div>
     </v-card>
   </AsyncSection>
 </template>

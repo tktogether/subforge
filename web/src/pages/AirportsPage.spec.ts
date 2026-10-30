@@ -123,7 +123,7 @@ describe('AirportsPage', () => {
     await flushPromises()
     expect(w.find('[data-testid="traffic-unknown"]').exists()).toBe(true)
     expect(w.find('[data-testid="traffic-at"]').exists()).toBe(true)
-    expect(w.find('[data-testid="traffic-at"]').text()).toBe('从未采集')
+    expect(w.find('[data-testid="traffic-at"]').text()).toBe('尚未采集')
     expect(w.find('[data-testid="traffic-stale"]').exists()).toBe(false)
     expect(w.find('[data-testid="expire-unknown"]').exists()).toBe(true)
     w.unmount()
@@ -340,7 +340,7 @@ describe('AirportsPage', () => {
       expect((w.vm as any).importCreateGroups).toBe(true)
       const hint = document.body.querySelector('[data-testid="import-rules-hint"]')
       expect(hint).toBeTruthy()
-      expect((hint as HTMLElement).textContent).toContain('版本化规则源')
+      expect((hint as HTMLElement).textContent).toContain('规则源')
       expect(document.body.querySelector('[data-testid="import-rules-profile"]')).toBeNull()
       expect(document.body.querySelector('[data-testid="import-rules-enable"]')).toBeNull()
     } finally {
@@ -540,7 +540,7 @@ describe('AirportsPage', () => {
   it('pageHelp oneLiner 渲染在 PageHeader subtitle', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('管理上游订阅地址')
+    expect(w.text()).toContain('管理机场订阅地址')
     w.unmount()
   })
 
@@ -870,7 +870,7 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('D-24 测活全部后显示「测活完成」汇总', async () => {
+  it('D-24 检测全部后显示「检测完成」汇总', async () => {
     checkMock.mockResolvedValueOnce({
       results: [
         makeCheckResult({ ok: true }),
@@ -883,7 +883,7 @@ describe('AirportsPage', () => {
     await flushPromises()
     const el = w.find('[data-testid="check-summary"]')
     expect(el.exists()).toBe(true)
-    expect(el.text()).toContain('测活完成')
+    expect(el.text()).toContain('检测完成')
     expect(el.text()).toContain('1 个可用')
     expect(el.text()).toContain('1 个失败')
     expect(el.text()).toContain('共 2 个')
@@ -898,7 +898,7 @@ describe('AirportsPage', () => {
     await flushPromises()
     await w.find('[data-testid="check-one"]').trigger('click')
     await flushPromises()
-    expect(w.find('[data-testid="check-summary"]').text()).toContain('测活完成：0 个可用 / 1 个失败（共 1 个）')
+    expect(w.find('[data-testid="check-summary"]').text()).toContain('检测完成：0 个可用 / 1 个失败（共 1 个）')
     w.unmount()
   })
 
@@ -968,8 +968,8 @@ describe('AirportsPage 覆盖率补齐（导入弹窗）', () => {
     ;(w.vm as any).askDelete((w.vm as any).rows[0])
     await flushPromises()
     const dialogs = w.findAllComponents({ name: 'VDialog' })
-    expect(dialogs.length).toBe(3)
-    await dialogs[1].vm.$emit('update:modelValue', true)
+    expect(dialogs.length).toBe(4)
+    await dialogs[2].vm.$emit('update:modelValue', true)
     await flushPromises()
     expect((w.vm as any).confirmOpen).toBe(true)
     // 无导入目标时 confirmImportRules 直接返回，不发请求

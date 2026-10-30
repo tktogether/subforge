@@ -3,9 +3,10 @@ import { computed, onMounted, ref } from 'vue'
 import { endpoints, type RuleSource, type RuleSourceUpdateResult, type RuleSourcesResponse } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
-import { pageHelp, glossaryFor } from '../content/help'
+import { pageHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import InfoTip from '../components/InfoTip.vue'
 import { formatBytes } from '../format'
 
 const help = pageHelp('rule-sources')
@@ -361,14 +362,15 @@ onMounted(() => {
     <template #actions>
       <v-btn data-testid="update-all" variant="tonal" :loading="updatingAll" :disabled="updating" @click="updateAll">全部更新</v-btn>
       <v-btn data-testid="source-add" color="primary" variant="tonal" @click="openAdd">新增规则源</v-btn>
+    </template>
+  </PageHeader>
 
-  <!-- Pick rules from source into custom layer -->
   <v-dialog v-model="rulesDialog" max-width="900">
     <v-card data-testid="source-rules-dialog">
-      <v-card-title>从规则源挑选 · {{ rulesSource?.label || rulesSource?.name }}</v-card-title>
+      <v-card-title>从规则源复制规则：{{ rulesSource?.label || rulesSource?.name }}</v-card-title>
       <v-card-text>
         <div class="text-caption text-medium-emphasis mb-2">
-          选中的规则会复制到自定义层；源后续更新/删除不影响已复制规则。重复规则默认跳过，可切换为覆盖。
+          选中的规则会复制到自定义层；规则源后续更新或删除不影响已复制的规则。重复规则默认跳过，可改为覆盖。
         </div>
         <div class="d-flex ga-2 align-center mb-2 flex-wrap">
           <v-text-field v-model="rulesQuery" label="搜索规则" density="compact" hide-details data-testid="source-rules-search" @keyup.enter="searchRules" />
@@ -424,12 +426,10 @@ onMounted(() => {
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" data-testid="source-rules-cancel" @click="rulesDialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="rulesImporting" :disabled="rulesSelected.length === 0" data-testid="source-rules-import" @click="importSelectedRules">加入自定义</v-btn>
+        <v-btn color="primary" :loading="rulesImporting" :disabled="rulesSelected.length === 0" data-testid="source-rules-import" @click="importSelectedRules">复制到自定义</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
-</template>
-  </PageHeader>
 
       <!-- Manifest card -->
     <v-card data-testid="manifest-card" class="mb-4">
@@ -477,13 +477,6 @@ onMounted(() => {
       </tbody>
     </v-table>
 
-    <!-- MRS format + retention explanation -->
-    <v-card class="mt-4">
-      <v-card-title>MRS 格式说明</v-card-title>
-      <v-card-text>{{ glossaryFor('MRS') }}</v-card-text>
-      <v-card-text class="text-caption text-medium-emphasis">版本保留策略：每个源保留最近 5 个版本，可回滚；更新失败不会删掉旧版本。</v-card-text>
-    </v-card>
-
     <!-- Update results -->
     <div v-if="showUpdateResults" data-testid="update-results" class="mt-4">
       <v-card>
@@ -518,7 +511,7 @@ onMounted(() => {
   </v-dialog>
 
   <!-- MRS dialog -->
-  <v-dialog v-model="mrsDialog" max-width="480">
+  <v-dialog v-model="mrsDialog" max-width="480" data-testid="mrs-dialog">
     <v-card>
       <v-card-title>生成 MRS - {{ mrsName }}</v-card-title>
       <v-card-text>
@@ -537,9 +530,12 @@ onMounted(() => {
     <v-card data-testid="add-dialog">
       <v-card-title>新增规则源</v-card-title>
       <v-card-text>
-        <v-text-field data-testid="add-name" v-model="addName" label="名称（留空自动取 URL 末段）" />
-        <v-text-field data-testid="add-url" v-model="addUrl" label="订阅地址" placeholder="https://… 支持 http/https" />
-        <v-text-field data-testid="add-format" v-model="addFormat" label="输入格式（可选：ini / clash / auto）" />
+        <div class="sf-form-label">名称 <InfoTip text="留空时使用订阅地址的最后一段。" label="名称" /></div>
+        <v-text-field data-testid="add-name" v-model="addName" hide-details class="mb-3" />
+        <div class="sf-form-label">订阅地址 <InfoTip text="规则文件的 http 或 https 地址。" example="https://example.com/rules.yaml" label="订阅地址" /></div>
+        <v-text-field data-testid="add-url" v-model="addUrl" hide-details class="mb-3" />
+        <div class="sf-form-label">输入格式 <InfoTip text="可选 ini、clash 或 auto；留空时自动识别。" label="输入格式" /></div>
+        <v-text-field data-testid="add-format" v-model="addFormat" hide-details />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
@@ -564,6 +560,15 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.sf-form-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
 .rule-picker-list {
   max-height: 50vh;
   overflow-y: auto;

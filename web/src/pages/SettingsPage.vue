@@ -7,6 +7,7 @@ import { notify } from '../composables/useNotify'
 import { pageHelp, fieldHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import InfoTip from '../components/InfoTip.vue'
 
 const help = pageHelp('settings')
 
@@ -120,9 +121,12 @@ onMounted(() => {
   <AsyncSection :loading="loading" :error="error" :empty="settings.length === 0" empty-text="" :empty-state="emptyState" @retry="load">
     <div v-for="item in settings" :key="item.key" data-testid="setting-row" class="mb-4">
       <v-card class="pa-4">
-        <div data-testid="setting-label">{{ item.label }}</div>
-        <code data-testid="setting-key">{{ item.key }}</code>
-        <div data-testid="setting-desc">{{ item.description }}</div>
+        <div class="sf-setting-label">
+          <span data-testid="setting-label">{{ item.label }}</span>
+          <InfoTip :text="fieldHelp(item.key)?.hint ?? ''" :label="item.label" />
+          <code data-testid="setting-key" class="text-caption">{{ item.key }}</code>
+        </div>
+        <div data-testid="setting-desc" class="text-body-2 text-medium-emphasis mb-2">{{ item.description }}</div>
         <v-switch
           v-if="item.kind === 'bool'"
           data-testid="setting-switch"
@@ -137,14 +141,13 @@ onMounted(() => {
         />
         <span v-if="item.is_default === true" data-testid="setting-default-badge">当前为默认值</span>
         <span v-if="item.placeholder" data-testid="setting-placeholder">默认：{{ item.placeholder }}</span>
-        <div data-testid="setting-hint">{{ fieldHelp(item.key)?.hint ?? '' }}</div>
       </v-card>
     </div>
     <div class="d-flex ga-2 mt-4">
       <v-btn data-testid="settings-save" :loading="saving" @click="save">保存</v-btn>
       <v-btn data-testid="settings-reset" variant="tonal" @click="resetDefaults">重置为默认</v-btn>
     </div>
-    <div class="text-caption text-medium-emphasis mt-2">清空 = 恢复默认</div>
+    <div class="text-caption text-medium-emphasis mt-2">清空输入框表示恢复默认值。</div>
   </AsyncSection>
   <v-card class="pa-4 mt-4" data-testid="template-card">
     <div class="d-flex align-center ga-2 mb-2">
@@ -169,8 +172,8 @@ onMounted(() => {
       </div>
     </template>
     <v-alert v-else type="info" variant="tonal" data-testid="template-unavailable">
-      未启用转换模板：启动时没有指定 -config。纯控制台模式不需要模板；
-      需要自定义模板时，用 <code>-config /data/template.ini</code> 启动后再回来编辑。
+      当前未启用转换模板（启动时未指定 -config）。如需自定义模板，请使用
+      <code>-config /data/template.ini</code> 指定模板文件后重新启动。
     </v-alert>
     <div v-if="templateError !== ''" data-testid="template-error" class="text-error mt-2">{{ templateError }}</div>
   </v-card>
@@ -187,6 +190,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.sf-setting-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
 .template-editor :deep(textarea) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;

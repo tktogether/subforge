@@ -4,6 +4,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import SelfNodesPage from './SelfNodesPage.vue'
+import { pageHelp } from '../content/help'
 import ResourcePage from '../components/ResourcePage.vue'
 import { endpoints } from '../api/endpoints'
 
@@ -39,7 +40,7 @@ describe('SelfNodesPage', () => {
     const rp = w.findComponent(ResourcePage)
     expect(rp.exists()).toBe(true)
     expect(rp.props('title')).toBe('自建节点')
-    expect(rp.props('subtitle')).toBe('手动添加的节点，与机场节点合并输出')
+    expect(rp.props('subtitle')).toBe(pageHelp('self-nodes').oneLiner)
     expect(rp.props('helpKey')).toBe('self-nodes')
     expect(rp.props('columns')).toEqual([
       { key: 'name', title: '名称' },
@@ -122,7 +123,7 @@ describe('SelfNodesPage', () => {
     const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     const txt = w.text()
-    expect(txt).toContain('不会静默入列表')
+    expect(txt).toContain('保存时会校验名称、链接与必要字段')
     // 旧文案字面量拆开拼，避免把旧短语写回仓库源码（Lead 会全仓 grep 旧短语）
     expect(txt).not.toContain('静默不' + '出现')
     expect(txt).not.toContain('不会有报错提示')
@@ -132,7 +133,7 @@ describe('SelfNodesPage', () => {
   it('help-panel 渲染 oneLiner', async () => {
     const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('手动添加的节点，与机场节点合并输出')
+    expect(w.text()).toContain('管理手动添加的节点，与机场节点一同输出')
     w.unmount()
   })
 

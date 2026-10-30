@@ -70,6 +70,24 @@ function paramHint(op: string, field: string): string {
   return step ? step.hint : field
 }
 
+const ARG_LABELS: Record<string, string> = {
+  include: '包含节点（正则）',
+  exclude: '排除节点（正则）',
+  pattern: '匹配正则',
+  repl: '替换为',
+  sep: '分隔符',
+  src: '代码',
+  ref: '脚本引用',
+  timeout: '超时（毫秒）',
+}
+
+const ON_ERROR_OPTIONS = [
+  { title: '跟随默认', value: '' },
+  { title: '跳过', value: 'skip' },
+  { title: '中止', value: 'abort' },
+  { title: '告警', value: 'warn' },
+]
+
 function stepScriptRef(step: { op: string; args: Record<string, string> }): string {
   if (step.op !== 'filter.script' && step.op !== 'op.script') return ''
   return step.args.ref ?? ''
@@ -108,7 +126,7 @@ function scriptRefKindMismatch(step: { op: string; args: Record<string, string> 
   if (kind === '') return ''
   const want = step.op === 'filter.script' ? 'filter' : 'operate'
   if (kind === want) return ''
-  return `类型可能不匹配：脚本 kind=${kind}，该步骤需要 ${want}`
+  return `脚本类型不匹配：当前为${kind === 'filter' ? '过滤' : '改写'}脚本，该步骤需要${want === 'filter' ? '过滤' : '改写'}脚本`
 }
 
 // D-16：kind 缺失时只留一条中性提示，不与「可能不匹配」同屏矛盾。
@@ -229,12 +247,6 @@ onMounted(() => {
     </template>
   </PageHeader>
 
-  <div data-testid="pipeline-intro" class="text-body-2 mb-2">{{ PIPELINE_HELP.intro }}</div>
-  <div data-testid="pipeline-order" class="mb-2">
-    <div v-for="(o, i) in PIPELINE_HELP.order" :key="i" data-testid="pipeline-order-item" class="text-body-2">{{ o }}</div>
-  </div>
-  <div data-testid="pipeline-script-step" class="text-body-2 mb-4">{{ PIPELINE_HELP.scriptStep }}</div>
-
   <AsyncSection :loading="loading" :error="error" :empty="pipelines.length === 0 ? (help.emptyState ?? false) : false" empty-text="暂无管线" @retry="load">
     <v-table data-testid="pipeline-table">
       <thead>
@@ -275,7 +287,7 @@ onMounted(() => {
               :items="PIPELINE_HELP.steps.map((s) => ({ title: s.label, value: s.kind }))"
               item-title="title"
               item-value="value"
-              label="op"
+              label="步骤类型"
               class="mb-2"
               data-testid="step-op"
             />
@@ -284,7 +296,7 @@ onMounted(() => {
                 v-if="f === 'by'"
                 v-model="step.args.by"
                 :items="['original', 'name', 'type', 'server', 'port']"
-                label="by"
+                label="排序字段"
                 class="mb-2"
                 data-testid="step-arg-by"
               />
@@ -292,7 +304,7 @@ onMounted(() => {
                 v-else-if="f === 'ref'"
                 :model-value="step.args.ref ?? ''"
                 :items="scriptNames"
-                :label="f + '（选择已有脚本，也可手输）'"
+                :label="ARG_LABELS[f] + '（选择已有脚本，也可手动输入）'"
                 :hint="paramHint(step.op, f)"
                 persistent-hint
                 class="mb-2"
@@ -302,24 +314,25 @@ onMounted(() => {
               <v-text-field
                 v-else
                 v-model="step.args[f]"
-                :label="f"
+                :label="ARG_LABELS[f] ?? f"
                 :hint="paramHint(step.op, f)"
+                persistent-hint
                 class="mb-2"
                 data-testid="step-arg"
               />
             </template>
             <v-select
               v-model="step.on_error"
-              :items="['', 'abort', 'warn', 'skip']"
+              :items="ON_ERROR_OPTIONS"
               item-title="title"
               item-value="value"
 
-              label="on_error"
+              label="失败处理"
               class="mb-2"
               data-testid="step-on-error"
             />
             <div class="text-caption text-medium-emphasis mb-2">
-              skip：跳过该步，保留已处理结果，产物继续生成；abort：中止整次转换并报错（默认）；warn：记录告警，继续执行后续步骤。不填就跟随段落默认。
+              跳过：跳过该步骤并继续；中止：终止本次转换；告警：记录告警并继续。默认中止。
             </div>
             <div v-if="step.op === 'filter.script' || step.op === 'op.script'">
               <div v-if="scriptRefStatus(step) === 'ok'" data-testid="script-ref-ok" class="text-success text-body-2">{{ scriptRefOkText(step) }}</div>
@@ -345,10 +358,10 @@ onMounted(() => {
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="confirmOpen" max-width="480">
+  <v-dialog v-model="confirmOpen" max-width="480" data-testid="pipeline-confirm-dialog">
     <v-card>
       <v-card-title>确认删除</v-card-title>
-      <v-card-text>删除后引用它的订阅产物会退回默认步骤，确定继续？</v-card-text>
+      <v-card-text>删除后，引用该管线的订阅将不再应用这些处理步骤。确定删除？</v-card-text>
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" data-testid="pipeline-confirm-cancel" @click="confirmOpen = false">取消</v-btn>

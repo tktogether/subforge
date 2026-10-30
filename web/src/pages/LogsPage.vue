@@ -95,11 +95,9 @@ onUnmounted(() => {
 <template>
   <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="logs" />
 
-  <v-alert type="info" variant="tonal" class="mb-4">
-    <div class="mb-1"><strong>日志级别：</strong>本页<strong>不区分级别</strong>，显示的是服务标准输出里被捕获的原始行（含 <code>[serve]</code> 前缀的业务日志与错误）。没有单独的 error/warn 过滤。行内出现 error/panic/fatal 时的红色只是<strong>纯前端关键字高亮</strong>，不是服务端分级。</div>
-    <div class="mb-1"><strong>时间范围：</strong>最多显示最近 200 行。缓冲区有上限，更早的行会被丢弃——<strong>看不到不代表没发生</strong>。</div>
-    <div><strong>跟到底：</strong>勾选「自动刷新」后每 3 秒拉取一次新增行（按 <code>id</code> 增量拉，不会重复）。排查线上问题时建议开着，但<strong>离开页面要记得关</strong>（或直接切页），否则会一直轮询。</div>
-  </v-alert>
+  <p class="text-body-2 text-medium-emphasis mb-3">
+    最多显示最近 200 行。包含 error、panic 或 fatal 的行会高亮，仅用于定位关键词，不代表日志级别。
+  </p>
 
   <div class="d-flex flex-wrap ga-2 mb-4 align-center">
     <v-btn variant="tonal" data-testid="refresh" @click="fetchLogs">刷新</v-btn>
@@ -110,8 +108,8 @@ onUnmounted(() => {
       hide-details
       @update:model-value="onAutoChange"
     />
-    <v-btn variant="tonal" data-testid="clear" @click="clear">清屏</v-btn>
-    <v-btn variant="tonal" data-testid="scroll-bottom" @click="scrollToBottom">滚动到底部</v-btn>
+    <v-btn variant="tonal" data-testid="clear" @click="clear">清空显示</v-btn>
+    <v-btn variant="tonal" data-testid="scroll-bottom" @click="scrollToBottom">定位到最新</v-btn>
   </div>
 
   <v-text-field
@@ -128,7 +126,7 @@ onUnmounted(() => {
   <AsyncSection
     :loading="loading && logs.length === 0"
     :error="''"
-    :empty="logs.length === 0 ? { title: '暂无日志', detail: '服务刚启动时日志缓冲区可能是空的；做一次转换或让客户端请求一次订阅地址，这里就会出现内容。' } : false"
+    :empty="logs.length === 0 ? { title: '暂无日志', detail: '执行转换或请求订阅后，日志会显示在这里。' } : false"
     empty-text="暂无日志"
   >
     <v-card ref="container" class="pa-2" data-testid="log-container" style="max-height: 480px; overflow: auto;">

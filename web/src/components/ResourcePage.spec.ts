@@ -456,7 +456,7 @@ describe('ResourcePage', () => {
     expect(vm.confirmOpen).toBe(false)
   })
 
-  it('字段 hint/example：显式传入时渲染 field-hint 与 field-example（含「示例：」前缀）', async () => {
+  it('字段 hint/example：显式传入时渲染 InfoTip 提示文本（含示例）', async () => {
     const localFields = [
       { key: 'name', label: '名称', type: 'text', hint: '自定义提示文案', example: '自定义示例值' },
     ]
@@ -471,13 +471,10 @@ describe('ResourcePage', () => {
     vm.openCreate()
     await w.vm.$nextTick()
     await flushPromises()
-    const hint = w.find('[data-testid="field-hint"]')
-    expect(hint.exists()).toBe(true)
-    expect(hint.text()).toContain('自定义提示文案')
-    const ex = w.find('[data-testid="field-example"]')
-    expect(ex.exists()).toBe(true)
-    expect(ex.text()).toContain('示例：')
-    expect(ex.text()).toContain('自定义示例值')
+    const tips = w.findAll('[data-testid="info-tip-text"]')
+    expect(tips.length).toBe(1)
+    expect(tips[0].text()).toContain('自定义提示文案')
+    expect(tips[0].text()).toContain('示例：自定义示例值')
   })
 
   it('字段 hint/example：未显式传入时回退到 fieldHelp（FIELD_HELP）', async () => {
@@ -496,12 +493,10 @@ describe('ResourcePage', () => {
     vm.openCreate()
     await w.vm.$nextTick()
     await flushPromises()
-    const hints = w.findAll('[data-testid="field-hint"]')
-    expect(hints.length).toBe(2)
-    expect(w.text()).toContain('机场显示名称，便于识别')
-    const exs = w.findAll('[data-testid="field-example"]')
-    expect(exs.length).toBe(2)
-    expect(w.text()).toContain('香港 IEPL')
+    const tips = w.findAll('[data-testid="info-tip-text"]')
+    expect(tips.length).toBe(2)
+    expect(w.text()).toContain('机场显示名称，用于识别来源。')
+    expect(w.text()).toContain('香港专线')
   })
 
   it('字段 hint/example：既无显式也无 FIELD_HELP 时不渲染', async () => {
@@ -519,8 +514,8 @@ describe('ResourcePage', () => {
     vm.openCreate()
     await w.vm.$nextTick()
     await flushPromises()
-    expect(w.find('[data-testid="field-hint"]').exists()).toBe(false)
-    expect(w.find('[data-testid="field-example"]').exists()).toBe(false)
+    expect(w.find('[data-testid="info-tip"]').exists()).toBe(false)
+    expect(w.find('[data-testid="info-tip-text"]').exists()).toBe(false)
   })
 
   it('empty 传 EmptyStateHelp 且列表为空时渲染 empty-state（优先于 emptyText）', async () => {

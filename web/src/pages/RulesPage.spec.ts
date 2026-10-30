@@ -117,7 +117,7 @@ describe('RulesPage', () => {
     const btns = w.findAll('button')
     const allBtn = btns.find((b) => b.text().includes('全部'))
     const enBtn = btns.find((b) => b.text().includes('已启用'))
-    const disBtn = btns.find((b) => b.text().includes('已禁用'))
+    const disBtn = btns.find((b) => b.text().includes('已停用'))
     await allBtn?.trigger('click')
     await flushPromises()
     await enBtn?.trigger('click')

@@ -70,6 +70,7 @@ describe('ConvertPage', () => {
       cached: 0,
     })
     writeTextMock = vi.fn()
+    ;(window as any).visualViewport = { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true }
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: writeTextMock },
       configurable: true,
@@ -224,7 +225,10 @@ describe('ConvertPage', () => {
 
 
   it('模板：target 含义表渲染 ≥14 行', async () => {
-    const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
+    const w = mount(ConvertPage, { global: { plugins: [vuetify], stubs: { VDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' } } } })
+    await flushPromises()
+    await w.find('[data-testid="target-meanings-toggle"]').trigger('click')
+    await (w.vm as any).$nextTick()
     await flushPromises()
     const rows = w.findAll('[data-testid="target-meanings"] tbody tr')
     expect(rows.length).toBeGreaterThanOrEqual(14)
@@ -233,9 +237,11 @@ describe('ConvertPage', () => {
 
   it('模板：target 含义表按 /api/targets 真实返回值生成，未知项归入「其他」', async () => {
     vi.mocked(endpoints.targets).mockResolvedValue(['clash.meta', 'surge', 'list', 'sing-box', 'brand-new-target'])
-    const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
+    const w = mount(ConvertPage, { global: { plugins: [vuetify], stubs: { VDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' } } } })
     await flushPromises()
+    await w.find('[data-testid="target-meanings-toggle"]').trigger('click')
     await (w.vm as any).$nextTick()
+    await flushPromises()
     const rows = w.findAll('[data-testid="target-meanings"] tbody tr')
     expect(rows.length).toBe(5)
     const texts = rows.map((r) => r.text())
@@ -247,17 +253,19 @@ describe('ConvertPage', () => {
     w.unmount()
   })
 
-  it('目标格式取值含义默认收起，点击开关展开', async () => {
-    const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
+  it('目标格式说明默认收起，点击按钮打开弹窗并可关闭', async () => {
+    const w = mount(ConvertPage, { global: { plugins: [vuetify] }, attachTo: document.body })
     await flushPromises()
     const toggle = w.find('[data-testid="target-meanings-toggle"]')
     expect(toggle.exists()).toBe(true)
-    // v-show 只写内联 display；jsdom 的 getComputedStyle 对该内联值有缓存，故直接断言内联样式
-    const body = w.find('[data-testid="target-meanings"]').element.parentElement as HTMLElement
-    expect(body.style.display).toBe('none')
+    expect(document.querySelector('[data-testid="target-meanings"]')).toBeNull()
     await toggle.trigger('click')
     await (w.vm as any).$nextTick()
-    expect(body.style.display).not.toBe('none')
+    await flushPromises()
+    expect(document.querySelector('[data-testid="target-meanings"]')).not.toBeNull()
+    ;(document.querySelector('[data-testid="target-meanings-close"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect((w.vm as any).targetHelpOpen).toBe(false)
     w.unmount()
   })
 

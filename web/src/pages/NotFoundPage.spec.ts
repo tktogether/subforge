@@ -34,7 +34,7 @@ describe('NotFoundPage', () => {
 
     expect(w.find('[data-testid="not-found"]').exists()).toBe(true)
     expect(w.text()).toContain('页面不存在')
-    expect(w.text()).toContain('请从左侧导航选择模块。')
+    expect(w.text()).toContain('请从左侧导航选择一个页面。')
     expect(w.text()).toContain('返回概览')
 
     const link = w.find('a')

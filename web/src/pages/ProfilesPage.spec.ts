@@ -6,6 +6,7 @@ import * as directives from 'vuetify/directives'
 import ProfilesPage from './ProfilesPage.vue'
 import { endpoints } from '../api/endpoints'
 import { notifyState } from '../composables/useNotify'
+import { pageHelp } from '../content/help'
 
 // 端点层用 mock 隔离，页面 spec 只关心页面自己的行为。
 vi.mock('../api/endpoints', () => ({
@@ -180,19 +181,16 @@ describe('ProfilesPage', () => {
     expect(orderCells[2].text()).toBe('未设置')
   })
 
-  it('帮助文案说明未分配、绑定隔离、删除前置条件、模板留空与层顺序', async () => {
+  it('帮助文案说明方案内容、来源限制、删除影响与层顺序', async () => {
     const w = mountPage()
     await flushPromises()
-    const help = w.find('[data-testid="profiles-help"]')
-    expect(help.exists()).toBe(true)
-    expect(help.text()).toContain('未分配')
-    expect(help.text()).toContain('profile_id = 0')
-    expect(help.text()).toContain('绑定方案后')
-    expect(help.text()).toContain('只有仍有令牌绑定时才会拒绝')
-    expect(help.text()).toContain('模板留空')
-    expect(help.text()).toContain('规则层 = 按顺序拼接，先出现者优先')
-    expect(help.text()).toContain('分组层 = 同名分组先出现者胜出')
-    expect(help.text()).toContain('模板层 = INI 模板里的规则/分组')
+    expect(w.find('[data-testid="help-toggle"]').exists()).toBe(true)
+    const h = pageHelp('profiles')
+    const text = [h.oneLiner, h.whenToUse, ...(h.steps ?? []).map((i) => i.title + i.detail), ...(h.concepts ?? []).map((i) => i.term + i.explain), ...(h.faq ?? []).map((i) => i.q + i.a)].join('\n')
+    expect(text).toContain('节点来源')
+    expect(text).toContain('规则层按顺序拼接')
+    expect(text).toContain('不会随方案删除')
+    expect(text).toContain('全部启用的来源')
   })
 
   it('空态：没有方案时显示还没有订阅方案且不渲染表格', async () => {
@@ -830,7 +828,12 @@ describe('ProfilesPage', () => {
     const conflicts = endpoints.checkRuleSourceConflicts as unknown as ReturnType<typeof vi.fn>
     listSources.mockResolvedValue({ sources: [{ name: 'a', latest: 'v1' }, { name: 'b', latest: 'v1' }] })
     conflicts.mockResolvedValue({ total: 1, samples: [{ type: 'DOMAIN', param: 'dup.test', first: 'a', second: 'b' }] })
-    const w = mountPage()
+    const w = mount(ProfilesPage, {
+      global: {
+        plugins: [vuetify],
+        stubs: { teleport: true, VDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' } },
+      },
+    })
     await flushPromises()
     await w.find('[data-testid="profile-new"]').trigger('click')
     await flushPromises()
@@ -841,7 +844,13 @@ describe('ProfilesPage', () => {
     const alert = w.find('[data-testid="profile-source-conflicts"]')
     expect(alert.exists()).toBe(true)
     expect(alert.text()).toContain('1 条跨源重复规则')
-    expect(alert.text()).toContain('dup.test')
+    await w.find('[data-testid="profile-source-conflicts-detail"]').trigger('click')
+    await flushPromises()
+    const dialog = w.find('[data-testid="profile-source-conflicts-dialog"]')
+    expect(dialog.text()).toContain('dup.test')
+    await w.find('[data-testid="profile-source-conflicts-close"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).conflictDialogOpen).toBe(false)
     await w.find('[data-testid="profile-rule-source-remove-b"]').trigger('click')
     await new Promise((r) => setTimeout(r, 350))
     await flushPromises()

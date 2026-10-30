@@ -59,10 +59,7 @@ describe('PipelinesPage', () => {
 
     expect(pipelinesMock).toHaveBeenCalledWith('')
     expect(scriptsMock).toHaveBeenCalled()
-    expect(w.find('[data-testid="pipeline-intro"]').exists()).toBe(true)
-    expect(w.find('[data-testid="pipeline-order"]').exists()).toBe(true)
-    expect(w.findAll('[data-testid="pipeline-order-item"]').length).toBe(3)
-    expect(w.find('[data-testid="pipeline-script-step"]').exists()).toBe(true)
+    expect(w.find('[data-testid="help-toggle"]').exists()).toBe(true)
     expect(w.findAll('[data-testid="pipeline-row"]').length).toBe(2)
     expect(w.text()).toContain('pipe-a')
     expect(w.text()).toContain('pipe-b')
@@ -96,7 +93,7 @@ describe('PipelinesPage', () => {
     const w = mountPage()
     await flushPromises()
     expect(w.find('[data-testid="empty-state"]').exists()).toBe(true)
-    expect(w.text()).toContain('还没有管线')
+    expect(w.text()).toContain('暂无管线')
     w.unmount()
   })
 
@@ -280,7 +277,7 @@ describe('PipelinesPage', () => {
     expect(document.querySelector('[data-testid="script-ref-disabled"]')).toBeNull()
     expect(document.querySelector('[data-testid="script-ref-missing"]')).toBeNull()
     const scope = ok?.parentElement?.textContent ?? ''
-    expect(scope).not.toContain('类型可能不匹配')
+    expect(scope).not.toContain('脚本类型不匹配')
     expect(scope).not.toContain('undefined')
     expect((w.vm as any).scriptRefKind((w.vm as any).formSteps[0])).toBe('')
     w.unmount()
@@ -333,7 +330,7 @@ describe('PipelinesPage', () => {
     await delBtn.trigger('click')
     await flushPromises()
 
-    expect(document.body.textContent).toContain('删除后引用它的订阅产物会退回默认步骤')
+    expect(document.body.textContent).toContain('引用该管线的订阅将不再应用这些处理步骤')
 
     await (w.vm as any).doDelete()
     await flushPromises()
@@ -350,6 +347,10 @@ describe('PipelinesPage', () => {
     await delBtn.trigger('click')
     await flushPromises()
 
+    const dlg = w.findAllComponents({ name: 'VDialog' }).find((c) => c.props('modelValue') === true)
+    if (dlg !== undefined) {
+      await dlg.setValue(false)
+    }
     const cancelBtn = document.querySelector('[data-testid="pipeline-confirm-cancel"]') as HTMLElement | null
     cancelBtn?.click()
     await flushPromises()
@@ -669,11 +670,11 @@ describe('PipelinesPage', () => {
     await flushPromises()
     ;(w.vm as any).formSteps[0].args.ref = 'hk-filter'
     await flushPromises()
-    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toContain('类型可能不匹配')
+    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toContain('脚本类型不匹配')
     const hint = document.querySelector('[data-testid="script-ref-kind-mismatch"]')
     expect(hint).not.toBeNull()
-    expect(hint?.textContent).toContain('脚本 kind=filter')
-    expect(hint?.textContent).toContain('该步骤需要 operate')
+    expect(hint?.textContent).toContain('当前为过滤脚本')
+    expect(hint?.textContent).toContain('该步骤需要改写脚本')
 
     // 换成 kind 匹配的 operate 脚本 disabled-script → 不提示
     ;(w.vm as any).formSteps[0].args.ref = 'disabled-script'
@@ -683,7 +684,7 @@ describe('PipelinesPage', () => {
     // filter.script（需要 filter）引用 operate 脚本 → 提示
     ;(w.vm as any).formSteps[0].op = 'filter.script'
     await flushPromises()
-    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toContain('该步骤需要 filter')
+    expect((w.vm as any).scriptRefKindMismatch((w.vm as any).formSteps[0])).toContain('该步骤需要过滤脚本')
 
     // 引用不存在的脚本 → 交给 script-ref-missing，不做 kind 提示
     ;(w.vm as any).formSteps[0].args.ref = 'nonexistent'
@@ -739,7 +740,7 @@ describe('PipelinesPage', () => {
     // :69 未知 op 不在 PIPELINE_HELP.steps 中 → 回落到字段名
     expect((w.vm as any).paramHint('op.unknown', 'myField')).toBe('myField')
     // 已知 op → 返回 help 里的 hint
-    expect((w.vm as any).paramHint('op.rename', 'pattern')).toContain('pattern=')
+    expect((w.vm as any).paramHint('op.rename', 'pattern')).toContain('pattern')
 
     // :90 非脚本 op 提前 return ''，不进入 kind 比对
     expect((w.vm as any).scriptRefKindMismatch({ op: 'op.rename', args: { ref: 'hk-filter' } })).toBe('')
@@ -752,7 +753,7 @@ describe('PipelinesPage', () => {
     expect(document.querySelector('[data-testid="script-ref-kind-mismatch"]')).toBeNull()
     // 文本框 hint 走 paramHint 的已知 op 分支
     const tf = (w as any).findComponent('[data-testid="step-arg"]')
-    if (tf.exists()) expect(String(tf.props('hint'))).toContain('pattern=')
+    if (tf.exists()) expect(String(tf.props('hint'))).toContain('pattern')
     w.unmount()
   })
 

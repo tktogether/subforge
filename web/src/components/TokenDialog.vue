@@ -84,7 +84,7 @@ function submit(): void {
   margin: 0 0 12px;
   font-size: 13px;
   line-height: 1.7;
-  color: var(--sf-text-muted, #5a6472);
+  color: var(--sf-text-muted);
 }
 .token-hint code {
   padding: 1px 4px;
