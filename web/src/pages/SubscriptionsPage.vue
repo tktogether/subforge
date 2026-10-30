@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { endpoints, subscribeUrl, type Profile, type SubToken, type TrafficStrategy, type TrafficRefreshResponse } from '../api/endpoints'
+import { endpoints, subscribeUrl, type Profile, type SubToken, type TrafficStrategy, type TrafficUsage, type TrafficRefreshResponse } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { pageHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import InfoTip from '../components/InfoTip.vue'
+import { formatBytes, formatExpire } from '../format'
 
 const help = pageHelp('subscriptions')
 
@@ -161,6 +162,7 @@ const expire = ref<string>('min')
 
 const savingStrategy = ref(false)
 const previewHeader = ref('')
+const previewUsage = ref<TrafficUsage | null>(null)
 const previewOk = ref<boolean | null>(null)
 const previewing = ref(false)
 
@@ -232,10 +234,12 @@ async function saveStrategy(): Promise<void> {
 async function previewStrategy(): Promise<void> {
   previewing.value = true
   previewHeader.value = ''
+  previewUsage.value = null
   previewOk.value = null
   try {
     const r = await endpoints.previewTraffic(strategyObj.value)
     previewHeader.value = r.header
+    previewUsage.value = r.usage ?? null
     previewOk.value = r.ok
   } catch (err) {
     notify(errorMessage(err), 'error')
@@ -399,7 +403,24 @@ onMounted(() => {
         <v-btn data-testid="save-strategy-btn" :loading="savingStrategy" @click="saveStrategy">保存</v-btn>
         <v-btn data-testid="preview-btn" variant="tonal" :loading="previewing" @click="previewStrategy">试算</v-btn>
       </div>
-      <div v-if="previewHeader !== ''" data-testid="preview-header" class="mt-2"><code>{{ previewHeader }}</code></div>
+      <div v-if="previewUsage !== null" data-testid="preview-summary" class="preview-summary mt-3">
+        <div class="preview-item">
+          <span class="preview-label">上传</span>
+          <span class="preview-value">{{ formatBytes(previewUsage.upload ?? 0) }}</span>
+        </div>
+        <div class="preview-item">
+          <span class="preview-label">下载</span>
+          <span class="preview-value">{{ formatBytes(previewUsage.download ?? 0) }}</span>
+        </div>
+        <div class="preview-item">
+          <span class="preview-label">总量</span>
+          <span class="preview-value">{{ formatBytes(previewUsage.total ?? 0) }}</span>
+        </div>
+        <div class="preview-item">
+          <span class="preview-label">到期</span>
+          <span class="preview-value">{{ formatExpire(previewUsage.expire ?? 0) }}</span>
+        </div>
+      </div>
       <div v-if="previewOk === false" data-testid="preview-okfalse" class="text-medium-emphasis mt-1">
         当前策略不会写入响应头（可能是「不透传」或还没有机场余额数据）。
       </div>
@@ -437,6 +458,35 @@ onMounted(() => {
   </v-card>
 </template>
 <style scoped>
+.preview-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (min-width: 960px) {
+  .preview-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  background: var(--sf-surface-raised);
+}
+.preview-label {
+  color: var(--sf-text-muted);
+  font-size: 12px;
+}
+.preview-value {
+  color: var(--sf-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
 .token-table {
   width: 100%;
   table-layout: fixed;

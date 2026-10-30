@@ -19,8 +19,22 @@ const scriptsIndex = computed(() => {
   return m
 })
 
-// W7D：ref 参数的下拉数据源（可选已有脚本，也允许手输尚未创建的脚本名）。
-const scriptNames = computed(() => scripts.value.map((s) => s.name))
+// 脚本引用只能从已保存脚本里选；标签带类型便于区分过滤/改写脚本。
+const scriptOptions = computed(() =>
+  scripts.value.map((s) => ({
+    title: s.name + ' · ' + (s.kind === 'filter' ? '过滤' : s.kind === 'operate' ? '改写' : '未标注类型') + (s.enabled ? '' : '（已停用）'),
+    value: s.name,
+  }))
+)
+
+function scriptRefItems(step: { args: Record<string, string> }): { title: string; value: string }[] {
+  const items = [...scriptOptions.value]
+  const current = (step.args.ref ?? '').trim()
+  if (current !== '' && !items.some((i) => i.value === current)) {
+    items.unshift({ title: current + '（未找到）', value: current })
+  }
+  return items
+}
 
 const dialog = ref(false)
 const editing = ref<Pipeline | null>(null)
@@ -66,6 +80,11 @@ const paramFields = (op: string): string[] => {
 }
 
 function paramHint(op: string, field: string): string {
+  if (op === 'filter.script' || op === 'op.script') {
+    if (field === 'ref') return '从已保存的脚本中选择；脚本需处于启用状态。'
+    if (field === 'src') return '直接填写内联脚本代码；与脚本引用二选一。'
+    if (field === 'timeout') return '单次执行超时（毫秒），留空使用默认上限。'
+  }
   const step = PIPELINE_HELP.steps.find((x) => x.kind === op)
   return step ? step.hint : field
 }
@@ -345,15 +364,18 @@ onMounted(() => {
                     class="mb-3"
                     data-testid="step-arg-by"
                   />
-                  <v-combobox
+                  <v-select
                     v-else-if="f === 'ref'"
                     :model-value="step.args.ref ?? ''"
-                    :items="scriptNames"
+                    :items="scriptRefItems(step)"
+                    item-title="title"
+                    item-value="value"
                     :label="ARG_LABELS[f]"
                     :hint="paramHint(step.op, f)"
                     variant="outlined"
                     density="comfortable"
                     persistent-hint
+                    clearable
                     class="mb-3"
                     data-testid="step-arg-ref"
                     @update:model-value="(v: unknown) => { step.args.ref = stepArgRef(v) }"

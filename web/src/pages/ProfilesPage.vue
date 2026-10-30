@@ -75,6 +75,24 @@ const ruleSourceOptions = ref<{ title: string; value: string; origin?: string; r
 const airportOptions = ref<{ title: string; value: number }[]>([])
 const selfNodeOptions = ref<{ title: string; value: number }[]>([])
 const targetOptions = ref<string[]>([])
+const pipelineOptions = ref<{ title: string; value: string }[]>([])
+const pipelineItems = computed(() => {
+  const items = [...pipelineOptions.value]
+  const current = draft.value.pipeline.trim()
+  if (current !== '' && !items.some((i) => i.value === current)) {
+    items.unshift({ title: current, value: current })
+  }
+  return items
+})
+
+async function loadPipelineOptions(): Promise<void> {
+  try {
+    const list = await endpoints.pipelines('')
+    pipelineOptions.value = list.filter((p) => p.enabled).map((p) => ({ title: p.name, value: p.name }))
+  } catch {
+    pipelineOptions.value = []
+  }
+}
 
 async function loadTargetOptions(): Promise<void> {
   try {
@@ -388,6 +406,7 @@ function openCreate(): void {
   void loadRuleSourceOptions()
   void loadSourceOptions()
   void loadTargetOptions()
+  void loadPipelineOptions()
   dialog.value = true
   scheduleConflictCheck()
 }
@@ -414,6 +433,7 @@ function openEdit(row: Profile): void {
   void loadRuleSourceOptions()
   void loadSourceOptions()
   void loadTargetOptions()
+  void loadPipelineOptions()
   dialog.value = true
   scheduleConflictCheck()
 }
@@ -480,6 +500,7 @@ async function confirmDelete(): Promise<void> {
 
 load()
 loadRuleSourceOptions()
+loadPipelineOptions()
 </script>
 
 <template>
@@ -607,13 +628,15 @@ loadRuleSourceOptions()
               class="mb-3"
               data-testid="profile-config"
             />
-            <v-text-field
+            <v-select
               v-model="draft.pipeline"
+              :items="pipelineItems"
               label="最终处理管线"
               hint="各来源先按自己的管线处理并合并，这条管线最后执行；留空不处理。"
               variant="outlined"
               density="comfortable"
               persistent-hint
+              clearable
               class="mb-3"
               data-testid="profile-pipeline"
             />
@@ -787,12 +810,12 @@ loadRuleSourceOptions()
           </div>
 
           <div class="profile-form-row profile-form-row--layers">
-            <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3">
+            <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3" :data-testid="editor.testid">
             <div class="sf-form-label">
               <span>{{ editor.caption }}</span>
               <InfoTip :text="editor.hint" :label="editor.caption" />
             </div>
-            <div class="sf-layer-editor" :data-testid="editor.testid">
+            <div class="sf-layer-editor">
             <div
               v-for="(row, index) in editor.rows"
               :key="row.key"
@@ -825,11 +848,9 @@ loadRuleSourceOptions()
                 :data-testid="editor.prefix + '-layer-down-' + row.key"
                 @click="editor.move(index, 1)"
               />
-              <span v-if="editor.note !== '' && row.key === 'template'" class="sf-layer-note">
-                {{ editor.note }}
-              </span>
             </div>
             </div>
+            <div v-if="editor.note !== ''" class="sf-layer-note">{{ editor.note }}</div>
           </div>
           </div>
         </v-card-text>
@@ -935,6 +956,7 @@ loadRuleSourceOptions()
   padding-top: 18px;
 }
 .profile-form-row--layers {
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 @media (max-width: 700px) {
@@ -987,8 +1009,9 @@ loadRuleSourceOptions()
 .sf-layer-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 32px;
+  gap: 10px;
+  min-height: 36px;
+  padding: 2px 0;
 }
 .sf-layer-name {
   min-width: 72px;
@@ -999,6 +1022,7 @@ loadRuleSourceOptions()
   min-width: 72px;
 }
 .sf-layer-note {
+  margin-top: 6px;
   font-size: 12px;
   color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
 }

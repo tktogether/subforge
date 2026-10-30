@@ -20,6 +20,7 @@ vi.mock('../api/endpoints', () => ({
     listAirports: vi.fn(),
     listSelfNodes: vi.fn(),
     targets: vi.fn(),
+    pipelines: vi.fn(),
   },
 }))
 
@@ -134,6 +135,7 @@ describe('ProfilesPage', () => {
       { id: 22, name: '节点A', enabled: true },
     ])
     ;(endpoints.targets as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(['clash.meta', 'sing-box'])
+    ;(endpoints.pipelines as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1, name: 'pipe', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false }])
   })
 
   it('渲染方案表格：模板/管线空值显示默认、模板超长截断、启用停用与层列顺序', async () => {
@@ -209,7 +211,7 @@ describe('ProfilesPage', () => {
     await w.find('[data-testid="profile-name"]').find('input').setValue('新方案')
     await w.find('[data-testid="profile-description"]').find('input').setValue('新说明')
     await w.find('[data-testid="profile-config"]').find('input').setValue('cfg')
-    await w.find('[data-testid="profile-pipeline"]').find('input').setValue('pipe')
+    await w.findComponent('[data-testid="profile-pipeline"]').setValue('pipe')
     await w.find('[data-testid="profile-enabled"] input').setValue(false)
 
     // 规则层默认全开（自定义→模板）；机场规则是规则源，不在规则层里。
@@ -311,7 +313,7 @@ describe('ProfilesPage', () => {
     // 规则层没有可移动空间，不渲染上下移按钮；模板提示仍在。
     expect(ruleRows[1].find('[data-testid="rule-layer-up-template"]').exists()).toBe(false)
     expect(ruleRows[1].find('[data-testid="rule-layer-down-template"]').exists()).toBe(false)
-    expect(ruleRows[1].text()).toContain('模板规则始终最后（MATCH/FINAL）')
+    expect(ruleBox.text()).toContain('模板规则始终最后（MATCH/FINAL）')
 
     await w.find('[data-testid="profile-save"]').trigger('click')
     await flushPromises()
@@ -947,4 +949,51 @@ describe('ProfilesPage', () => {
     w.unmount()
   })
 
+})
+
+describe('ProfilesPage 最终处理管线', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({})
+    ;(endpoints.listAirports as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(endpoints.listSelfNodes as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(endpoints.targets as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(endpoints.pipelines as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 1, name: 'pipe', description: '', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false },
+    ])
+  })
+
+  it('最终处理管线使用已启用管线的下拉选项', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    const select = w.findComponent('[data-testid="profile-pipeline"]') as any
+    const items = select.props('items') as { value: string }[]
+    expect(items.some((i) => i.value === 'pipe')).toBe(true)
+    w.unmount()
+  })
+
+  it('当前最终处理管线不在启用选项中时仍显示为选项', async () => {
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([makeProfile({ pipeline: 'legacy' })])
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-edit"]').trigger('click')
+    await flushPromises()
+    const select = w.findComponent('[data-testid="profile-pipeline"]') as any
+    const items = select.props('items') as { value: string }[]
+    expect(items.some((i) => i.value === 'legacy')).toBe(true)
+    w.unmount()
+  })
+
+  it('管线清单加载失败不阻断方案编辑', async () => {
+    ;(endpoints.pipelines as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('pipelines boom'))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="profile-pipeline"]').exists()).toBe(true)
+    w.unmount()
+  })
 })

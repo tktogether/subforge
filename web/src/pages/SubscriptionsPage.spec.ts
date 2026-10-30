@@ -53,6 +53,7 @@ interface SubscriptionsPageVm {
   expire: string
   savingStrategy: boolean
   previewHeader: string
+  previewUsage: any
   previewOk: boolean | null
   previewing: boolean
   refreshError: string
@@ -629,8 +630,8 @@ describe('SubscriptionsPage', () => {
     w.unmount()
   })
 
-  it('流量策略：试算展示 header 与 ok=true', async () => {
-    vi.mocked(endpoints.previewTraffic).mockResolvedValue({ usage: {} as any, header: 'X-Sub: yes', ok: true } as any)
+  it('流量策略：试算展示可读的上传/下载/总量/到期', async () => {
+    vi.mocked(endpoints.previewTraffic).mockResolvedValue({ usage: { upload: 1024, download: 2048, total: 3072, expire: 1700000000 }, header: 'X-Sub: yes', ok: true } as any)
     const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
     const vm = w.vm as unknown as SubscriptionsPageVm
     await flushPromises()
@@ -638,7 +639,13 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     expect(vm.previewHeader).toBe('X-Sub: yes')
     expect(vm.previewOk).toBe(true)
-    expect(w.find('[data-testid="preview-header"]').exists()).toBe(true)
+    const summary = w.find('[data-testid="preview-summary"]')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('上传')
+    expect(summary.text()).toContain('1.0 KB')
+    expect(summary.text()).toContain('2.0 KB')
+    expect(summary.text()).toContain('3.0 KB')
+    expect(summary.text()).toContain('2023')
     w.unmount()
   })
 

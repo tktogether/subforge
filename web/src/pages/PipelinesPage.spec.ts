@@ -632,7 +632,7 @@ describe('PipelinesPage', () => {
     expect(refComp.exists()).toBe(true)
 
     // 下拉数据源来自已加载脚本列表
-    const names = ((refComp.props('items') ?? []) as string[]).map((x) => String(x))
+    const names = ((refComp.props('items') ?? []) as { value?: string }[]).map((x) => String(x.value))
     expect(names).toContain('hk-filter')
     expect(names).toContain('disabled-script')
 
