@@ -117,7 +117,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     whenToUse: '新增或维护节点来源，查看流量与可用性。',
     steps: [
       { title: '新增机场', detail: '点击新增，填写名称与订阅地址。' },
-      { title: '刷新流量', detail: '读取上游返回的流量与到期信息。' },
+      { title: '刷新机场', detail: '读取上游的节点、流量与到期信息，并同时更新该机场的规则源。' },
       { title: '可用性检测', detail: '检测订阅地址是否可以正常访问。' },
     ],
     faq: [
@@ -211,14 +211,14 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     steps: [
       { title: '新增分组', detail: '填写名称与类型；手工分组可用匹配正则选择成员。' },
       { title: '设置成员扩展', detail: '机场的「全部节点」组可扩展到方案中的所有机场；自建节点单独控制。' },
-      { title: '排序', detail: '调整分组在客户端中的显示顺序。' },
+      { title: '查看成员', detail: '点击成员列的摘要打开完整列表，成员较多时可搜索。' },
     ],
     concepts: [
       { term: '分组类型', explain: 'select 手动选择、url-test 自动选择延迟最低、fallback 故障切换、load-balance 负载均衡。' },
       { term: '成员扩展', explain: '机场「全部节点」组导入时会自动开启「包含全部来源节点」，订阅生成时并入方案中所有机场的节点；「包含自建节点」单独控制自建节点。子集组保持原成员。' },
     ],
     faq: [
-      { q: '分组顺序影响什么？', a: '影响订阅输出中分组的排列顺序。' },
+      { q: '分组顺序如何决定？', a: '按创建或导入的先后输出，页面不提供手动排序。' },
       { q: '机场分组的成员可以修改吗？', a: '成员由机场导入维护；可以在分组页调整类型、检测地址与成员扩展开关。' },
     ],
     emptyState: { title: '暂无分组', detail: '点击新增，添加第一个分组。', action: { label: '新增分组', to: '/groups' } },
@@ -391,10 +391,6 @@ export const FIELD_HELP: Record<string, { hint: string; example?: string }> = {
   'airport.name': { hint: '机场显示名称，用于识别来源。', example: '香港专线' },
   'airport.subscription_url': { hint: '机场提供的订阅地址，支持 http 与 https。', example: 'https://example.com/sub?token=xxx' },
   'airport.remarks': { hint: '可选备注，不影响转换结果。', example: '主用机场' },
-  'airport.with_rules': {
-    hint: '开启后，「刷新全部流量」会同时更新各机场的规则源；关闭时只刷新节点与流量。单个机场可在表格中使用「更新规则源」。',
-    example: '',
-  },
   'airport.enabled': { hint: '是否参与转换与订阅输出。' },
   'airport.traffic_err': { hint: '最近一次采集失败的原因；失败时余额保留上一次成功值。' },
   'airport.traffic_at': { hint: '最近一次成功获取余额的时间。' },

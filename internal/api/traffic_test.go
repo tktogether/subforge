@@ -324,6 +324,46 @@ func TestAPIAirportRefreshOneOK(t *testing.T) {
 	}
 }
 
+// TestAPIAirportRefreshOneWithRules 单机场刷新带 with_rules=1 时同时更新规则源。
+func TestAPIAirportRefreshOneWithRules(t *testing.T) {
+	ts, mgr := newWithRulesServer(t)
+	airports, err := mgr.ListAirports(t.Context())
+	if err != nil || len(airports) != 1 {
+		t.Fatalf("ListAirports: %v len=%d", err, len(airports))
+	}
+	path := "/api/airports/" + strconv.FormatInt(airports[0].ID, 10) + "/refresh?with_rules=1"
+	status, _, body := uiPostJSON(t, ts, path, "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var got struct {
+		Result json.RawMessage `json:"result"`
+		Import *refreshImportItem `json:"import"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if len(got.Result) == 0 {
+		t.Fatalf("缺少 result: %s", body)
+	}
+	if got.Import == nil || got.Import.Err != "" || got.Import.RuleSourceRules != 2 {
+		t.Fatalf("import 不符: %+v body=%s", got.Import, body)
+	}
+}
+
+// 不带 with_rules 时不出现 import 键，保持旧响应形状。
+func TestAPIAirportRefreshOneWithoutRulesHasNoImportKey(t *testing.T) {
+	ts, _, id, _ := setupAirportWithTraffic(t)
+	path := "/api/airports/" + strconv.FormatInt(id, 10) + "/refresh"
+	status, _, body := uiPostJSON(t, ts, path, "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	if strings.Contains(body, "\"import\"") {
+		t.Fatalf("不带 with_rules 时不应出现 import 键: %s", body)
+	}
+}
+
 func TestAPIAirportRefreshOneNotFound(t *testing.T) {
 	ts, _, _, _ := setupAirportWithTraffic(t)
 	status, _, body := uiPostJSON(t, ts, "/api/airports/999999/refresh", "")

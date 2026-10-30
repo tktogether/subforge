@@ -567,8 +567,8 @@ export const endpoints = {
 
   refreshAllAirports: (withRules = false): Promise<TrafficRefreshResponse> =>
     api.post<TrafficRefreshResponse>('/api/airports/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
-  refreshAirport: (id: number | string): Promise<{ result: TrafficRefreshResult }> =>
-    api.post<{ result: TrafficRefreshResult }>('/api/airports/' + id + '/refresh', {}),
+  refreshAirport: (id: number | string, withRules = false): Promise<{ result: TrafficRefreshResult; import?: ImportRulesOutcome }> =>
+    api.post<{ result: TrafficRefreshResult; import?: ImportRulesOutcome }>('/api/airports/' + id + '/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
   importAirportRules: (id: number | string, body?: { create_groups?: boolean }): Promise<ImportRulesResult> =>
     api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', body ?? {}),
   checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[]; at?: string }> =>

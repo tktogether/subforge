@@ -14,8 +14,6 @@ const (
 
 const SubscheckEnabledKey = "subscheck.enabled"
 
-const AirportWithRulesKey = "airport.with_rules"
-
 type SettingItem struct {
 	Key         string `json:"key"`
 	Value       string `json:"value"`
@@ -38,7 +36,6 @@ var settingDefs = []settingDef{
 	{SubscheckEnabledKey, SettingKindBool, "启用订阅可用性检测", "关闭后，定时可用性检测任务不再执行。"},
 	{RuleManifestPathKey, SettingKindPath, "规则源清单路径", "规则源清单文件（manifest.yaml）的绝对路径。"},
 	{RulesOutputDirKey, SettingKindPath, "规则源输出目录", "规则源版本文件的保存目录；留空时使用清单中的输出路径。"},
-	{AirportWithRulesKey, SettingKindBool, "刷新时同时更新规则源", "开启后，「刷新全部流量」会同时更新规则源；该设置会保存。"},
 }
 
 func findSettingDef(key string) (settingDef, bool) {

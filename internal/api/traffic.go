@@ -159,6 +159,7 @@ func (s *Server) handleAPITrafficRefresh(w http.ResponseWriter, r *http.Request)
 }
 
 // handleAPIAirportRefreshOne 刷新单个机场流量：POST /api/airports/{id}/refresh
+// 可选 ?with_rules=1 时同时更新该机场的规则源，并在响应里带 "import"。
 // → 200 {"result":{...}}；机场不存在 → 404；未启用引擎 → 503；非 POST → 405「仅支持 POST」
 func (s *Server) handleAPIAirportRefreshOne(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
@@ -182,7 +183,13 @@ func (s *Server) handleAPIAirportRefreshOne(w http.ResponseWriter, r *http.Reque
 		s.writeAPIError(w, r, http.StatusNotFound, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"result": res})
+	resp := map[string]any{"result": res}
+	if isTruthyQuery(r.URL.Query().Get("with_rules")) {
+		if imports := s.importRulesAfterRefresh(r.Context(), m, []subforge.TrafficRefreshResult{res}); len(imports) > 0 {
+			resp["import"] = imports[0]
+		}
+	}
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleAPITrafficPreview 试算聚合：GET /api/traffic/preview?strategy=<json>
