@@ -216,6 +216,13 @@ describe('endpoints', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/rules?limit=25&offset=0', expect.objectContaining({ method: 'GET' }))
   })
 
+  it('checkRuleSourceConflicts 传 names 并解包', async () => {
+    fetchMock.mockResolvedValue(respond({ total: 1, samples: [{ type: 'DOMAIN', param: 'dup', first: 'a', second: 'b' }] }))
+    const r = await endpoints.checkRuleSourceConflicts(['a', 'b'])
+    expect(r.total).toBe(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/conflicts?names=a%2Cb', expect.objectContaining({ method: 'GET' }))
+  })
+
   it('listRuleSourceCounts GET /api/rules/sources 解包', async () => {
     fetchMock.mockResolvedValue(respond({ sources: [{ source: '', count: 2 }] }))
     const r = await endpoints.listRuleSourceCounts()

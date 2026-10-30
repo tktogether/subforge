@@ -15,6 +15,7 @@ vi.mock('../api/endpoints', () => ({
     updateProfile: vi.fn(),
     deleteProfile: vi.fn(),
     listRuleSources: vi.fn(),
+    checkRuleSourceConflicts: vi.fn(),
     listAirports: vi.fn(),
     listSelfNodes: vi.fn(),
     targets: vi.fn(),
@@ -120,6 +121,7 @@ describe('ProfilesPage', () => {
     notifyState.text = ''
     notifyState.kind = 'ok'
     ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(endpoints.checkRuleSourceConflicts as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 0, samples: [] })
     // 规则源清单默认返回「无 sources 字段」，覆盖前端 `res.sources ?? []` 的兜底分支。
     const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
     listSources.mockReset()
@@ -821,6 +823,47 @@ describe('ProfilesPage', () => {
     await w.find('[data-testid="profile-rule-source-remove-missing"]').trigger('click')
     await flushPromises()
     expect(vm.draft.rule_sources).toEqual([])
+  })
+
+  it('跨源冲突提示：按当前源顺序检查并展示示例；移除后清除', async () => {
+    const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
+    const conflicts = endpoints.checkRuleSourceConflicts as unknown as ReturnType<typeof vi.fn>
+    listSources.mockResolvedValue({ sources: [{ name: 'a', latest: 'v1' }, { name: 'b', latest: 'v1' }] })
+    conflicts.mockResolvedValue({ total: 1, samples: [{ type: 'DOMAIN', param: 'dup.test', first: 'a', second: 'b' }] })
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    await addRuleSources(w, ['a', 'b'])
+    await new Promise((r) => setTimeout(r, 350))
+    await flushPromises()
+    expect(conflicts).toHaveBeenLastCalledWith(['a', 'b'])
+    const alert = w.find('[data-testid="profile-source-conflicts"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('1 条跨源重复规则')
+    expect(alert.text()).toContain('dup.test')
+    await w.find('[data-testid="profile-rule-source-remove-b"]').trigger('click')
+    await new Promise((r) => setTimeout(r, 350))
+    await flushPromises()
+    expect(w.find('[data-testid="profile-source-conflicts"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('跨源冲突检查失败时静默降级，不影响方案编辑', async () => {
+    const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
+    const conflicts = endpoints.checkRuleSourceConflicts as unknown as ReturnType<typeof vi.fn>
+    listSources.mockResolvedValue({ sources: [{ name: 'a', latest: 'v1' }, { name: 'b', latest: 'v1' }] })
+    conflicts.mockRejectedValue(new Error('conflict down'))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    await addRuleSources(w, ['a', 'b'])
+    await new Promise((r) => setTimeout(r, 350))
+    await flushPromises()
+    expect(w.find('[data-testid="profile-source-conflicts"]').exists()).toBe(false)
+    expect(w.find('[data-testid="profile-name"]').exists()).toBe(true)
+    w.unmount()
   })
 
   it('列表新增规则源列：未绑定显示「默认」，多值用「、」连接', async () => {

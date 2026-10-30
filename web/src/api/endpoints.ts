@@ -66,6 +66,18 @@ export interface RuleSourceCount {
   count: number
 }
 
+export interface RuleSourceConflictSample {
+  type: string
+  param: string
+  first: string
+  second: string
+}
+
+export interface RuleSourceConflicts {
+  total: number
+  samples: RuleSourceConflictSample[]
+}
+
 export interface SubToken {
   token: string
   name: string
@@ -489,6 +501,8 @@ export const endpoints = {
     }),
   listRuleSourceCounts: (): Promise<RuleSourceCount[]> =>
     api.get<{ sources: RuleSourceCount[] }>('/api/rules/sources').then((r) => r.sources),
+  checkRuleSourceConflicts: (names: string[]): Promise<RuleSourceConflicts> =>
+    api.get<RuleSourceConflicts>('/api/rule-sources/conflicts', { query: { names: names.join(',') } }),
   createRule: (body: RuleInput): Promise<Rule> => api.post<{ rule: Rule }>('/api/rules', body).then((r) => r.rule),
   updateRule: (id: number, body: RuleInput): Promise<Rule> => api.put<{ rule: Rule }>('/api/rules/' + id, body).then((r) => r.rule),
   deleteRule: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/rules/' + id),

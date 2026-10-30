@@ -607,3 +607,63 @@ func (s *Server) handleAPIRuleSourcesUpdateOne(w http.ResponseWriter, r *http.Re
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"results": out})
 }
+
+// handleAPIRuleSourceConflicts 处理 GET /api/rule-sources/conflicts?names=a,b：
+// 轻量比较多个源的当前规则，按 type+param 找出跨源重复，供方案绑定界面提示。
+// 不返回全量规则，只返回总数与前几个示例。
+func (s *Server) handleAPIRuleSourceConflicts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 GET"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	raw := strings.Split(r.URL.Query().Get("names"), ",")
+	names := make([]string, 0, len(raw))
+	for _, n := range raw {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	type sample struct {
+		Type   string `json:"type"`
+		Param  string `json:"param"`
+		First  string `json:"first"`
+		Second string `json:"second"`
+	}
+	total := 0
+	samples := []sample{}
+	if len(names) >= 2 {
+		seen := make(map[string]string)
+		for _, name := range names {
+			rules, _ := m.RuleSourceRules(r.Context(), []string{name})
+			for _, line := range rules {
+				parts := strings.SplitN(line, ",", 3)
+				if len(parts) < 2 {
+					continue
+				}
+				typ := strings.ToUpper(strings.TrimSpace(parts[0]))
+				param := strings.TrimSpace(parts[1])
+				if typ == "" || param == "" {
+					continue
+				}
+				key := typ + "," + param
+				first, found := seen[key]
+				if !found {
+					seen[key] = name
+					continue
+				}
+				if first == name {
+					continue
+				}
+				total++
+				if len(samples) < 5 {
+					samples = append(samples, sample{Type: typ, Param: param, First: first, Second: name})
+				}
+			}
+		}
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"total": total, "samples": samples})
+}

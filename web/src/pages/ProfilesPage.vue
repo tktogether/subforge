@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
 import { endpoints, type Profile } from '../api/endpoints'
@@ -300,6 +300,38 @@ function moveRuleSource(index: number, delta: number): void {
   draft.value.rule_sources = next
 }
 
+// ---- 跨源重复规则提示 ----
+const sourceConflictTotal = ref(0)
+const sourceConflictSamples = ref<{ type: string; param: string; first: string; second: string }[]>([])
+let conflictTimer: ReturnType<typeof setTimeout> | undefined
+
+async function checkSourceConflicts(): Promise<void> {
+  if (!dialog.value || draft.value.rule_sources.length < 2) {
+    sourceConflictTotal.value = 0
+    sourceConflictSamples.value = []
+    return
+  }
+  try {
+    const r = await endpoints.checkRuleSourceConflicts(draft.value.rule_sources)
+    sourceConflictTotal.value = r.total
+    sourceConflictSamples.value = r.samples
+  } catch {
+    sourceConflictTotal.value = 0
+    sourceConflictSamples.value = []
+  }
+}
+
+function scheduleConflictCheck(): void {
+  if (conflictTimer !== undefined) {
+    clearTimeout(conflictTimer)
+  }
+  conflictTimer = setTimeout(() => {
+    void checkSourceConflicts()
+  }, 250)
+}
+
+watch(() => [...draft.value.rule_sources], scheduleConflictCheck)
+
 // truncateTemplate 把过长的模板文本截断到 60 字。
 function truncateTemplate(text: string): string {
   if (text.length <= TEMPLATE_MAX) {
@@ -351,6 +383,7 @@ function openCreate(): void {
   void loadSourceOptions()
   void loadTargetOptions()
   dialog.value = true
+  scheduleConflictCheck()
 }
 
 function openEdit(row: Profile): void {
@@ -377,6 +410,7 @@ function openEdit(row: Profile): void {
   void loadSourceOptions()
   void loadTargetOptions()
   dialog.value = true
+  scheduleConflictCheck()
 }
 
 async function save(): Promise<void> {
@@ -653,6 +687,19 @@ loadRuleSourceOptions()
             >
               添加规则源
             </v-btn>
+            <v-alert
+              v-if="sourceConflictTotal > 0"
+              type="warning"
+              variant="tonal"
+              density="compact"
+              class="mt-2"
+              data-testid="profile-source-conflicts"
+            >
+              发现 {{ sourceConflictTotal }} 条跨源重复规则；按当前顺序先出现的源优先。
+              <div v-if="sourceConflictSamples.length > 0" class="text-caption">
+                示例：{{ sourceConflictSamples.map((s) => s.type + ',' + s.param + '（' + s.first + ' vs ' + s.second + '）').join('；') }}
+              </div>
+            </v-alert>
           </div>
           <v-divider class="mb-3" />
           <div class="text-subtitle-2 mb-1">节点来源</div>
