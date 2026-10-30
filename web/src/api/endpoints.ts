@@ -54,6 +54,18 @@ export interface Rule {
   group_name?: string
 }
 
+export interface RulePage {
+  rules: Rule[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface RuleSourceCount {
+  source: string
+  count: number
+}
+
 export interface SubToken {
   token: string
   name: string
@@ -465,6 +477,18 @@ export const endpoints = {
   // GET /api/rules?source=&source_prefix=1：不带参数=全部；source=空串=只看自定义层（§6.5 编码约定）。
   listRules: (filter?: { source?: string; sourcePrefix?: boolean }): Promise<Rule[]> =>
     api.get<{ rules: Rule[] }>('/api/rules', filter && filter.source !== undefined ? { query: { source: filter.source, source_prefix: filter.sourcePrefix ? 1 : 0 } } : undefined).then((r) => r.rules),
+  listRulesPage: (query: { source?: string | null; enabled?: boolean; q?: string; limit: number; offset: number }): Promise<RulePage> =>
+    api.get<RulePage>('/api/rules', {
+      query: {
+        source: query.source === null || query.source === undefined ? undefined : query.source,
+        enabled: query.enabled === undefined ? undefined : query.enabled ? 1 : 0,
+        q: query.q === undefined || query.q === '' ? undefined : query.q,
+        limit: query.limit,
+        offset: query.offset,
+      },
+    }),
+  listRuleSourceCounts: (): Promise<RuleSourceCount[]> =>
+    api.get<{ sources: RuleSourceCount[] }>('/api/rules/sources').then((r) => r.sources),
   createRule: (body: RuleInput): Promise<Rule> => api.post<{ rule: Rule }>('/api/rules', body).then((r) => r.rule),
   updateRule: (id: number, body: RuleInput): Promise<Rule> => api.put<{ rule: Rule }>('/api/rules/' + id, body).then((r) => r.rule),
   deleteRule: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/rules/' + id),

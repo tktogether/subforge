@@ -200,6 +200,29 @@ describe('endpoints', () => {
     expect(result).toEqual(rules)
   })
 
+  it('listRulesPage 带分页/筛选参数并解包', async () => {
+    fetchMock.mockResolvedValue(respond({ rules: [], total: 3, limit: 2, offset: 1 }))
+    const r = await endpoints.listRulesPage({ source: 'manual', enabled: false, q: 'x', limit: 2, offset: 1 })
+    expect(r.total).toBe(3)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/rules?source=manual&enabled=0&q=x&limit=2&offset=1',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('listRulesPage 全来源/enabled 未设置/空 q 时不带多余参数', async () => {
+    fetchMock.mockResolvedValue(respond({ rules: [], total: 0, limit: 25, offset: 0 }))
+    await endpoints.listRulesPage({ source: null, q: '', limit: 25, offset: 0 })
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules?limit=25&offset=0', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('listRuleSourceCounts GET /api/rules/sources 解包', async () => {
+    fetchMock.mockResolvedValue(respond({ sources: [{ source: '', count: 2 }] }))
+    const r = await endpoints.listRuleSourceCounts()
+    expect(r).toEqual([{ source: '', count: 2 }])
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules/sources', expect.objectContaining({ method: 'GET' }))
+  })
+
   it('createRule 解包 .rule', async () => {
     const rule = { id: 2, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: true, sort_order: 2 }
     const input = { rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: true }
