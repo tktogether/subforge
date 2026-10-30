@@ -609,3 +609,33 @@ func TestImportRulesToLibraryReusesExistingGroup(t *testing.T) {
 		t.Fatalf("createGroups=false 应只提示不建组, groups=%d warnings=%v", res.GroupsCreated, res.Warnings)
 	}
 }
+
+// TestImportRulesWithUpstreamGroups 机场自带分组应先落库，规则目标直接指向该组，
+// 不再为同名目标建 regex="." 的占位组。
+func TestImportRulesWithUpstreamGroups(t *testing.T) {
+	m := newTestManager(t)
+	upstream := []model.UpstreamGroup{{
+		Name: "PROXY", Type: "select", Members: []string{"HK-1", "JP-1"},
+	}}
+	res, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:HK",
+		[]string{"DOMAIN-SUFFIX,x.test,PROXY"}, nil,
+		ImportOptions{CreateGroups: true, EnableRules: true, UpstreamGroups: upstream})
+	if err != nil {
+		t.Fatalf("ImportRulesToLibraryWithOptions: %v", err)
+	}
+	if res.GroupsCreated != 1 {
+		t.Fatalf("GroupsCreated = %d，应为 1（只保留上游 PROXY）", res.GroupsCreated)
+	}
+	groups, err := m.ListProxyGroups(t.Context())
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("分组数不符: %+v err=%v", groups, err)
+	}
+	g := groups[0]
+	if g.Name != "PROXY" || strings.Join(g.Members, ",") != "HK-1,JP-1" {
+		t.Fatalf("上游分组未保留: %+v", g)
+	}
+	rules, err := m.ListRulesByLayers(t.Context(), []string{"airport"})
+	if err != nil || len(rules) != 1 || rules[0].RuleConfig != g.ID || !rules[0].Enabled {
+		t.Fatalf("规则未指向上游分组: %+v err=%v", rules, err)
+	}
+}

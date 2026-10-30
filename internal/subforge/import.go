@@ -24,6 +24,8 @@ type ImportOptions struct {
 	CreateGroups bool
 	// EnableRules 新导入的规则直接 enabled=true。
 	EnableRules bool
+	// UpstreamGroups 是机场订阅自带的 proxy-groups；CreateGroups=true 时落库。
+	UpstreamGroups []model.UpstreamGroup
 }
 
 // ImportResult 汇总一次订阅规则导入的结果。
@@ -34,6 +36,16 @@ type ImportResult struct {
 	// GroupsCreated 是本次导入自动新建的目标分组个数（仅 createGroups=true 时可能非 0）。
 	GroupsCreated int      `json:"groups_created"`
 	Warnings      []string `json:"warnings"`
+}
+
+// normalizeUpstreamGroupType 把机场分组类型收敛到渲染器支持的范围；未知类型退化为 select。
+func normalizeUpstreamGroupType(typ string) string {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "select", "url-test", "fallback", "load-balance":
+		return strings.ToLower(strings.TrimSpace(typ))
+	default:
+		return "select"
+	}
 }
 
 // NormalizeRuleOriginKey 把一行规则规范化为去重键。
@@ -107,15 +119,38 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 		}
 	}
 
+	now := time.Now()
+	missingTargets := map[string]int{}
+	createdGroups := map[string]int{}
+
+	// 机场自带分组先落库：规则目标按名字映射到这些组，避免被当成缺失目标
+	// 再建一个 regex="." 的占位组。已有同名组（用户自建）优先，不覆盖。
+	if createGroups {
+		for _, ug := range opts.UpstreamGroups {
+			name := strings.TrimSpace(ug.Name)
+			if name == "" || len(ug.Members) == 0 {
+				continue
+			}
+			if _, exists := groupIDByName[name]; exists {
+				continue
+			}
+			g, gErr := m.AddProxyGroupWithMembers(ctx, name, normalizeUpstreamGroupType(ug.Type),
+				"", ug.URL, ug.Interval, 0, source, ug.Members)
+			if gErr != nil {
+				return result, gErr
+			}
+			groupIDByName[name] = g.ID
+			result.GroupsCreated++
+			createdGroups[name]++
+		}
+	}
+
 	// 只取当前最大 sort_order（一行聚合），不再为了新序号把全部规则读进内存。
 	maxSort, err := m.db.MaxRulesSortOrder(ctx)
 	if err != nil {
 		return result, err
 	}
 
-	now := time.Now()
-	missingTargets := map[string]int{}
-	createdGroups := map[string]int{}
 	pending := make([]store.ImportedRuleRow, 0, len(rules))
 	for i, line := range rules {
 		trimmed := strings.TrimSpace(line)
@@ -230,7 +265,7 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 			names = append(names[:3], "…")
 		}
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
-			"已自动创建 %d 个分组（%s），导入规则的分组目标已指向这些新分组",
+			"已创建 %d 个分组（%s，含机场自带分组），导入规则的分组目标已指向这些新分组",
 			total, strings.Join(names, "、")))
 	}
 

@@ -213,26 +213,21 @@ type ProxyGroup = store.ProxyGroup
 // ListProxyGroups 返回所有代理分组（全量读，不区分来源；按来源过滤请用 ListProxyGroupsFiltered）。
 // regex / url / interval / source 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
-	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []ProxyGroup{}
-	for rows.Next() {
-		var g ProxyGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, rows.Err()
+	return m.db.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
 }
 
 // AddProxyGroup 新增代理分组。sortOrder>0 用用户值，<=0 表示"未指定"（由 store 回退时间戳）。
 func (m *Manager) AddProxyGroup(ctx context.Context, name, typ, regex, url string, interval, sortOrder int) (*ProxyGroup, error) {
 	return m.db.AddProxyGroup(ctx, name, typ, regex, url, interval, sortOrder)
+}
+
+// AddProxyGroupWithMembers 新增带成员列表的分组（机场自带分组导入用）。
+func (m *Manager) AddProxyGroupWithMembers(ctx context.Context, name, typ, regex, url string, interval, sortOrder int, source string, members []string) (*ProxyGroup, error) {
+	g, err := m.db.AddProxyGroupWithMembers(ctx, name, typ, regex, url, interval, sortOrder, source, members)
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
 }
 
 // DeleteProxyGroup 删除代理分组。

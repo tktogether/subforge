@@ -1629,3 +1629,30 @@ func TestSortOrderPersisted(t *testing.T) {
 		t.Fatalf("ListSelfNodes 顺序不对: %+v", nodes)
 	}
 }
+
+// TestProxyGroupMembersRoundTrip 机场自带分组的成员列表应能落库并读回。
+func TestProxyGroupMembersRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	g, err := d.AddProxyGroupWithMembers(ctx, "PROXY", "select", "", "http://x/204", 300, 0, "airport:fx", []string{"HK-1", "JP-1"})
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembers: %v", err)
+	}
+	got, err := d.GetProxyGroup(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if strings.Join(got.Members, ",") != "HK-1,JP-1" {
+		t.Fatalf("成员未落库: %+v", got)
+	}
+	list, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
+	if err != nil || len(list) != 1 || strings.Join(list[0].Members, ",") != "HK-1,JP-1" {
+		t.Fatalf("列表成员不符: %+v err=%v", list, err)
+	}
+	plain, err := d.AddProxyGroup(ctx, "AUTO", "url-test", ".", "", 300, 0)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+	if plain.Members != nil {
+		t.Fatalf("手工分组 members 应为 nil: %+v", plain.Members)
+	}
+}

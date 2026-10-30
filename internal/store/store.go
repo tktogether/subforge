@@ -96,14 +96,17 @@ type FetchAudit struct {
 // v2：分组是全局自定义库，不再归属任何订阅方案；Source 标识来源
 // （空串 = 自定义，"airport:<机场名>" = 机场导入自动创建）。
 type ProxyGroup struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Regex     string    `json:"regex"`
-	URL       string    `json:"url"`
-	Interval  int       `json:"interval"`
-	SortOrder int       `json:"sort_order"`
-	Source    string    `json:"source"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Regex     string `json:"regex"`
+	URL       string `json:"url"`
+	Interval  int    `json:"interval"`
+	SortOrder int    `json:"sort_order"`
+	Source    string `json:"source"`
+	// Members 是机场自带分组的成员（节点名/子组名）。
+	// 非空时订阅按成员原样渲染，优先于 Regex；手工分组通常为空。
+	Members   []string  `json:"members"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -387,9 +390,19 @@ func (d *DB) AddProxyGroup(ctx context.Context, name, gtype, regex, url string, 
 // source 为空串 = 自定义分组，"airport:<机场名>" = 机场导入自动创建的分组。
 // sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
 func (d *DB) AddProxyGroupWithSource(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string) (ProxyGroup, error) {
+	return d.AddProxyGroupWithMembers(ctx, name, gtype, regex, url, interval, sortOrder, source, nil)
+}
+
+// AddProxyGroupWithMembers 新增带来源与成员列表的代理分组。
+// members 非空时用于机场自带分组；空列表仍按 regex 展开成员。
+func (d *DB) AddProxyGroupWithMembers(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string) (ProxyGroup, error) {
+	membersJSON, err := marshalLayerList(members)
+	if err != nil {
+		return ProxyGroup{}, err
+	}
 	res, err := d.db.ExecContext(ctx,
-		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source)
+		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source, members) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source, membersJSON)
 	if err != nil {
 		return ProxyGroup{}, err
 	}
@@ -407,12 +420,14 @@ func (d *DB) AddProxyGroupWithSource(ctx context.Context, name, gtype, regex, ur
 // GetProxyGroup 按 id 返回代理分组；不存在时返回 sql.ErrNoRows。
 func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 	var g ProxyGroup
+	var members string
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
-		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), COALESCE(members, ''), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
+		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &members, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	g.Members = parseLayerList(members)
 	return &g, nil
 }
 
@@ -576,6 +591,7 @@ func migrate(db *sql.DB) error {
 			url         TEXT,
 			interval    INTEGER,
 			sort_order  INTEGER DEFAULT 0,
+			members     TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
@@ -770,6 +786,9 @@ func migrate(db *sql.DB) error {
 	// v2：proxy_groups 增加 source 列（语义同 rules.source）。
 	if err := addColumnIfMissing(db, "proxy_groups", "source", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("迁移 proxy_groups.source: %w", err)
+	}
+	if err := addColumnIfMissing(db, "proxy_groups", "members", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("迁移 proxy_groups.members: %w", err)
 	}
 	// rule_providers 唯一索引：先按 (source, name) 去重，保留最小 id，避免老库重复行导致建索引失败。
 	if _, err := db.Exec("DELETE FROM rule_providers WHERE id NOT IN (SELECT MIN(id) FROM rule_providers GROUP BY source, name)"); err != nil {

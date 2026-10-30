@@ -80,6 +80,16 @@ type Provider struct {
 	Raw map[string]any
 }
 
+// UpstreamGroup 是机场订阅自带的 proxy-group 定义。
+// Members 只保留 proxies 列表（use 引用 provider 的分组暂不支持），供导入时落库。
+type UpstreamGroup struct {
+	Name     string
+	Type     string
+	URL      string
+	Interval int
+	Members  []string
+}
+
 // RuleProvider 是一个 mihomo rule-provider 定义（规则集来源）。
 // Raw 是 rule-provider 配置的原始 map，与 Provider.Raw 同构：原样透传，
 // 不丢扩展字段（type / behavior / url / path / interval / format / proxy…）。
@@ -223,6 +233,38 @@ func ParseClashProxies(yamlBuf []byte) ([]map[string]any, error) {
 		return nil, errors.New("配置中不含 proxies")
 	}
 	return cfg.Proxies, nil
+}
+
+// ParseClashProxyGroups 从 Clash/mihomo YAML 配置中提取 proxy-groups 定义。
+// 没有 proxy-groups 时返回 nil（不是错误）；use provider 的分组没有 proxies 成员，保持空。
+func ParseClashProxyGroups(yamlBuf []byte) ([]UpstreamGroup, error) {
+	var cfg struct {
+		Groups []struct {
+			Name     string   `yaml:"name"`
+			Type     string   `yaml:"type"`
+			URL      string   `yaml:"url"`
+			Interval int      `yaml:"interval"`
+			Proxies  []string `yaml:"proxies"`
+		} `yaml:"proxy-groups"`
+	}
+	if err := yaml.Unmarshal(yamlBuf, &cfg); err != nil {
+		return nil, fmt.Errorf("解析 YAML: %w", err)
+	}
+	if len(cfg.Groups) == 0 {
+		return nil, nil
+	}
+	out := make([]UpstreamGroup, 0, len(cfg.Groups))
+	for _, g := range cfg.Groups {
+		name := strings.TrimSpace(g.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, UpstreamGroup{
+			Name: name, Type: strings.TrimSpace(g.Type), URL: strings.TrimSpace(g.URL),
+			Interval: g.Interval, Members: g.Proxies,
+		})
+	}
+	return out, nil
 }
 
 // ParseClashProviders 从 Clash/mihomo YAML 配置中提取 proxy-providers 定义。

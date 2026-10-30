@@ -987,7 +987,11 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			Test:    g.URL,
 			Options: render.UrlTestOptions{Interval: g.Interval},
 		}
-		if re := strings.TrimSpace(g.Regex); re != "" {
+		// 机场自带分组按成员原样渲染；成员可能是节点名，也可能是子组名，
+		// ResolveGroups 会保留已知组名、展开正则/节点名。手工分组仍走 Regex。
+		if len(g.Members) > 0 {
+			rg.Proxies = append([]string{}, g.Members...)
+		} else if re := strings.TrimSpace(g.Regex); re != "" {
 			rg.Proxies = []string{re}
 		}
 		renderGroups = append(renderGroups, rg)

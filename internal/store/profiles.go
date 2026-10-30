@@ -264,17 +264,19 @@ func scanRule(row interface {
 
 // groupColumns 是 proxy_groups 表的读取列（v2 已无 profile_id，新增 source）。
 const groupColumns = "id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), " +
-	"sort_order, COALESCE(source, ''), created_at, updated_at"
+	"sort_order, COALESCE(source, ''), COALESCE(members, ''), created_at, updated_at"
 
 // scanProxyGroup 从一行读出 ProxyGroup（列序必须与 groupColumns 对齐）。
 func scanProxyGroup(row interface {
 	Scan(dest ...any) error
 }) (ProxyGroup, error) {
 	var g ProxyGroup
+	var members string
 	if err := row.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval,
-		&g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		&g.SortOrder, &g.Source, &members, &g.CreatedAt, &g.UpdatedAt); err != nil {
 		return ProxyGroup{}, err
 	}
+	g.Members = parseLayerList(members)
 	return g, nil
 }
 

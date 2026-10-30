@@ -48,6 +48,9 @@ func (s *Server) importRulesToLibrary(ctx context.Context, m *subforge.Manager, 
 	if err != nil {
 		return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusBadGateway, fmt.Errorf("导入失败: %w", err)}
 	}
+	if opts.CreateGroups {
+		opts.UpstreamGroups = dec.ProxyGroups
+	}
 	ir, err := m.ImportRulesToLibraryWithOptions(ctx, "airport:"+a.Name, dec.Rules, dec.RuleProviders, opts)
 	if err != nil {
 		return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusInternalServerError, fmt.Errorf("导入失败: %w", err)}

@@ -12,16 +12,24 @@ function sourceText(source?: string): string {
   return source.startsWith('airport:') ? '机场:' + source.slice('airport:'.length) : source
 }
 
-// 来源列挂一个计算字段 source_text，ResourcePage 直接当普通列渲染。
+// 来源/成员列挂计算字段，ResourcePage 直接当普通列渲染。
 const groupColumns = [
   { key: 'name', title: '名称' },
   { key: 'source_text', title: '来源' },
   { key: 'type', title: '类型' },
   { key: 'regex', title: '匹配正则' },
+  { key: 'members_text', title: '成员' },
   { key: 'url', title: '测活地址' },
   { key: 'interval', title: '间隔(秒)' },
   { key: 'sort_order', title: '顺序' },
 ]
+
+// 机场自带分组的成员可能很多：只预览前三个，避免表格被长列表撑破。
+function membersText(members?: string[]): string {
+  if (!members || members.length === 0) return '—'
+  const preview = members.slice(0, 3).join('、')
+  return members.length > 3 ? `${members.length} 个：${preview}…` : preview
+}
 
 // v2：表单不再有「方案」下拉；新建分组的 source 恒为 ''（自定义），由后端默认。
 const groupFields = [
@@ -37,7 +45,7 @@ const groupFields = [
 const resource: any = {
   list: async (): Promise<(ProxyGroup & { source_text?: string })[]> => {
     const groups = await endpoints.listGroups()
-    return groups.map((g) => ({ ...g, source_text: sourceText(g.source) }))
+    return groups.map((g) => ({ ...g, source_text: sourceText(g.source), members_text: membersText(g.members) }))
   },
   create: endpoints.createGroup,
   update: (item: any) => endpoints.updateGroup(item.id, item),
@@ -52,6 +60,7 @@ const resource: any = {
         <p class="mb-1"><strong>分组是什么：</strong>分组 = 客户端里那个可以切换的「策略组」（select / url-test / fallback …）。它决定哪些节点归在一起、以及客户端怎么选节点。</p>
         <p class="mb-1"><strong>成员怎么来：</strong>填了「匹配正则」的分组，会把<strong>名字匹配该正则</strong>的节点收进来（例如 <code>香港|HK</code> 收所有名字带香港或 HK 的节点）。正则留空的分组不自动收节点。</p>
         <p class="mb-1"><strong>它怎么影响输出（关键）：</strong><strong>规则行里的 <code>rule_config</code> 填的就是这里的分组 id。</strong>分组被删掉或改名，引用它的规则行会退化成 <code>DIRECT</code>（直连）——改分组前先去「规则」页看一眼有没有规则在引用。</p>
+        <p class="mb-1"><strong>机场自带分组：</strong>导入机场规则时会保留机场自己的分组与成员，显示在「成员」列；这类分组按成员渲染，编辑「匹配正则」不会覆盖成员。</p>
         <p class="mb-0"><strong>顺序：</strong><code>sort_order</code> 越小越靠前，决定客户端里分组的显示顺序。</p>
       </div>
     </v-alert>

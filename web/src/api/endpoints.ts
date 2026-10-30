@@ -26,6 +26,8 @@ export interface ProxyGroup {
   interval: number
   sort_order: number
   source?: string
+  // 机场自带分组的成员；手工分组通常为空，按 regex 展开。
+  members?: string[]
 }
 
 export interface SelfNode {

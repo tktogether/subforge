@@ -46,6 +46,7 @@ describe('GroupsPage', () => {
       { key: 'source_text', title: '来源' },
       { key: 'type', title: '类型' },
       { key: 'regex', title: '匹配正则' },
+      { key: 'members_text', title: '成员' },
       { key: 'url', title: '测活地址' },
       { key: 'interval', title: '间隔(秒)' },
       { key: 'sort_order', title: '顺序' },
@@ -69,7 +70,7 @@ describe('GroupsPage', () => {
 
   it('resource.list 包装 endpoints.listGroups，给每行补 source_text 并渲染进表格', async () => {
     listMock.mockResolvedValue([
-      { id: 1, name: '分组A', type: 'select', regex: '.*', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X' },
+      { id: 1, name: '分组A', type: 'select', regex: '', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'JP-1', 'SG-1', 'US-1'] },
       { id: 2, name: '自定义组', type: 'select', regex: '.*', url: '', interval: 0, sort_order: 2, source: '' },
     ])
 
@@ -82,6 +83,8 @@ describe('GroupsPage', () => {
     expect(w.text()).toContain('机场:机场X')
     expect(w.text()).toContain('自定义组')
     expect(w.text()).toContain('自定义')
+    expect(w.text()).toContain('4 个：HK-1、JP-1、SG-1…')
+    expect(w.text()).toContain('—')
     w.unmount()
   })
 

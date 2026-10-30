@@ -116,6 +116,9 @@ type Decoded struct {
 	Rules []string
 	// RuleProviders Clash YAML 里的 rule-providers 定义；分享链接来源恒为空。
 	RuleProviders []model.RuleProvider
+	// ProxyGroups Clash YAML 里的 proxy-groups 定义；分享链接来源恒为空。
+	// 导入时按成员落库，避免机场自带分组在解析阶段丢失。
+	ProxyGroups []model.UpstreamGroup
 	// Warnings 解析告警（如 rule-providers 提取失败）；非阻断。
 	Warnings []string
 }
@@ -153,7 +156,10 @@ func DecodeSource(buf []byte) (Decoded, error) {
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("解析 rule-providers 失败: %v", err))
 		}
-		return Decoded{Nodes: proxies, Providers: providers, Rules: rules, RuleProviders: ruleProviders, Warnings: warnings}, nil
+		// proxy-groups 同样只是附加项：解析失败不拖垮节点。
+		proxyGroups, _ := model.ParseClashProxyGroups(sniff.Decoded)
+		return Decoded{Nodes: proxies, Providers: providers, Rules: rules, RuleProviders: ruleProviders,
+			ProxyGroups: proxyGroups, Warnings: warnings}, nil
 	default:
 		nodes, err := convert.ConvertsV2Ray(sniff.Decoded)
 		if err != nil {

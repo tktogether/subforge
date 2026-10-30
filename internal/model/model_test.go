@@ -2,6 +2,7 @@ package model
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -195,5 +196,29 @@ func TestParseClashProviders_None(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("无 provider 应返回 nil, got %v", got)
+	}
+}
+
+// TestParseClashProxyGroups 机场自带 proxy-groups 应保留名称/类型/成员/测活参数。
+func TestParseClashProxyGroups(t *testing.T) {
+	raw := []byte("proxies:\n  - {name: HK-1, type: ss, server: 127.0.0.1, port: 1, cipher: aes-256-gcm, password: p}\n" +
+		"proxy-groups:\n" +
+		"  - name: PROXY\n    type: select\n    url: http://www.gstatic.com/generate_204\n    interval: 300\n    proxies: [HK-1, JP-1]\n" +
+		"  - name: AUTO\n    type: url-test\n    proxies: [HK-1]\n")
+	got, err := ParseClashProxyGroups(raw)
+	if err != nil {
+		t.Fatalf("ParseClashProxyGroups: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "PROXY" || got[1].Name != "AUTO" {
+		t.Fatalf("分组解析不符: %+v", got)
+	}
+	if got[0].Type != "select" || got[0].URL == "" || got[0].Interval != 300 {
+		t.Fatalf("PROXY 参数不符: %+v", got[0])
+	}
+	if strings.Join(got[0].Members, ",") != "HK-1,JP-1" {
+		t.Fatalf("PROXY 成员不符: %v", got[0].Members)
+	}
+	if none, err := ParseClashProxyGroups([]byte("proxies: []\n")); err != nil || none != nil {
+		t.Fatalf("无 proxy-groups 应 nil/nil，实际 %v/%v", none, err)
 	}
 }
