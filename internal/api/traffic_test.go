@@ -605,6 +605,20 @@ func TestAPIAirportsRefreshWithRulesCreatesGroups(t *testing.T) {
 	if !found {
 		t.Fatalf("自动导入未创建目标分组，groups=%+v", groups)
 	}
+	rules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"})
+	if err != nil {
+		t.Fatalf("ListRulesByLayers: %v", err)
+	}
+	foundEnabled := false
+	for _, r := range rules {
+		if r.RuleParam == "auto-group.test" && r.Enabled {
+			foundEnabled = true
+			break
+		}
+	}
+	if !foundEnabled {
+		t.Fatalf("自动导入的规则应 enabled=true，rules=%+v", rules)
+	}
 }
 
 // TestAPIAirportsRefreshWithRulesTruthyVariants 只有 1/true/yes/on（大小写不敏感、可带空白）才算真。

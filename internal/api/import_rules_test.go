@@ -146,6 +146,45 @@ func TestImportRules_Success(t *testing.T) {
 	}
 }
 
+// TestImportRules_EnableRules 覆盖“导入后立即启用”请求：rules_enabled 计数正确，
+// 且落库规则确实 enabled=true。默认不传 enable_rules 时仍只进候选。
+func TestImportRules_EnableRules(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	up := rulesUpstream(t)
+	id := addImportAirport(t, mgr, "enable", up.URL)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/import-rules", id),
+		strings.NewReader(`{"create_groups":true,"enable_rules":true}`))
+	req.SetPathValue("id", fmt.Sprintf("%d", id))
+	rr := httptest.NewRecorder()
+	srv.handleAPIImportRules(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d；body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		RulesAdded   int `json:"rules_added"`
+		RulesEnabled int `json:"rules_enabled"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应: %v", err)
+	}
+	if resp.RulesAdded != 2 || resp.RulesEnabled != 2 {
+		t.Fatalf("added/enabled = %d/%d，应为 2/2；body=%s", resp.RulesAdded, resp.RulesEnabled, rr.Body.String())
+	}
+	rules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"})
+	if err != nil {
+		t.Fatalf("ListRulesByLayers: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("规则数 = %d，应为 2", len(rules))
+	}
+	for _, r := range rules {
+		if !r.Enabled {
+			t.Fatalf("规则应 enabled=true，实际 %+v", r)
+		}
+	}
+}
+
 func TestImportRules_IdempotentSecondImportSkips(t *testing.T) {
 	srv, mgr := importTestServer(t)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

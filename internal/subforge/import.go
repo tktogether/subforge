@@ -17,6 +17,15 @@ import (
 // 否则无法做同来源去重与层拼接。API 层可把它映射成 400。
 var ErrEmptyImportSource = errors.New("导入来源不能为空")
 
+// ImportOptions 控制一次导入的落库语义。
+// 默认（零值）与旧行为一致：只进候选、不建组；调用方需要"导入即生效"时显式打开。
+type ImportOptions struct {
+	// CreateGroups 目标分组不存在时自动补建 select 分组。
+	CreateGroups bool
+	// EnableRules 新导入的规则直接 enabled=true。
+	EnableRules bool
+}
+
 // ImportResult 汇总一次订阅规则导入的结果。
 type ImportResult struct {
 	RulesAdded     int `json:"rules_added"`
@@ -68,6 +77,13 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 // 并把 rule_config 指向新组；分组库里已有同名分组时直接复用，不重复建组。
 // providers 不分方案（订阅渲染不使用），仍写全局，来源跟随 source。
 func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules []string, providers []model.RuleProvider, createGroups bool) (ImportResult, error) {
+	return m.ImportRulesToLibraryWithOptions(ctx, source, rules, providers, ImportOptions{CreateGroups: createGroups})
+}
+
+// ImportRulesToLibraryWithOptions 是导入的完整入口；ImportRulesToLibrary 保留旧签名，
+// 等价于只控制 CreateGroups、规则仍进候选。API 的“导入后启用”走这里。
+func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source string, rules []string, providers []model.RuleProvider, opts ImportOptions) (ImportResult, error) {
+	createGroups := opts.CreateGroups
 	result := ImportResult{
 		Warnings: []string{},
 	}
@@ -168,7 +184,7 @@ func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules
 			RuleParam:  ruleParam,
 			RuleConfig: ruleConfig,
 			ResolveDNS: resolveDNS,
-			Enabled:    false,
+			Enabled:    opts.EnableRules,
 			SortOrder:  maxSort + i + 1,
 			Source:     source,
 			Raw:        line,

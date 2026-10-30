@@ -149,6 +149,37 @@ func TestImportRulesIdempotent(t *testing.T) {
 	}
 }
 
+// TestImportRulesWithOptionsEnableRules 覆盖“导入即启用”：新规则 enabled=true，
+// 同时按 CreateGroups 补建目标分组，供机场页默认勾选的“立即启用”使用。
+func TestImportRulesWithOptionsEnableRules(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+
+	res, err := m.ImportRulesToLibraryWithOptions(ctx, "airport:HK",
+		[]string{"DOMAIN-SUFFIX,enabled.test,自动启用组"}, nil,
+		ImportOptions{CreateGroups: true, EnableRules: true})
+	if err != nil {
+		t.Fatalf("ImportRulesToLibraryWithOptions: %v", err)
+	}
+	if res.RulesAdded != 1 || res.GroupsCreated != 1 {
+		t.Fatalf("added/groups = %d/%d，应为 1/1", res.RulesAdded, res.GroupsCreated)
+	}
+	rules, err := m.ListRulesByLayers(ctx, []string{"airport"})
+	if err != nil {
+		t.Fatalf("ListRulesByLayers: %v", err)
+	}
+	if len(rules) != 1 || !rules[0].Enabled {
+		t.Fatalf("规则应 enabled=true，实际 %+v", rules)
+	}
+	groups, err := m.ListProxyGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListProxyGroups: %v", err)
+	}
+	if len(groups) != 1 || groups[0].Name != "自动启用组" {
+		t.Fatalf("目标分组未创建，实际 %+v", groups)
+	}
+}
+
 // TestImportRuleProviders 覆盖 provider 幂等写入且 enabled=false。
 func TestImportRuleProviders(t *testing.T) {
 	ctx := context.Background()

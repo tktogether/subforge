@@ -199,10 +199,12 @@ async function refreshOne(row: AirportRow): Promise<void> {
 const importDialog = ref(false)
 const importTarget = ref<AirportRow | null>(null)
 const importCreateGroups = ref(true)
+const importEnableRules = ref(true)
 
 function openImportDialog(row: AirportRow): void {
   importTarget.value = row
   importCreateGroups.value = true
+  importEnableRules.value = true
   importDialog.value = true
 }
 
@@ -215,8 +217,12 @@ async function confirmImportRules(): Promise<void> {
   try {
     const r = await endpoints.importAirportRules(row.id, {
       create_groups: importCreateGroups.value,
+      enable_rules: importEnableRules.value,
     })
-    let text = '已导入规则：新增 ' + r.rules_added + '，跳过 ' + r.rules_skipped
+    let text = importEnableRules.value
+      ? '已导入并启用规则：新增 ' + r.rules_added
+      : '已导入规则到候选（未启用）：新增 ' + r.rules_added
+    text += '，跳过 ' + r.rules_skipped
     if (r.groups_created && r.groups_created > 0) {
       text += '，新建分组 ' + r.groups_created
     }
@@ -391,6 +397,7 @@ async function restoreLastCheck(): Promise<void> {
         <div v-for="imp in imports" :key="imp.airport_id + '-' + imp.name" class="airports-page__import">
           <span>{{ imp.name }}</span>
           <span>新增 {{ imp.rules_added }}</span>
+          <span>启用 {{ imp.rules_enabled ?? 0 }}</span>
           <span>跳过 {{ imp.rules_skipped }}</span>
           <span>提供者 {{ imp.providers_added }}</span>
           <span v-if="(imp.groups_created ?? 0) > 0">新建分组 {{ imp.groups_created }}</span>
@@ -459,8 +466,11 @@ async function restoreLastCheck(): Promise<void> {
         <v-card-text>
           <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组（select，匹配全部节点）"
             data-testid="import-rules-create-groups" density="compact"></v-checkbox>
+          <v-checkbox v-model="importEnableRules" label="导入后立即启用规则"
+            data-testid="import-rules-enable" density="compact"></v-checkbox>
           <div class="text-medium-emphasis" data-testid="import-rules-hint">
-            导入的规则来源固定为本机场（airport:机场名），在「规则」页按来源筛选即可查看。
+            导入的规则来源固定为本机场（airport:机场名）。关闭“立即启用”时规则只进入候选，
+            需要到「规则 → 导入候选」手动启用。
           </div>
         </v-card-text>
         <v-card-actions>

@@ -298,7 +298,7 @@ export interface TrafficRefreshResult {
 }
 export interface ImportRulesOutcome {
   airport_id: number; name: string
-  rules_added: number; rules_skipped: number; providers_added: number
+  rules_added: number; rules_skipped: number; rules_enabled?: number; providers_added: number
   groups_created?: number
   warnings: string[]; err: string
 }
@@ -307,7 +307,7 @@ export interface TrafficRefreshResponse {
   imports?: ImportRulesOutcome[]
 }
 export interface ImportRulesResult {
-  rules_added: number; rules_skipped: number; providers_added: number; warnings: string[]; groups_created?: number
+  rules_added: number; rules_skipped: number; rules_enabled?: number; providers_added: number; warnings: string[]; groups_created?: number
 }
 export interface SubscheckResult {
   url: string; ok: boolean; status_code: number; latency: number; bytes: number; err: string
@@ -479,7 +479,7 @@ export const endpoints = {
     api.post<TrafficRefreshResponse>('/api/airports/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
   refreshAirport: (id: number | string): Promise<{ result: TrafficRefreshResult }> =>
     api.post<{ result: TrafficRefreshResult }>('/api/airports/' + id + '/refresh', {}),
-  importAirportRules: (id: number | string, body?: { create_groups?: boolean }): Promise<ImportRulesResult> =>
+  importAirportRules: (id: number | string, body?: { create_groups?: boolean; enable_rules?: boolean }): Promise<ImportRulesResult> =>
     api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', body ?? {}),
   checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[] }> =>
     api.post<{ results: SubscheckResult[] }>('/api/airports/check', ids === undefined ? {} : { ids }),

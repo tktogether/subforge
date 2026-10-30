@@ -93,7 +93,10 @@ func (s *Server) importRulesAfterRefresh(ctx context.Context, m *subforge.Manage
 			out = append(out, item)
 			continue
 		}
-		ir, warnings, err := s.importRulesToLibrary(ctx, m, a, true)
+		ir, warnings, err := s.importRulesToLibrary(ctx, m, a, subforge.ImportOptions{
+			CreateGroups: true,
+			EnableRules:  true,
+		})
 		if err != nil {
 			item["err"] = err.Error()
 			out = append(out, item)
@@ -101,6 +104,7 @@ func (s *Server) importRulesAfterRefresh(ctx context.Context, m *subforge.Manage
 		}
 		item["rules_added"] = ir.RulesAdded
 		item["rules_skipped"] = ir.RulesSkipped
+		item["rules_enabled"] = ir.RulesAdded
 		item["providers_added"] = ir.ProvidersAdded
 		item["groups_created"] = ir.GroupsCreated
 		item["warnings"] = warnings

@@ -287,9 +287,11 @@ describe('AirportsPage', () => {
     ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
     await flushPromises()
     ;(w.vm as any).importCreateGroups = false
+    ;(w.vm as any).importEnableRules = false
     await (w.vm as any).confirmImportRules()
     await flushPromises()
-    expect(importMock).toHaveBeenCalledWith(1, { create_groups: false })
+    expect(importMock).toHaveBeenCalledWith(1, { create_groups: false, enable_rules: false })
+    expect(notifyState.text).toContain('候选（未启用）')
     expect(listMock).toHaveBeenCalledTimes(2)
     w.unmount()
   })
@@ -316,10 +318,31 @@ describe('AirportsPage', () => {
       expect((w.vm as any).importDialog).toBe(true)
       expect((w.vm as any).importTarget.id).toBe(1)
       expect((w.vm as any).importCreateGroups).toBe(true)
+      expect((w.vm as any).importEnableRules).toBe(true)
       const hint = document.body.querySelector('[data-testid="import-rules-hint"]')
       expect(hint).toBeTruthy()
       expect((hint as HTMLElement).textContent).toContain('airport:机场名')
+      expect((hint as HTMLElement).textContent).toContain('立即启用')
       expect(document.body.querySelector('[data-testid="import-rules-profile"]')).toBeNull()
+    } finally {
+      w.unmount()
+    }
+  })
+
+  it('导入弹窗“立即启用”复选框默认勾选且可取消', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
+      await flushPromises()
+      await new Promise((r) => setTimeout(r, 50))
+      const enable = document.body.querySelector('[data-testid="import-rules-enable"] input') as HTMLInputElement | null
+      expect(enable).toBeTruthy()
+      expect(enable!.checked).toBe(true)
+      enable!.click()
+      await flushPromises()
+      expect((w.vm as any).importEnableRules).toBe(false)
+      expect(enable!.checked).toBe(false)
     } finally {
       w.unmount()
     }
@@ -343,7 +366,7 @@ describe('AirportsPage', () => {
     ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
     await (w.vm as any).confirmImportRules()
     await flushPromises()
-    expect(notifyState.text).toBe('已导入规则：新增 2，跳过 1，新建分组 3')
+    expect(notifyState.text).toBe('已导入并启用规则：新增 2，跳过 1，新建分组 3')
     expect(notifyState.kind).toBe('ok')
     w.unmount()
   })
@@ -672,7 +695,8 @@ describe('AirportsPage', () => {
     expect(confirm).toBeTruthy()
     ;(confirm as HTMLElement).click()
     await flushPromises()
-    expect(importMock).toHaveBeenCalledWith(1, { create_groups: true })
+    expect(importMock).toHaveBeenCalledWith(1, { create_groups: true, enable_rules: true })
+    expect(notifyState.text).toContain('已导入并启用规则')
     w.unmount()
   })
 
