@@ -7,6 +7,7 @@ const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean] }>()
 
 const route = useRoute()
+const brandIcon = '/favicon.svg'
 const groups = computed(() => navGroups())
 
 function isActive(path: string): boolean {
@@ -25,7 +26,11 @@ function onUpdate(value: boolean): void {
     data-testid="nav"
     @update:model-value="onUpdate"
   >
-    <v-list-item title="SubForge" subtitle="订阅转换与规则管理" prepend-icon="mdi-anvil" nav />
+    <v-list-item title="SubForge" subtitle="订阅转换与规则管理" nav>
+      <template #prepend>
+        <img :src="brandIcon" alt="" class="brand-logo" width="26" height="26" />
+      </template>
+    </v-list-item>
     <v-divider />
     <template v-for="group in groups" :key="group.name">
       <v-list-subheader class="nav-group-label">{{ group.name }}</v-list-subheader>
@@ -55,6 +60,10 @@ function onUpdate(value: boolean): void {
 .nav-item {
   min-height: 32px;
   height: 36px;
+}
+.brand-logo {
+  border-radius: 6px;
+  flex: 0 0 auto;
 }
 .nav-item :deep(.v-list-item__overlay) {
   background: transparent;

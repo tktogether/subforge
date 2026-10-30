@@ -27,6 +27,7 @@ describe('AppTopBar', () => {
     expect(topbar.exists()).toBe(true)
     expect(w.text()).toContain('机场')
     expect(w.text()).toContain('SubForge')
+    expect(w.find('img[src="/favicon.svg"]').exists()).toBe(true)
   })
 
   it('点击 drawer-toggle 触发 toggle-drawer 事件', async () => {

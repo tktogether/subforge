@@ -5,6 +5,7 @@ import { useThemeMode, type ThemeMode } from '../composables/useThemeMode'
 
 const props = defineProps<{ title: string; group?: string }>()
 const emit = defineEmits<{ 'toggle-drawer': []; 'open-token': []; logout: [] }>()
+const brandIcon = '/favicon.svg'
 
 const theme = useThemeMode()
 const themeOptions: { value: ThemeMode; label: string; icon: string }[] = [
@@ -92,7 +93,10 @@ function requestLogout(): void {
       data-testid="logout"
       @click="requestLogout"
     />
-    <span class="wordmark">SubForge</span>
+    <span class="brand-lockup">
+      <img :src="brandIcon" alt="" class="brand-logo" width="22" height="22" />
+      <span class="wordmark">SubForge</span>
+    </span>
   </v-app-bar>
 </template>
 
@@ -108,5 +112,15 @@ function requestLogout(): void {
 .wordmark {
   font-weight: 600;
   color: var(--sf-text);
+}
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+}
+.brand-logo {
+  border-radius: 5px;
+  flex: 0 0 auto;
 }
 </style>
