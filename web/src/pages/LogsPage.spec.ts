@@ -107,19 +107,23 @@ describe('LogsPage', () => {
     w.unmount()
   })
 
-  it('highlight 含 error/panic/fatal 的行', async () => {
+  it('按关键词归类错误、警告与信息级别', async () => {
     logsMock.mockResolvedValue({ logs: [
       { id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'all good' },
       { id: 2, ts: '2026-10-19T04:00:01+08:00', line: 'ERROR boom' },
       { id: 3, ts: '2026-10-19T04:00:02+08:00', line: 'panic here' },
       { id: 4, ts: '2026-10-19T04:00:03+08:00', line: 'fatal x' },
+      { id: 5, ts: '2026-10-19T04:00:04+08:00', line: 'warn slow' },
     ] })
     const w = mount(LogsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     const rows = w.findAll('[data-testid="log-row"]')
-    expect(rows.length).toBe(4)
-    const html = w.html()
-    expect(html).toContain('text-error')
+    expect(rows.length).toBe(5)
+    expect(rows[0].classes()).toContain('log-row--info')
+    expect(rows[1].classes()).toContain('log-row--error')
+    expect(rows[2].classes()).toContain('log-row--error')
+    expect(rows[3].classes()).toContain('log-row--error')
+    expect(rows[4].classes()).toContain('log-row--warn')
     w.unmount()
   })
 
@@ -180,8 +184,11 @@ describe('LogsPage', () => {
     logsMock.mockResolvedValue({ logs: [{ id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'x' }] })
     const w = mount(LogsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
+    const spy = vi.fn()
+    Element.prototype.scrollIntoView = spy
     await w.find('[data-testid="scroll-bottom"]').trigger('click')
     await flushPromises()
+    expect(spy).toHaveBeenCalled()
     w.unmount()
   })
 
@@ -255,7 +262,7 @@ describe('LogsPage', () => {
     await flushPromises()
     const t = w.text()
     expect(t).toContain('最多显示最近 200 行')
-    expect(t).toContain('不代表日志级别')
+    expect(t).toContain('级别由前端按关键词归类')
     expect(t).not.toContain('跟到底')
     expect(w.find('[data-testid="help-toggle"]').exists()).toBe(true)
     w.unmount()
@@ -291,7 +298,95 @@ describe('LogsPage', () => {
     await w.find('[data-testid="log-filter"] input').setValue('nothing-matches')
     await flushPromises()
     expect(w.find('[data-testid="log-filter-empty"]').exists()).toBe(true)
-    expect(w.text()).toContain('没有匹配「nothing-matches」的日志')
+    expect(w.text()).toContain('没有匹配当前筛选条件的日志')
     w.unmount()
   })
+
+
+  it('级别筛选只保留对应级别', async () => {
+    logsMock.mockResolvedValue({ logs: [
+      { id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'all good' },
+      { id: 2, ts: '2026-10-19T04:00:01+08:00', line: 'error boom' },
+      { id: 3, ts: '2026-10-19T04:00:02+08:00', line: 'warn slow' },
+    ] })
+    const w = mount(LogsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const select = w.findComponent('[data-testid="log-level-filter"]')
+    await select.setValue('error')
+    await flushPromises()
+    const rows = w.findAll('[data-testid="log-row"]')
+    expect(rows.length).toBe(1)
+    expect(rows[0].text()).toContain('error boom')
+    w.unmount()
+  })
+
+  it('长日志默认折叠，可在详情中查看并复制全文', async () => {
+    const long = 'x'.repeat(320)
+    logsMock.mockResolvedValue({ logs: [{ id: 1, ts: '2026-10-19T04:00:00+08:00', line: long }] })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true, writable: true })
+    const w = mount(LogsPage, {
+      global: {
+        plugins: [vuetify],
+        stubs: { VDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' } },
+      },
+    })
+    await flushPromises()
+    expect(w.find('[data-testid="log-detail-open"]').exists()).toBe(true)
+    expect(w.find('.log-row__message').classes()).toContain('log-row__message--clamped')
+    expect(w.find('[data-testid="log-detail-dialog"]').exists()).toBe(false)
+    await w.find('[data-testid="log-detail-open"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="log-detail-dialog"]').exists()).toBe(true)
+    expect(w.text()).toContain(long)
+    await w.find('[data-testid="log-detail-copy"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith(long)
+    await w.find('[data-testid="log-detail-close"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).detailOpen).toBe(false)
+    w.unmount()
+  })
+
+  it('日志列表不使用固定高度与横向滚动', async () => {
+    logsMock.mockResolvedValue({ logs: [{ id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'x' }] })
+    const w = mount(LogsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const el = w.find('[data-testid="log-container"]').element as HTMLElement
+    expect(el.style.maxHeight).toBe('')
+    expect(el.style.overflowY).toBe('')
+    expect(el.style.overflowX).toBe('')
+    w.unmount()
+  })
+
+
+
+  it('复制日志失败时给出错误提示', async () => {
+    logsMock.mockResolvedValue({ logs: [{ id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'x'.repeat(300) }] })
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) }, configurable: true, writable: true })
+    const w = mount(LogsPage, {
+      global: { plugins: [vuetify], stubs: { VDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' } } },
+    })
+    await flushPromises()
+    await w.find('[data-testid="log-detail-open"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="log-detail-copy"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="log-detail-dialog"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+
+
+  it('详情未选择日志时复制为空操作', async () => {
+    logsMock.mockResolvedValue({ logs: [] })
+    const w = mount(LogsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).detailEntry = null
+    await (w.vm as any).copyDetail()
+    await flushPromises()
+    expect((w.vm as any).detailOpen).toBe(false)
+    w.unmount()
+  })
+
 })
