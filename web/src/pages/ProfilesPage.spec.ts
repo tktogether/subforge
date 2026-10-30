@@ -75,15 +75,26 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
   }
 }
 
-// 页面里有多个 VSelect（表格底部的每页条数），这里按 data-testid 精确挑出规则源多选框。
-function ruleSourceSelect(w: ReturnType<typeof mountPage>) {
-  const found = w
-    .findAllComponents({ name: 'VSelect' })
-    .find((s) => s.attributes('data-testid') === 'profile-rule-sources')
-  if (!found) {
-    throw new Error('找不到规则源多选框')
+// 选中规则源要先打开「添加规则源」弹窗，再勾选一项并确认。
+function sourceCheckbox(w: ReturnType<typeof mountPage>, value: string) {
+  return w.findAllComponents({ name: 'VCheckbox' })
+    .find((c) => c.attributes('data-testid') === 'profile-source-check-' + value)
+}
+
+async function addRuleSources(w: ReturnType<typeof mountPage>, values: string[]) {
+  await w.find('[data-testid="profile-rule-source-add"]').trigger('click')
+  await flushPromises()
+  for (const value of values) {
+    const cb = sourceCheckbox(w, value)
+    if (!cb) throw new Error('找不到规则源选项: ' + value)
+    await cb.setValue(true)
   }
-  return found
+  await flushPromises()
+  const confirm = w.findAllComponents({ name: 'VBtn' })
+    .find((c) => c.attributes('data-testid') === 'profile-source-confirm')
+  if (!confirm) throw new Error('找不到规则源添加确认按钮')
+  await confirm.trigger('click')
+  await flushPromises()
 }
 
 // v-dialog 的内容默认惰性渲染，测试里换成内联 stub 让弹窗内容直接可查。
@@ -687,9 +698,14 @@ describe('ProfilesPage', () => {
     vm.moveGroupLayer(0, 1)
     expect(vm.layerKeys(vm.groupLayers)).toEqual(['airport', 'custom', 'template'])
   })
-  it('新建方案：选中规则源后保存提交 rule_sources', async () => {
+  it('新建方案：从弹窗添加规则源后保存提交 rule_sources', async () => {
     const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
-    listSources.mockResolvedValue({ sources: [{ name: 'src1', latest: 'v1' }, { name: 'src2', latest: 'v2' }, { name: 'empty', latest: '' }, { name: 'airport-1-HK', latest: 'v3', origin: 'airport', label: 'HK' }] })
+    listSources.mockResolvedValue({ sources: [
+      { name: 'src1', latest: 'v1', rule_count: 12 },
+      { name: 'src2', latest: 'v2', rule_count: 34 },
+      { name: 'empty', latest: '' },
+      { name: 'airport-1-HK', latest: 'v3', origin: 'airport', label: 'HK', rule_count: 100 },
+    ] })
     ;(endpoints.createProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile({ id: 7 }))
     const w = mountPage()
     await flushPromises()
@@ -697,22 +713,14 @@ describe('ProfilesPage', () => {
     await w.find('[data-testid="profile-new"]').trigger('click')
     await flushPromises()
 
-    // 弹窗里的规则源多选框，选项来自 GET /api/rule-sources 的 sources[].name。
     expect(w.find('[data-testid="profile-rule-sources"]').exists()).toBe(true)
-    const select = ruleSourceSelect(w)
-    expect(select.props('items')).toEqual([
-      { title: 'src1', value: 'src1' },
-      { title: 'src2', value: 'src2' },
-      { title: '机场规则 · HK', value: 'airport-1-HK' },
-    ])
-
-    // 勾选 src1（等价于在多选框里选中一项）。
-    ;(select.vm as unknown as { $emit: (e: string, ...a: unknown[]) => void }).$emit('update:modelValue', ['src1'])
-    await flushPromises()
+    expect(w.find('[data-testid="profile-rule-sources-empty"]').exists()).toBe(true)
+    await addRuleSources(w, ['src1'])
     const vm = w.vm as unknown as ProfilesPageVm
     expect(vm.draft.rule_sources).toEqual(['src1'])
-    // 已选项以 chips 展示。
-    expect(w.findAll('.v-chip').map((c) => c.text()).join('|')).toContain('src1')
+    const row = w.find('[data-testid="profile-rule-source-row-src1"]')
+    expect(row.text()).toContain('src1')
+    expect(row.text()).toContain('远程 · 12 条')
 
     await w.find('[data-testid="profile-name"]').find('input').setValue('带规则源方案')
     await w.find('[data-testid="profile-save"]').trigger('click')
@@ -740,11 +748,8 @@ describe('ProfilesPage', () => {
 
     const vm = w.vm as unknown as ProfilesPageVm
     expect(vm.draft.rule_sources).toEqual(['a', 'b'])
-    const select = ruleSourceSelect(w)
-    expect(select.props('modelValue')).toEqual(['a', 'b'])
-    const chipText = w.findAll('.v-chip').map((c) => c.text()).join('|')
-    expect(chipText).toContain('a')
-    expect(chipText).toContain('b')
+    expect(w.find('[data-testid="profile-rule-source-row-a"]').text()).toContain('1')
+    expect(w.find('[data-testid="profile-rule-source-row-b"]').text()).toContain('2')
 
     await w.find('[data-testid="profile-save"]').trigger('click')
     await flushPromises()
@@ -752,6 +757,68 @@ describe('ProfilesPage', () => {
 
     // 旧数据没有 rule_sources 字段时回填空数组，不崩。
     await w.findAll('[data-testid="profile-edit"]')[1].trigger('click')
+    await flushPromises()
+    expect(vm.draft.rule_sources).toEqual([])
+  })
+
+  it('有序多选：搜索过滤、添加顺序、上移/下移、移除与未知源提示', async () => {
+    const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
+    listSources.mockResolvedValue({ sources: [
+      { name: 'a', latest: 'v1', rule_count: 5 },
+      { name: 'b', latest: 'v1', rule_count: 6 },
+      { name: 'c', latest: 'v1', rule_count: 7 },
+    ] })
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+
+    // 搜索只在添加弹窗里过滤。
+    await w.find('[data-testid="profile-rule-source-add"]').trigger('click')
+    await flushPromises()
+    const sourceSearch = w.findAllComponents({ name: 'VTextField' })
+      .find((c) => c.attributes('data-testid') === 'profile-source-search')
+    expect(sourceSearch).toBeTruthy()
+    await sourceSearch!.find('input').setValue('b')
+    await flushPromises()
+    expect(w.findAll('[data-testid="profile-source-option"]')).toHaveLength(1)
+    ;(w.vm as any).sourceSearch = ''
+    await flushPromises()
+    await (w.vm as any).toggleSourcePick('a')
+    await (w.vm as any).toggleSourcePick('a')
+    await (w.vm as any).toggleSourcePick('a')
+    await (w.vm as any).toggleSourcePick('b')
+    await flushPromises()
+    await (w.vm as any).addPickedSources()
+    await flushPromises()
+
+    const vm = w.vm as unknown as ProfilesPageVm
+    expect(vm.draft.rule_sources).toEqual(['a', 'b'])
+    await w.find('[data-testid="profile-rule-source-down-a"]').trigger('click')
+    await flushPromises()
+    expect(vm.draft.rule_sources).toEqual(['b', 'a'])
+    await w.find('[data-testid="profile-rule-source-up-a"]').trigger('click')
+    await flushPromises()
+    expect(vm.draft.rule_sources).toEqual(['a', 'b'])
+    await (w.vm as any).moveRuleSource(0, -1)
+    expect(vm.draft.rule_sources).toEqual(['a', 'b'])
+    await (w.vm as any).removeRuleSource('b')
+    expect(vm.draft.rule_sources).toEqual(['a'])
+
+    // 已选的 a 不再出现在添加列表里；b 已移除，可以重新添加。
+    await w.find('[data-testid="profile-rule-source-add"]').trigger('click')
+    await flushPromises()
+    const opts = w.findAll('[data-testid="profile-source-option"]').map((o) => o.text())
+    expect(opts).toHaveLength(2)
+    expect(w.findAllComponents({ name: 'VCheckbox' }).some((c) => c.attributes('data-testid') === 'profile-source-check-a')).toBe(false)
+    ;(w.vm as any).sourcePickerOpen = false
+    await flushPromises()
+
+    // 已删除/无产物的历史源仍要显示、可移除。
+    vm.draft.rule_sources = ['missing']
+    await flushPromises()
+    expect(w.find('[data-testid="profile-rule-source-row-missing"]').text()).toContain('已移除或暂无产物')
+    await w.find('[data-testid="profile-rule-source-remove-missing"]').trigger('click')
     await flushPromises()
     expect(vm.draft.rule_sources).toEqual([])
   })
@@ -806,7 +873,14 @@ describe('ProfilesPage', () => {
     await flushPromises()
     const vm = w.vm as unknown as ProfilesPageVm
     expect(vm.dialog).toBe(true)
-    expect(ruleSourceSelect(w).props('items')).toEqual([])
+    await w.find('[data-testid="profile-rule-source-add"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="profile-source-empty"]').exists()).toBe(true)
+    const cancelPicker = w.findAllComponents({ name: 'VBtn' })
+      .find((c) => c.attributes('data-testid') === 'profile-source-cancel')
+    expect(cancelPicker).toBeTruthy()
+    await cancelPicker!.trigger('click')
+    await flushPromises()
 
     await w.find('[data-testid="profile-name"]').find('input').setValue('兜底方案')
     await w.find('[data-testid="profile-save"]').trigger('click')

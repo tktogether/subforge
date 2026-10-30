@@ -66,7 +66,7 @@ const loading = ref(false)
 const error = ref('')
 
 // 规则源选项（D-33）：方案可绑定规则源；选项来自 GET /api/rule-sources 的 sources[].name。
-const ruleSourceOptions = ref<{ title: string; value: string }[]>([])
+const ruleSourceOptions = ref<{ title: string; value: string; origin?: string; ruleCount?: number }[]>([])
 
 // 节点来源选项：机场/自建节点。加载失败只降级为空选项，不阻断方案编辑。
 const airportOptions = ref<{ title: string; value: number }[]>([])
@@ -223,11 +223,81 @@ async function loadRuleSourceOptions(): Promise<void> {
       .map((s) => ({
         title: s.origin === 'airport' ? '机场规则 · ' + (s.label ?? s.name) : (s.label ?? s.name),
         value: s.name,
+        origin: s.origin,
+        ruleCount: s.rule_count ?? 0,
       }))
   } catch {
     // 规则源清单加载失败不阻断方案编辑：保留空选项，用户仍可保存其它字段
     ruleSourceOptions.value = []
   }
+}
+
+// ---- 规则源有序多选 ----
+const sourcePickerOpen = ref(false)
+const sourceSearch = ref('')
+const sourcePicked = ref<string[]>([])
+
+const filteredSourceOptions = computed(() => {
+  const selected = new Set(draft.value.rule_sources)
+  const q = sourceSearch.value.trim().toLowerCase()
+  return ruleSourceOptions.value.filter((o) => {
+    if (selected.has(o.value)) return false
+    if (q === '') return true
+    return o.title.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)
+  })
+})
+
+function sourceOption(name: string): { title: string; value: string; origin?: string; ruleCount?: number } | undefined {
+  return ruleSourceOptions.value.find((o) => o.value === name)
+}
+
+function sourceTitle(name: string): string {
+  return sourceOption(name)?.title ?? name
+}
+
+function sourceMeta(name: string): string {
+  const o = sourceOption(name)
+  if (o === undefined) return '已移除或暂无产物'
+  return (o.origin === 'airport' ? '机场' : '远程') + ' · ' + (o.ruleCount ?? 0) + ' 条'
+}
+
+function openSourcePicker(): void {
+  sourceSearch.value = ''
+  sourcePicked.value = []
+  sourcePickerOpen.value = true
+}
+
+function toggleSourcePick(value: string): void {
+  const i = sourcePicked.value.indexOf(value)
+  if (i >= 0) {
+    sourcePicked.value.splice(i, 1)
+  } else {
+    sourcePicked.value.push(value)
+  }
+}
+
+function addPickedSources(): void {
+  for (const value of sourcePicked.value) {
+    if (!draft.value.rule_sources.includes(value)) {
+      draft.value.rule_sources.push(value)
+    }
+  }
+  sourcePicked.value = []
+  sourcePickerOpen.value = false
+}
+
+function removeRuleSource(value: string): void {
+  draft.value.rule_sources = draft.value.rule_sources.filter((v) => v !== value)
+}
+
+function moveRuleSource(index: number, delta: number): void {
+  const target = index + delta
+  const list = draft.value.rule_sources
+  if (target < 0 || target >= list.length) return
+  const next = list.slice()
+  const [row] = next.splice(index, 1)
+  next.splice(target, 0, row)
+  draft.value.rule_sources = next
 }
 
 // truncateTemplate 把过长的模板文本截断到 60 字。
@@ -530,21 +600,60 @@ loadRuleSourceOptions()
             class="mb-2"
             data-testid="profile-exclude"
           />
-          <v-select
-            v-model="draft.rule_sources"
-            :items="ruleSourceOptions"
-            item-title="title"
-            item-value="value"
-            data-testid="profile-rule-sources"
-            label="绑定规则源（产物内联进订阅，并替换模板规则）"
-            multiple
-            chips
-            closable-chips
-            variant="outlined"
-            hint="机场规则源显示为「机场规则 · 名称」。只显示已有产物的规则源；可多选、按顺序拼接，顺序靠前的先命中。"
-            persistent-hint
-            class="mb-3"
-          />
+          <div class="mb-3">
+            <div class="text-subtitle-2 mb-1">规则源（顺序即优先级）</div>
+            <div class="text-caption text-medium-emphasis mb-2">
+              靠前的源先命中重复规则；机场规则源显示为「机场规则 · 名称」。
+            </div>
+            <div class="sf-source-list" data-testid="profile-rule-sources">
+              <div
+                v-for="(name, index) in draft.rule_sources"
+                :key="name"
+                class="sf-source-row"
+                :data-testid="'profile-rule-source-row-' + name"
+              >
+                <span class="sf-source-priority">{{ index + 1 }}</span>
+                <span class="sf-source-name">{{ sourceTitle(name) }}</span>
+                <span class="sf-source-meta">{{ sourceMeta(name) }}</span>
+                <v-btn
+                  icon="mdi-chevron-up"
+                  size="x-small"
+                  variant="text"
+                  :disabled="index === 0"
+                  :data-testid="'profile-rule-source-up-' + name"
+                  @click="moveRuleSource(index, -1)"
+                />
+                <v-btn
+                  icon="mdi-chevron-down"
+                  size="x-small"
+                  variant="text"
+                  :disabled="index === draft.rule_sources.length - 1"
+                  :data-testid="'profile-rule-source-down-' + name"
+                  @click="moveRuleSource(index, 1)"
+                />
+                <v-btn
+                  icon="mdi-close"
+                  size="x-small"
+                  variant="text"
+                  :data-testid="'profile-rule-source-remove-' + name"
+                  @click="removeRuleSource(name)"
+                />
+              </div>
+              <div v-if="draft.rule_sources.length === 0" class="sf-source-empty text-medium-emphasis" data-testid="profile-rule-sources-empty">
+                未绑定规则源
+              </div>
+            </div>
+            <v-btn
+              size="small"
+              variant="tonal"
+              prepend-icon="mdi-plus"
+              class="mt-2"
+              data-testid="profile-rule-source-add"
+              @click="openSourcePicker"
+            >
+              添加规则源
+            </v-btn>
+          </div>
           <v-divider class="mb-3" />
           <div class="text-subtitle-2 mb-1">节点来源</div>
           <v-switch
@@ -653,7 +762,39 @@ loadRuleSourceOptions()
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="confirmOpen" max-width="420">
+    <v-dialog v-model="sourcePickerOpen" max-width="560">
+    <v-card data-testid="profile-source-picker">
+      <v-card-title>添加规则源</v-card-title>
+      <v-card-text>
+        <v-text-field v-model="sourceSearch" label="搜索规则源" density="compact" hide-details data-testid="profile-source-search" class="mb-2" />
+        <div class="sf-source-picker-list">
+          <v-list v-if="filteredSourceOptions.length > 0">
+            <v-list-item v-for="opt in filteredSourceOptions" :key="opt.value" data-testid="profile-source-option">
+              <template #prepend>
+                <v-checkbox
+                  :model-value="sourcePicked.includes(opt.value)"
+                  hide-details
+                  density="compact"
+                  :data-testid="'profile-source-check-' + opt.value"
+                  @update:model-value="toggleSourcePick(opt.value)"
+                />
+              </template>
+              <v-list-item-title>{{ opt.title }}</v-list-item-title>
+              <v-list-item-subtitle>{{ (opt.origin === 'airport' ? '机场' : '远程') + ' · ' + (opt.ruleCount ?? 0) + ' 条' }}</v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+          <div v-else class="text-medium-emphasis py-4 text-center" data-testid="profile-source-empty">没有可添加的规则源</div>
+        </div>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="profile-source-cancel" @click="sourcePickerOpen = false">取消</v-btn>
+        <v-btn color="primary" :disabled="sourcePicked.length === 0" data-testid="profile-source-confirm" @click="addPickedSources">添加</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="confirmOpen" max-width="420">
       <v-card>
         <v-card-title>确认删除</v-card-title>
         <v-card-text>删除方案「{{ deleteTarget.name }}」后不可恢复，确定继续？</v-card-text>
@@ -707,5 +848,46 @@ loadRuleSourceOptions()
 .sf-layer-note {
   font-size: 12px;
   color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
+}
+.sf-source-list {
+  border: 1px solid var(--sf-border, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  overflow: hidden;
+}
+.sf-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--sf-border, rgba(0, 0, 0, 0.08));
+}
+.sf-source-row:last-child {
+  border-bottom: 0;
+}
+.sf-source-priority {
+  width: 20px;
+  text-align: center;
+  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
+  font-size: 12px;
+}
+.sf-source-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sf-source-meta {
+  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
+  font-size: 12px;
+  white-space: nowrap;
+}
+.sf-source-empty {
+  padding: 10px;
+  font-size: 13px;
+}
+.sf-source-picker-list {
+  max-height: 40vh;
+  overflow-y: auto;
 }
 </style>
