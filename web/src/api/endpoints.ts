@@ -279,8 +279,31 @@ export interface RuleSourceStatus {
   dir: string
   versions: string[]
   latest: string
+  /** airport = 机场订阅生成；remote = 远程清单 */
+  origin?: 'airport' | 'remote' | string
+  /** 界面展示名；机场源已去掉内部前缀 */
+  label?: string
+  rule_count?: number
+  /** 当前版本文件修改时间（Unix 秒） */
+  updated_at?: number
 }
 export type RuleSource = RuleSourceStatus
+
+export interface RuleSourceRulesPage {
+  name: string
+  total: number
+  offset: number
+  limit: number
+  rules: string[]
+  warnings?: string[]
+}
+
+export interface RuleSourceImportResult {
+  added: number
+  skipped: number
+  overwrote: number
+  warnings?: string[]
+}
 
 export interface RuleSourceUpdateResult {
   source: string
@@ -305,6 +328,7 @@ export interface ImportRulesOutcome {
   airport_id: number; name: string
   rules_added: number; rules_skipped: number; rules_enabled?: number; providers_added: number
   groups_created?: number
+  rule_source_name?: string; rule_source_version?: string; rule_source_rules?: number
   warnings: string[]; err: string
 }
 export interface TrafficRefreshResponse {
@@ -313,6 +337,7 @@ export interface TrafficRefreshResponse {
 }
 export interface ImportRulesResult {
   rules_added: number; rules_skipped: number; rules_enabled?: number; providers_added: number; warnings: string[]; groups_created?: number
+  rule_source_name?: string; rule_source_version?: string; rule_source_rules?: number
 }
 export interface SubscheckResult {
   url: string; ok: boolean; status_code: number; latency: number; bytes: number; err: string
@@ -477,6 +502,10 @@ export const endpoints = {
   applySuggestions: (): Promise<{ applied: number }> => api.post<{ applied: number }>('/api/suggestions/apply', {}),
   listRuleSources: (): Promise<RuleSourcesResponse> =>
     api.get<RuleSourcesResponse>('/api/rule-sources'),
+  listRuleSourceRules: (name: string, opts?: { q?: string; offset?: number; limit?: number }): Promise<RuleSourceRulesPage> =>
+    api.get<RuleSourceRulesPage>('/api/rule-sources/rules', { query: { name, q: opts?.q, offset: opts?.offset, limit: opts?.limit } }),
+  importRuleSourceRules: (body: { name: string; rules: string[]; conflict?: 'skip' | 'overwrite' }): Promise<RuleSourceImportResult> =>
+    api.post<RuleSourceImportResult>('/api/rule-sources/import-rules', body),
   updateRuleSources: (): Promise<{ results: RuleSourceUpdateResult[] }> =>
     api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update', {}),
   rollbackRuleSource: (name: string): Promise<{ path: string }> =>
@@ -497,7 +526,7 @@ export const endpoints = {
     api.post<TrafficRefreshResponse>('/api/airports/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
   refreshAirport: (id: number | string): Promise<{ result: TrafficRefreshResult }> =>
     api.post<{ result: TrafficRefreshResult }>('/api/airports/' + id + '/refresh', {}),
-  importAirportRules: (id: number | string, body?: { create_groups?: boolean; enable_rules?: boolean }): Promise<ImportRulesResult> =>
+  importAirportRules: (id: number | string, body?: { create_groups?: boolean }): Promise<ImportRulesResult> =>
     api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', body ?? {}),
   checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[] }> =>
     api.post<{ results: SubscheckResult[] }>('/api/airports/check', ids === undefined ? {} : { ids }),

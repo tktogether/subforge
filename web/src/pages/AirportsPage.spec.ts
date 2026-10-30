@@ -76,7 +76,7 @@ beforeEach(() => {
   updateMock.mockResolvedValue(makeAirport())
   deleteMock.mockResolvedValue({ ok: true })
   refreshMock.mockResolvedValue({ result: { ok: true, err: '' } })
-  importMock.mockResolvedValue({ rules_added: 1, rules_skipped: 2, providers_added: 1, warnings: [] })
+  importMock.mockResolvedValue({ rules_added: 0, rules_skipped: 0, providers_added: 1, rule_source_rules: 1, warnings: [] })
   refreshAllMock.mockResolvedValue({ ok: 1, fail: 0, imports: [{ airport_id: 1, name: 'HK', rules_added: 1, rules_skipped: 0, providers_added: 1, warnings: [], err: '' }] })
   checkMock.mockResolvedValue({ results: [makeCheckResult()] })
   lastCheckMock.mockResolvedValue({ results: [makeCheckResult()] })
@@ -281,23 +281,22 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('导入规则（弹窗确认）只带建组参数调用 importAirportRules（无 profile_id）', async () => {
+  it('更新规则源（弹窗确认）只带建组参数调用 importAirportRules（无 profile_id）', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
     await flushPromises()
     ;(w.vm as any).importCreateGroups = false
-    ;(w.vm as any).importEnableRules = false
     await (w.vm as any).confirmImportRules()
     await flushPromises()
-    expect(importMock).toHaveBeenCalledWith(1, { create_groups: false, enable_rules: false })
-    expect(notifyState.text).toContain('候选（未启用）')
+    expect(importMock).toHaveBeenCalledWith(1, { create_groups: false })
+    expect(notifyState.text).toContain('规则源已更新')
     expect(listMock).toHaveBeenCalledTimes(2)
     w.unmount()
   })
 
   it('手动导入结果面板可关闭', async () => {
-    importMock.mockResolvedValueOnce({ rules_added: 1, rules_skipped: 0, rules_enabled: 1, providers_added: 0, warnings: [] })
+    importMock.mockResolvedValueOnce({ rules_added: 0, rules_skipped: 0, providers_added: 0, rule_source_rules: 1, warnings: [] })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
     try {
       await flushPromises()
@@ -306,7 +305,7 @@ describe('AirportsPage', () => {
       await flushPromises()
       const alert = w.find('[data-testid="manual-import-result"]')
       expect(alert.exists()).toBe(true)
-      expect(alert.text()).toContain('启用 1')
+      expect(alert.text()).toContain('规则源已更新 1 条')
       const alertComp = w.findComponent({ name: 'VAlert' })
       expect(alertComp.exists()).toBe(true)
       alertComp.vm.$emit('click:close')
@@ -339,31 +338,11 @@ describe('AirportsPage', () => {
       expect((w.vm as any).importDialog).toBe(true)
       expect((w.vm as any).importTarget.id).toBe(1)
       expect((w.vm as any).importCreateGroups).toBe(true)
-      expect((w.vm as any).importEnableRules).toBe(true)
       const hint = document.body.querySelector('[data-testid="import-rules-hint"]')
       expect(hint).toBeTruthy()
-      expect((hint as HTMLElement).textContent).toContain('airport:机场名')
-      expect((hint as HTMLElement).textContent).toContain('立即启用')
+      expect((hint as HTMLElement).textContent).toContain('版本化规则源')
       expect(document.body.querySelector('[data-testid="import-rules-profile"]')).toBeNull()
-    } finally {
-      w.unmount()
-    }
-  })
-
-  it('导入弹窗“立即启用”复选框默认勾选且可取消', async () => {
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
-    try {
-      await flushPromises()
-      ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
-      await flushPromises()
-      await new Promise((r) => setTimeout(r, 50))
-      const enable = document.body.querySelector('[data-testid="import-rules-enable"] input') as HTMLInputElement | null
-      expect(enable).toBeTruthy()
-      expect(enable!.checked).toBe(true)
-      enable!.click()
-      await flushPromises()
-      expect((w.vm as any).importEnableRules).toBe(false)
-      expect(enable!.checked).toBe(false)
+      expect(document.body.querySelector('[data-testid="import-rules-enable"]')).toBeNull()
     } finally {
       w.unmount()
     }
@@ -381,17 +360,17 @@ describe('AirportsPage', () => {
   })
 
   it('新建分组 > 0 时 toast 追加「，新建分组 Z」', async () => {
-    importMock.mockResolvedValueOnce({ rules_added: 2, rules_skipped: 1, providers_added: 1, warnings: [], groups_created: 3 })
+    importMock.mockResolvedValueOnce({ rules_added: 0, rules_skipped: 0, providers_added: 1, warnings: [], rule_source_rules: 2, groups_created: 3 })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
     await (w.vm as any).confirmImportRules()
     await flushPromises()
-    expect(notifyState.text).toBe('已导入并启用规则：新增 2，跳过 1，新建分组 3')
+    expect(notifyState.text).toBe('规则源已更新：2 条，新建分组 3')
     expect(notifyState.kind).toBe('ok')
     const alert = w.find('[data-testid="manual-import-result"]')
     expect(alert.exists()).toBe(true)
-    expect(alert.text()).toContain('启用 0')
+    expect(alert.text()).toContain('规则源已更新 2 条')
     w.unmount()
   })
 
@@ -715,20 +694,21 @@ describe('AirportsPage', () => {
     await flushPromises()
     await new Promise((r) => setTimeout(r, 50))
     await flushPromises()
-    const confirm = Array.from(document.body.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '确认导入')
+    const confirm = Array.from(document.body.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '确认更新')
     expect(confirm).toBeTruthy()
     ;(confirm as HTMLElement).click()
     await flushPromises()
-    expect(importMock).toHaveBeenCalledWith(1, { create_groups: true, enable_rules: true })
-    expect(notifyState.text).toContain('已导入并启用规则')
+    expect(importMock).toHaveBeenCalledWith(1, { create_groups: true })
+    expect(notifyState.text).toContain('规则源已更新')
     w.unmount()
   })
 
   it('导入规则返回 warnings 时显示首条提示', async () => {
     importMock.mockResolvedValueOnce({
-      rules_added: 3,
+      rules_added: 0,
       rules_skipped: 0,
       providers_added: 0,
+      rule_source_rules: 3,
       warnings: ['2 条规则的目标分组（如 📺 Netflix）还没在「分组」页里建'],
     })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
@@ -821,8 +801,8 @@ describe('AirportsPage', () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect(w.find('[data-testid="with-rules"]').exists()).toBe(true)
-    // '全部刷新' 只出现在 airport.with_rules 的 hint 文案里（按钮是「刷新全部流量」），命中即证明 hint 渲染
-    expect(w.text()).toContain('全部刷新')
+    // '刷新全部流量' 出现在 with_rules 的 hint 文案里，命中即证明 hint 渲染
+    expect(w.text()).toContain('刷新全部流量')
     w.unmount()
   })
 

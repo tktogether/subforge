@@ -6,6 +6,7 @@ import * as directives from 'vuetify/directives'
 import RuleSourcesPage from './RuleSourcesPage.vue'
 import { endpoints } from '../api/endpoints'
 import { PAGE_HELP } from '../content/help'
+import { notifyState } from '../composables/useNotify'
 
 vi.mock('../api/endpoints', () => ({
   endpoints: {
@@ -16,6 +17,8 @@ vi.mock('../api/endpoints', () => ({
     addRuleSource: vi.fn(),
     removeRuleSource: vi.fn(),
     updateRuleSourceOne: vi.fn(),
+    listRuleSourceRules: vi.fn(),
+    importRuleSourceRules: vi.fn(),
     rulesets: vi.fn(),
   },
 }))
@@ -29,11 +32,13 @@ const mrsMock = endpoints.generateMRS as unknown as ReturnType<typeof vi.fn>
 const addMock = endpoints.addRuleSource as unknown as ReturnType<typeof vi.fn>
 const removeMock = endpoints.removeRuleSource as unknown as ReturnType<typeof vi.fn>
 const updateOneMock = endpoints.updateRuleSourceOne as unknown as ReturnType<typeof vi.fn>
+const listRulesMock = endpoints.listRuleSourceRules as unknown as ReturnType<typeof vi.fn>
+const importRulesMock = endpoints.importRuleSourceRules as unknown as ReturnType<typeof vi.fn>
 
 function makeSources() {
   return [
-    { name: 'src1', url: 'http://x', format: 'mrs', dir: '/d', versions: ['v1', 'v2'], latest: 'v2' },
-    { name: 'src2', url: 'http://y', format: 'text', dir: '/e', versions: [], latest: '' },
+    { name: 'src1', url: 'http://x', format: 'mrs', dir: '/d', versions: ['v1', 'v2'], latest: 'v2', origin: 'remote', label: 'src1', rule_count: 12, updated_at: 1700000000 },
+    { name: 'src2', url: 'http://y', format: 'text', dir: '/e', versions: [], latest: '', origin: 'airport', label: '守候-SNTP', rule_count: 0, updated_at: 0 },
   ]
 }
 
@@ -61,6 +66,8 @@ describe('RuleSourcesPage', () => {
     addMock.mockResolvedValue({ path: '/m/manifest.yaml', created: true })
     removeMock.mockResolvedValue({ ok: true })
     updateOneMock.mockResolvedValue({ results: [{ source: 'src1', version: 'v3', path: '/p/v3', from_cache: false, err: '' }] })
+    listRulesMock.mockResolvedValue({ name: 'src1', total: 2, offset: 0, limit: 50, rules: ['DOMAIN-SUFFIX,a.test,DIRECT', 'IP-CIDR,1.1.1.1/32,DIRECT,no-resolve'] })
+    importRulesMock.mockResolvedValue({ added: 2, skipped: 0, overwrote: 0, warnings: [] })
   })
 
   it('onMounted 加载 listRuleSources 渲染列表与 testids', async () => {
@@ -74,7 +81,12 @@ describe('RuleSourcesPage', () => {
     expect(w.find('[data-testid="manifest-exists"]').exists()).toBe(true)
     expect(w.findAll('[data-testid="source-row"]').length).toBe(2)
     expect(w.text()).toContain('src1')
-    expect(w.text()).toContain('v2')
+    expect(w.text()).toContain('守候-SNTP')
+    expect(w.text()).toContain('远程')
+    expect(w.text()).toContain('机场')
+    expect(w.text()).toContain('12')
+    expect(w.text()).toContain('2023')
+    expect(w.text()).not.toContain('v2')
     w.unmount()
   })
 
@@ -107,14 +119,15 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
-  it('空版本显示 no-version，表头是「当前版本」', async () => {
+  it('表头只展示名称/来源/规则数/更新时间，不再展示 URL 与版本', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.find('[data-testid="no-version"]').exists()).toBe(true)
-    expect(w.find('[data-testid="no-version"]').text()).toContain('暂无当前版本')
     const headers = w.findAll('th').map((th) => th.text())
-    expect(headers).toContain('当前版本')
-    expect(headers).not.toContain('最新版本')
+    expect(headers).toEqual(['名称', '来源', '规则数', '更新时间', '操作'])
+    const rows = w.findAll('[data-testid="source-row"]')
+    expect(rows[1].text()).toContain('机场')
+    expect(rows[1].text()).toContain('—')
+    expect(rows[1].text()).not.toContain('http://y')
     w.unmount()
   })
 
@@ -311,6 +324,9 @@ describe('RuleSourcesPage', () => {
     const mrsBtn = secondRow.find('[data-testid="source-mrs"]')
     expect(rollbackBtn.attributes('disabled')).toBeDefined()
     expect(mrsBtn.attributes('disabled')).toBeDefined()
+    // 机场规则源由机场维护，不能单独删除。
+    expect(secondRow.find('[data-testid="source-remove"]').attributes('disabled')).toBeDefined()
+    expect(rows[0].find('[data-testid="source-remove"]').attributes('disabled')).toBeUndefined()
     w.unmount()
   })
 
@@ -353,24 +369,11 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
-  it('版本列表渲染 version-item', async () => {
+  it('不再单独渲染版本列表', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    // expand all panels
-    ;(w.vm as any).expanded = ['src1', 'src2']
-    await flushPromises()
-    await new Promise(r => setTimeout(r, 100))
-    await flushPromises()
-    // fallback: check count via vm data
-    const cnt = w.findAll('[data-testid="version-item"]').length
-    if (cnt === 0) {
-      // try clicking panel headers
-      const panels = w.findAll('.v-expansion-panel-title')
-      for (const p of panels) { await p.trigger('click'); await flushPromises() }
-      await new Promise(r => setTimeout(r, 100))
-      await flushPromises()
-    }
-    expect(w.findAll('[data-testid="version-item"]').length).toBeGreaterThan(0)
+    expect(w.findAll('[data-testid="version-item"]').length).toBe(0)
+    expect(w.text()).not.toContain('的版本')
     w.unmount()
   })
 
@@ -649,5 +652,186 @@ describe('RuleSourcesPage 覆盖率补齐（MRS 更新中守卫）', () => {
     expect(mrsMock).not.toHaveBeenCalled()
     vm.updating = false
     w.unmount()
+  })
+
+  it('点击规则源名称按钮打开挑选弹窗', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      await w.find('[data-testid="source-rules"]').trigger('click')
+      await flushPromises()
+      expect((w.vm as any).rulesDialog).toBe(true)
+      expect(listRulesMock).toHaveBeenCalledWith('src1', { q: '', offset: 0, limit: 50 })
+    } finally {
+      w.unmount()
+    }
+  })
+
+  it('从规则源挑选：加载、勾选、全选本页并加入自定义', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openRules({ name: 'src1', label: 'src1', versions: [], latest: 'v2' })
+      await flushPromises()
+      expect(listRulesMock).toHaveBeenCalledWith('src1', { q: '', offset: 0, limit: 50 })
+      expect(document.body.querySelector('[data-testid="source-rules-dialog"]')).not.toBeNull()
+      expect(document.body.querySelectorAll('[data-testid="source-rule-row"]')).toHaveLength(2)
+      expect(document.body.querySelector('[data-testid="source-rules-count"]')!.textContent).toContain('已选 0 条')
+
+      ;(w.vm as any).toggleRule('DOMAIN-SUFFIX,a.test,DIRECT')
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="source-rules-count"]')!.textContent).toContain('已选 1 条')
+      ;(w.vm as any).selectCurrentPage()
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="source-rules-count"]')!.textContent).toContain('已选 2 条')
+      ;(w.vm as any).clearSelectedRules()
+      await flushPromises()
+      expect(document.body.querySelector('[data-testid="source-rules-count"]')!.textContent).toContain('已选 0 条')
+      // 空选择时加入按钮 disabled，直接调用也被 guard 挡住。
+      expect((document.body.querySelector('[data-testid="source-rules-import"]') as HTMLButtonElement).disabled).toBe(true)
+      await (w.vm as any).importSelectedRules()
+      expect(importRulesMock).not.toHaveBeenCalled()
+
+      ;(w.vm as any).toggleRule('DOMAIN-SUFFIX,a.test,DIRECT')
+      await flushPromises()
+      await (w.vm as any).importSelectedRules()
+      await flushPromises()
+      expect(importRulesMock).toHaveBeenCalledWith({
+        name: 'src1',
+        rules: ['DOMAIN-SUFFIX,a.test,DIRECT'],
+        conflict: 'skip',
+      })
+      expect(notifyState.text).toContain('已加入自定义')
+      expect((w.vm as any).rulesDialog).toBe(false)
+    } finally {
+      w.unmount()
+    }
+  })
+
+  it('从规则源挑选：搜索、清空、分页、空结果与错误', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openRules({ name: 'src1', label: 'src1', versions: [], latest: 'v2' })
+      await flushPromises()
+      listRulesMock.mockResolvedValueOnce({ name: 'src1', total: 120, offset: 0, limit: 50, rules: ['DOMAIN-SUFFIX,page1.test,DIRECT'] })
+      ;(w.vm as any).rulesQuery = 'page1'
+      await (w.vm as any).searchRules()
+      await flushPromises()
+      expect(listRulesMock).toHaveBeenLastCalledWith('src1', { q: 'page1', offset: 0, limit: 50 })
+      expect((w.vm as any).rulesTotalPages).toBe(3)
+
+      listRulesMock.mockResolvedValueOnce({ name: 'src1', total: 120, offset: 50, limit: 50, rules: ['DOMAIN-SUFFIX,page2.test,DIRECT'] })
+      ;(w.vm as any).rulesPage = 2
+      await flushPromises()
+      expect(listRulesMock).toHaveBeenLastCalledWith('src1', { q: 'page1', offset: 50, limit: 50 })
+      expect(document.body.querySelectorAll('[data-testid="source-rule-row"]')).toHaveLength(1)
+
+      listRulesMock.mockResolvedValueOnce({ name: 'src1', total: 120, offset: 0, limit: 50, rules: [] })
+      await (w.vm as any).clearRulesSearch()
+      await flushPromises()
+      expect(listRulesMock).toHaveBeenLastCalledWith('src1', { q: '', offset: 0, limit: 50 })
+      expect(document.body.querySelector('[data-testid="source-rules-empty"]')).not.toBeNull()
+
+      listRulesMock.mockRejectedValueOnce(new Error('rules boom'))
+      await (w.vm as any).searchRules()
+      await flushPromises()
+      expect((w.vm as any).rulesError).toContain('rules boom')
+    } finally {
+      w.unmount()
+    }
+  })
+
+  it('从规则源挑选：空源守卫、跳过计数与取消按钮', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      await (w.vm as any).loadRules()
+      ;(w.vm as any).openRules({ name: 'src1', label: 'src1', versions: [], latest: 'v2' })
+      await flushPromises()
+      importRulesMock.mockResolvedValueOnce({ added: 1, skipped: 1, overwrote: 0, warnings: [] })
+      ;(w.vm as any).rulesSelected = ['DOMAIN-SUFFIX,a.test,DIRECT']
+      await (w.vm as any).importSelectedRules()
+      await flushPromises()
+      expect(notifyState.text).toContain('跳过 1')
+
+      ;(w.vm as any).openRules({ name: 'src1', label: 'src1', versions: [], latest: 'v2' })
+      await flushPromises()
+      const cancel = w.findAllComponents({ name: 'VBtn' })
+        .find((c) => c.attributes('data-testid') === 'source-rules-cancel')
+      expect(cancel).toBeTruthy()
+      await cancel!.trigger('click')
+      await flushPromises()
+      expect((w.vm as any).rulesDialog).toBe(false)
+    } finally {
+      w.unmount()
+    }
+  })
+
+  it('从规则源挑选：真实搜索输入、复选切换与分页组件事件', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openRules({ name: 'src1', label: 'src1', versions: [], latest: 'v2' })
+      await flushPromises()
+      const search = w.findAllComponents({ name: 'VTextField' })
+        .find((c) => c.attributes('data-testid') === 'source-rules-search')
+      expect(search).toBeTruthy()
+      await search!.find('input').setValue('page1')
+      listRulesMock.mockResolvedValueOnce({ name: 'src1', total: 120, offset: 0, limit: 50, rules: ['DOMAIN-SUFFIX,page1.test,DIRECT'] })
+      await search!.find('input').trigger('keyup.enter')
+      await flushPromises()
+      expect(listRulesMock).toHaveBeenLastCalledWith('src1', { q: 'page1', offset: 0, limit: 50 })
+
+      const cb = w.findAllComponents({ name: 'VCheckbox' })
+        .find((c) => c.attributes('data-testid') === 'source-rule-check')
+      expect(cb).toBeTruthy()
+      await cb!.setValue(true)
+      await cb!.setValue(false)
+      await flushPromises()
+      expect((w.vm as any).rulesSelected).toEqual([])
+
+      listRulesMock.mockResolvedValueOnce({ name: 'src1', total: 120, offset: 50, limit: 50, rules: ['DOMAIN-SUFFIX,page2.test,DIRECT'] })
+      const pag = w.findAllComponents({ name: 'VPagination' })[0]
+      expect(pag).toBeTruthy()
+      ;(pag.vm as unknown as { $emit: (e: string, ...a: unknown[]) => void }).$emit('update:modelValue', 2)
+      await flushPromises()
+      expect((w.vm as any).rulesOffset).toBe(50)
+    } finally {
+      w.unmount()
+    }
+  })
+
+  it('从规则源挑选：覆盖冲突、warnings、导入失败', async () => {
+    importRulesMock.mockResolvedValueOnce({ added: 0, skipped: 0, overwrote: 2, warnings: ['RULE-SET 依赖 provider'] })
+    notifyState.open = false
+    notifyState.text = ''
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openRules({ name: 'src1', label: 'src1', versions: [], latest: 'v2' })
+      await flushPromises()
+      ;(w.vm as any).rulesSelected = ['DOMAIN-SUFFIX,a.test,DIRECT']
+      ;(w.vm as any).rulesConflict = 'overwrite'
+      await (w.vm as any).importSelectedRules()
+      await flushPromises()
+      expect(importRulesMock).toHaveBeenCalledWith({
+        name: 'src1',
+        rules: ['DOMAIN-SUFFIX,a.test,DIRECT'],
+        conflict: 'overwrite',
+      })
+      expect(notifyState.text).toContain('RULE-SET 依赖 provider')
+
+      importRulesMock.mockRejectedValueOnce(new Error('import boom'))
+      await (w.vm as any).openRules({ name: 'src1', label: 'src1', versions: [], latest: 'v2' })
+      await flushPromises()
+      ;(w.vm as any).rulesSelected = ['DOMAIN-SUFFIX,a.test,DIRECT']
+      await (w.vm as any).importSelectedRules()
+      await flushPromises()
+      expect(notifyState.kind).toBe('error')
+      expect(notifyState.text).toContain('import boom')
+    } finally {
+      w.unmount()
+    }
   })
 })

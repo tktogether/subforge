@@ -436,6 +436,29 @@ it('listScripts 解包 .scripts', async () => {
     expect(r.sources).toHaveLength(1)
   })
 
+  it('listRuleSourceRules GET /api/rule-sources/rules 带 name/q/offset/limit', async () => {
+    fetchMock.mockResolvedValue(respond({ name: 's1', total: 1, offset: 0, limit: 50, rules: ['DOMAIN,a.test,DIRECT'] }))
+    const r = await endpoints.listRuleSourceRules('s1', { q: 'x', offset: 0, limit: 50 })
+    expect(r.rules).toEqual(['DOMAIN,a.test,DIRECT'])
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/rule-sources/rules?name=s1&q=x&offset=0&limit=50',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('importRuleSourceRules POST /api/rule-sources/import-rules', async () => {
+    fetchMock.mockResolvedValue(respond({ added: 1, skipped: 0, overwrote: 0, warnings: [] }))
+    const input = { name: 's1', rules: ['DOMAIN,a.test,DIRECT'], conflict: 'skip' as const }
+    const r = await endpoints.importRuleSourceRules(input)
+    expect(r.added).toBe(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/import-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: undefined,
+    })
+  })
+
   it('updateRuleSources POST /api/rule-sources/update', async () => {
     fetchMock.mockResolvedValue(respond({ ok: true, results: [{ name: 's1', status: 'ok' }] }))
     const r = await endpoints.updateRuleSources()

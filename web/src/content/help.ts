@@ -355,7 +355,7 @@ export const FIELD_HELP: Record<string, { hint: string; example?: string }> = {
   'airport.subscription_url': { hint: '上游订阅地址，支持 http/https', example: 'https://example.com/sub?token=xxx' },
   'airport.remarks': { hint: '备注信息，可选', example: '主机场' },
   'airport.with_rules': {
-    hint: '勾选后，「全部刷新」会顺带把每个启用机场的规则与规则集导入「规则」页；不勾则只刷新节点与流量。想单独导入某个机场，用表格行内的「导入规则」按钮。',
+    hint: '勾选后，「刷新全部流量」会顺带把每个启用机场的规则保存/更新为版本化规则源（不再写入规则页）；不勾则只刷新节点与流量。想单独更新某个机场，用表格行内的「更新规则源」按钮。',
     example: '',
   },
   'airport.enabled': { hint: '是否参与转换与输出' },

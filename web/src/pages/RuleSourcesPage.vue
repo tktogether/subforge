@@ -222,6 +222,135 @@ async function updateOne(name: string): Promise<void> {
   }
 }
 
+function originText(s: RuleSource): string {
+  return s.origin === 'airport' ? '机场' : '远程'
+}
+
+function updatedText(ts?: number): string {
+  if (!ts) return '—'
+  const d = new Date(ts * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// ---- 从规则源挑选规则到自定义层 ----
+const rulesDialog = ref(false)
+const rulesSource = ref<RuleSource | null>(null)
+const rulesList = ref<string[]>([])
+const rulesTotal = ref(0)
+const rulesOffset = ref(0)
+const rulesLimit = 50
+const rulesQuery = ref('')
+const rulesLoading = ref(false)
+const rulesError = ref('')
+const rulesSelected = ref<string[]>([])
+const rulesConflict = ref<'skip' | 'overwrite'>('skip')
+const rulesImporting = ref(false)
+
+const rulesPage = computed({
+  get: () => Math.floor(rulesOffset.value / rulesLimit) + 1,
+  set: (p: number) => {
+    rulesOffset.value = Math.max(0, (p - 1) * rulesLimit)
+    void loadRules()
+  },
+})
+const rulesTotalPages = computed(() => Math.max(1, Math.ceil(rulesTotal.value / rulesLimit)))
+
+async function loadRules(): Promise<void> {
+  const src = rulesSource.value
+  if (src === null) return
+  rulesLoading.value = true
+  rulesError.value = ''
+  try {
+    const r = await endpoints.listRuleSourceRules(src.name, {
+      q: rulesQuery.value,
+      offset: rulesOffset.value,
+      limit: rulesLimit,
+    })
+    rulesList.value = r.rules
+    rulesTotal.value = r.total
+    rulesOffset.value = r.offset
+  } catch (err) {
+    rulesError.value = errorMessage(err)
+  } finally {
+    rulesLoading.value = false
+  }
+}
+
+function openRules(s: RuleSource): void {
+  rulesSource.value = s
+  rulesDialog.value = true
+  rulesList.value = []
+  rulesTotal.value = 0
+  rulesOffset.value = 0
+  rulesQuery.value = ''
+  rulesSelected.value = []
+  rulesConflict.value = 'skip'
+  rulesError.value = ''
+  void loadRules()
+}
+
+function searchRules(): void {
+  rulesOffset.value = 0
+  void loadRules()
+}
+
+function clearRulesSearch(): void {
+  rulesQuery.value = ''
+  rulesOffset.value = 0
+  void loadRules()
+}
+
+function isRuleSelected(rule: string): boolean {
+  return rulesSelected.value.includes(rule)
+}
+
+function toggleRule(rule: string): void {
+  const i = rulesSelected.value.indexOf(rule)
+  if (i >= 0) {
+    rulesSelected.value.splice(i, 1)
+  } else {
+    rulesSelected.value.push(rule)
+  }
+}
+
+function selectCurrentPage(): void {
+  for (const rule of rulesList.value) {
+    if (!rulesSelected.value.includes(rule)) {
+      rulesSelected.value.push(rule)
+    }
+  }
+}
+
+function clearSelectedRules(): void {
+  rulesSelected.value = []
+}
+
+async function importSelectedRules(): Promise<void> {
+  const src = rulesSource.value
+  if (src === null || rulesSelected.value.length === 0 || rulesImporting.value) return
+  rulesImporting.value = true
+  try {
+    const r = await endpoints.importRuleSourceRules({
+      name: src.name,
+      rules: [...rulesSelected.value],
+      conflict: rulesConflict.value,
+    })
+    let text = '已加入自定义：新增 ' + r.added
+    if (r.skipped > 0) text += '，跳过 ' + r.skipped
+    if (r.overwrote > 0) text += '，覆盖 ' + r.overwrote
+    notify(text, 'ok')
+    if (r.warnings && r.warnings.length > 0) {
+      notify(r.warnings[0], 'info')
+    }
+    rulesDialog.value = false
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    rulesImporting.value = false
+  }
+}
+
 onMounted(() => {
   void load()
 })
@@ -232,7 +361,74 @@ onMounted(() => {
     <template #actions>
       <v-btn data-testid="update-all" variant="tonal" :loading="updatingAll" :disabled="updating" @click="updateAll">全部更新</v-btn>
       <v-btn data-testid="source-add" color="primary" variant="tonal" @click="openAdd">新增规则源</v-btn>
-    </template>
+
+  <!-- Pick rules from source into custom layer -->
+  <v-dialog v-model="rulesDialog" max-width="900">
+    <v-card data-testid="source-rules-dialog">
+      <v-card-title>从规则源挑选 · {{ rulesSource?.label || rulesSource?.name }}</v-card-title>
+      <v-card-text>
+        <div class="text-caption text-medium-emphasis mb-2">
+          选中的规则会复制到自定义层；源后续更新/删除不影响已复制规则。重复规则默认跳过，可切换为覆盖。
+        </div>
+        <div class="d-flex ga-2 align-center mb-2 flex-wrap">
+          <v-text-field v-model="rulesQuery" label="搜索规则" density="compact" hide-details data-testid="source-rules-search" @keyup.enter="searchRules" />
+          <v-btn variant="tonal" data-testid="source-rules-search-btn" @click="searchRules">搜索</v-btn>
+          <v-btn variant="text" data-testid="source-rules-clear-search" @click="clearRulesSearch">清空</v-btn>
+        </div>
+        <v-alert v-if="rulesError !== ''" type="error" variant="tonal" class="mb-2">{{ rulesError }}</v-alert>
+        <v-progress-linear v-if="rulesLoading" indeterminate class="mb-2" />
+        <div class="rule-picker-list">
+          <v-table density="compact" data-testid="source-rules-table">
+            <thead>
+              <tr><th style="width: 48px"></th><th>规则</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(rule, index) in rulesList" :key="index + '-' + rule" data-testid="source-rule-row">
+                <td>
+                  <v-checkbox :model-value="isRuleSelected(rule)" hide-details density="compact" data-testid="source-rule-check" @update:model-value="toggleRule(rule)" />
+                </td>
+                <td><code class="rule-source-rule">{{ rule }}</code></td>
+              </tr>
+            </tbody>
+          </v-table>
+          <div v-if="!rulesLoading && rulesList.length === 0" data-testid="source-rules-empty" class="text-medium-emphasis py-4 text-center">
+            没有匹配的规则
+          </div>
+        </div>
+        <div class="d-flex align-center ga-3 mt-2 flex-wrap">
+          <span class="text-body-2" data-testid="source-rules-count">共 {{ rulesTotal }} 条，已选 {{ rulesSelected.length }} 条</span>
+          <v-btn size="small" variant="text" data-testid="source-rules-select-page" @click="selectCurrentPage">全选本页</v-btn>
+          <v-btn size="small" variant="text" data-testid="source-rules-clear-selected" @click="clearSelectedRules">清空已选</v-btn>
+          <v-spacer />
+          <v-select
+            v-model="rulesConflict"
+            :items="[{ title: '重复时跳过', value: 'skip' }, { title: '重复时覆盖', value: 'overwrite' }]"
+            item-title="title"
+            item-value="value"
+            density="compact"
+            hide-details
+            style="max-width: 160px"
+            data-testid="source-rules-conflict"
+          />
+        </div>
+        <v-pagination
+          v-if="rulesTotalPages > 1"
+          v-model="rulesPage"
+          :length="rulesTotalPages"
+          :total-visible="7"
+          density="compact"
+          class="mt-2"
+          data-testid="source-rules-pagination"
+        />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="source-rules-cancel" @click="rulesDialog = false">取消</v-btn>
+        <v-btn color="primary" :loading="rulesImporting" :disabled="rulesSelected.length === 0" data-testid="source-rules-import" @click="importSelectedRules">加入自定义</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+</template>
   </PageHeader>
 
       <!-- Manifest card -->
@@ -256,44 +452,29 @@ onMounted(() => {
       <thead>
         <tr>
           <th>名称</th>
-          <th>URL</th>
-          <th>格式</th>
-          <th>输出目录</th>
-          <th>版本数</th>
-          <th>当前版本</th>
+          <th>来源</th>
+          <th>规则数</th>
+          <th>更新时间</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="s in sources" :key="s.name" data-testid="source-row">
-          <td>{{ s.name }}</td>
-          <td>{{ s.url }}</td>
-          <td>{{ s.format }}</td>
-          <td>{{ s.dir }}</td>
-          <td>{{ s.versions.length }}</td>
           <td>
-            <span v-if="s.latest === ''" data-testid="no-version">暂无当前版本</span>
-            <span v-else>{{ s.latest }}</span>
+            <v-btn variant="text" size="small" data-testid="source-rules" @click="openRules(s)">{{ s.label || s.name }}</v-btn>
           </td>
+          <td>{{ originText(s) }}</td>
+          <td>{{ s.rule_count ?? 0 }}</td>
+          <td>{{ updatedText(s.updated_at) }}</td>
           <td>
             <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" :disabled="updating" @click="updateOne(s.name)">更新</v-btn>
             <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
             <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="updating || s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1" @click="openRemove(s.name)">删除</v-btn>
+            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1 || s.origin === 'airport'" @click="openRemove(s.name)">删除</v-btn>
           </td>
         </tr>
       </tbody>
     </v-table>
-
-    <!-- Version list per source -->
-    <v-expansion-panels class="mt-4">
-      <v-expansion-panel v-for="s in sources" :key="'versions-' + s.name" :title="s.name + ' 的版本'">
-        <v-expansion-panel-text>
-          <div v-for="v in s.versions" :key="v" data-testid="version-item">{{ v }}</div>
-
-        </v-expansion-panel-text>
-      </v-expansion-panel>
-    </v-expansion-panels>
 
     <!-- MRS format + retention explanation -->
     <v-card class="mt-4">
@@ -380,3 +561,17 @@ onMounted(() => {
     </v-card>
   </v-dialog>
 </template>
+
+<style scoped>
+.rule-picker-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--sf-border);
+  border-radius: 8px;
+}
+.rule-source-rule {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+}
+</style>

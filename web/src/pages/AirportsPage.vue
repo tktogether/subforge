@@ -200,14 +200,12 @@ async function refreshOne(row: AirportRow): Promise<void> {
 const importDialog = ref(false)
 const importTarget = ref<AirportRow | null>(null)
 const importCreateGroups = ref(true)
-const importEnableRules = ref(true)
 // 手动导入的结果保留在页面上：snackbar 会被上一条“已新增”占用/抢时间，用户可能看不到。
 const manualImport = ref<{ name: string; result: ImportRulesResult } | null>(null)
 
 function openImportDialog(row: AirportRow): void {
   importTarget.value = row
   importCreateGroups.value = true
-  importEnableRules.value = true
   importDialog.value = true
 }
 
@@ -220,12 +218,10 @@ async function confirmImportRules(): Promise<void> {
   try {
     const r = await endpoints.importAirportRules(row.id, {
       create_groups: importCreateGroups.value,
-      enable_rules: importEnableRules.value,
     })
-    let text = importEnableRules.value
-      ? '已导入并启用规则：新增 ' + r.rules_added
-      : '已导入规则到候选（未启用）：新增 ' + r.rules_added
-    text += '，跳过 ' + r.rules_skipped
+    let text = (r.rule_source_rules ?? 0) > 0
+      ? '规则源已更新：' + r.rule_source_rules + ' 条'
+      : '未发现可保存的规则'
     if (r.groups_created && r.groups_created > 0) {
       text += '，新建分组 ' + r.groups_created
     }
@@ -335,17 +331,21 @@ async function restoreLastCheck(): Promise<void> {
     </PageHeader>
 
     <div class="airports-page__toolbar">
-      <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact"
+      <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时更新机场规则源" density="compact"
         :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="airports-page__switch"
         @update:model-value="saveWithRules"></v-switch>
     </div>
 
     <v-alert v-if="manualImport" data-testid="manual-import-result" type="success" variant="tonal" closable
       class="mb-4" @click:close="manualImport = null">
-      {{ manualImport.name }}：新增 {{ manualImport.result.rules_added }}，
-      启用 {{ manualImport.result.rules_enabled ?? 0 }}，
-      跳过 {{ manualImport.result.rules_skipped }}<span v-if="(manualImport.result.groups_created ?? 0) > 0">，
-      新建分组 {{ manualImport.result.groups_created }}</span>
+      {{ manualImport.name }}：
+      <template v-if="(manualImport.result.rule_source_rules ?? 0) > 0">
+        规则源已更新 {{ manualImport.result.rule_source_rules }} 条
+      </template>
+      <template v-else>未发现可保存的规则</template>
+      <span v-if="(manualImport.result.groups_created ?? 0) > 0">
+        ，新建分组 {{ manualImport.result.groups_created }}
+      </span>
     </v-alert>
 
     <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
@@ -390,7 +390,7 @@ async function restoreLastCheck(): Promise<void> {
               <v-btn size="small" variant="text" data-testid="edit" @click="openEdit(item)">编辑</v-btn>
               <v-btn size="small" variant="text" color="error" data-testid="delete" @click="askDelete(item)">删除</v-btn>
               <v-btn size="small" variant="text" data-testid="refresh-traffic" @click="refreshOne(item)">刷新流量</v-btn>
-              <v-btn size="small" variant="text" data-testid="import-rules" @click="openImportDialog(item)">导入规则</v-btn>
+              <v-btn size="small" variant="text" data-testid="import-rules" @click="openImportDialog(item)">更新规则源</v-btn>
               <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">测活</v-btn>
             </div>
           </template>
@@ -408,9 +408,7 @@ async function restoreLastCheck(): Promise<void> {
       <div v-if="imports.length > 0" data-testid="imports" class="airports-page__imports">
         <div v-for="imp in imports" :key="imp.airport_id + '-' + imp.name" class="airports-page__import">
           <span>{{ imp.name }}</span>
-          <span>新增 {{ imp.rules_added }}</span>
-          <span>启用 {{ imp.rules_enabled ?? 0 }}</span>
-          <span>跳过 {{ imp.rules_skipped }}</span>
+          <span>规则源 {{ imp.rule_source_rules ?? 0 }} 条</span>
           <span>提供者 {{ imp.providers_added }}</span>
           <span v-if="(imp.groups_created ?? 0) > 0">新建分组 {{ imp.groups_created }}</span>
           <span v-if="imp.err !== ''" class="text-error">{{ imp.err }}</span>
@@ -474,21 +472,18 @@ async function restoreLastCheck(): Promise<void> {
 
     <v-dialog v-model="importDialog" max-width="480">
       <v-card>
-        <v-card-title>导入规则{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
+        <v-card-title>更新规则源{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
         <v-card-text>
           <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组（select，匹配全部节点）"
             data-testid="import-rules-create-groups" density="compact"></v-checkbox>
-          <v-checkbox v-model="importEnableRules" label="导入后立即启用规则"
-            data-testid="import-rules-enable" density="compact"></v-checkbox>
           <div class="text-medium-emphasis" data-testid="import-rules-hint">
-            导入的规则来源固定为本机场（airport:机场名）。关闭“立即启用”时规则只进入候选，
-            需要到「规则 → 导入候选」手动启用。
+            从机场订阅提取规则，保存为一个版本化规则源（不再写入规则页）。到「方案」里绑定该规则源后生效。
           </div>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
           <v-btn variant="text" data-testid="import-rules-cancel" @click="importDialog = false">取消</v-btn>
-          <v-btn color="primary" data-testid="import-rules-confirm" @click="confirmImportRules">确认导入</v-btn>
+          <v-btn color="primary" data-testid="import-rules-confirm" @click="confirmImportRules">确认更新</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

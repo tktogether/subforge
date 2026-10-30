@@ -26,11 +26,12 @@ interface LayerEditorConfig {
   hint: string
   rows: LayerRow[]
   note: string
-  move: (index: number, delta: number) => void
+  move?: (index: number, delta: number) => void
   lockTemplate: boolean
 }
 
-const LAYER_KEYS: LayerKey[] = ['custom', 'airport', 'template']
+const RULE_LAYER_KEYS: LayerKey[] = ['custom', 'template']
+const GROUP_LAYER_KEYS: LayerKey[] = ['custom', 'airport', 'template']
 const LAYER_LABELS: Record<string, string> = {
   custom: '自定义',
   airport: '机场导入',
@@ -51,11 +52,11 @@ const EMPTY_PROFILE: Profile = {
   exclude: '',
   enabled: true,
   sort_order: 0,
-  rule_layers: [...LAYER_KEYS],
+  rule_layers: [...RULE_LAYER_KEYS],
   rule_sources: [],
   airport_ids: null,
   self_node_ids: null,
-  group_layers: [...LAYER_KEYS],
+  group_layers: [...GROUP_LAYER_KEYS],
   rule_count: 0,
   group_count: 0,
 }
@@ -65,7 +66,7 @@ const loading = ref(false)
 const error = ref('')
 
 // 规则源选项（D-33）：方案可绑定规则源；选项来自 GET /api/rule-sources 的 sources[].name。
-const ruleSourceOptions = ref<string[]>([])
+const ruleSourceOptions = ref<{ title: string; value: string }[]>([])
 
 // 节点来源选项：机场/自建节点。加载失败只降级为空选项，不阻断方案编辑。
 const airportOptions = ref<{ title: string; value: number }[]>([])
@@ -112,8 +113,8 @@ const draft = ref({
 })
 
 // 两个层编辑器的行状态（顺序即优先级）。
-const ruleLayers = ref<LayerRow[]>(defaultLayers())
-const groupLayers = ref<LayerRow[]>(defaultLayers())
+const ruleLayers = ref<LayerRow[]>(defaultLayers(RULE_LAYER_KEYS))
+const groupLayers = ref<LayerRow[]>(defaultLayers(GROUP_LAYER_KEYS))
 
 const confirmOpen = ref(false)
 const deleteTarget = ref<Profile>(EMPTY_PROFILE)
@@ -130,23 +131,24 @@ const headers = [
   { key: 'actions', title: '操作' },
 ]
 
-// 三层默认全开、顺序 custom → airport → template。
-function defaultLayers(): LayerRow[] {
-  return LAYER_KEYS.map((key) => ({ key, enabled: true }))
+// 规则层只有自定义与模板；机场规则是规则源，在下方显式绑定。
+// 分组层保留机场层：机场自带分组仍由导入路径维护。
+function defaultLayers(keys: LayerKey[]): LayerRow[] {
+  return keys.map((key) => ({ key, enabled: true }))
 }
 
-// 后端把空数组/空串当默认值；前端同样把缺失或空数组还原成默认三层。
+// 后端把空数组/空串当默认值；前端同样把缺失或空数组还原成默认层。
 // 顺序即优先级：保持后端给的顺序，未出现的层补在末尾并默认不启用。
-function layersToRows(layers: string[] | undefined): LayerRow[] {
-  const raw = Array.isArray(layers) && layers.length > 0 ? layers : LAYER_KEYS
-  const known = raw.filter((k): k is LayerKey => (LAYER_KEYS as string[]).includes(k))
-  const missing = LAYER_KEYS.filter((k) => !known.includes(k))
+function layersToRows(layers: string[] | undefined, keys: LayerKey[]): LayerRow[] {
+  const raw = Array.isArray(layers) && layers.length > 0 ? layers : keys
+  const known = raw.filter((k): k is LayerKey => (keys as string[]).includes(k))
+  const missing = keys.filter((k) => !known.includes(k))
   return [...known, ...missing].map((key) => ({ key, enabled: known.includes(key) }))
 }
 
 // 规则层的 template 恒在末位（后端保存时也会强制移到最后）。
 function ruleRowsFrom(layers: string[] | undefined): LayerRow[] {
-  const rows = layersToRows(layers)
+  const rows = layersToRows(layers, RULE_LAYER_KEYS)
   const index = rows.findIndex((r) => r.key === 'template')
   if (index >= 0 && index !== rows.length - 1) {
     const [row] = rows.splice(index, 1)
@@ -166,18 +168,6 @@ function layerPriority(rows: LayerRow[], key: LayerKey): string {
   return index < 0 ? '未启用' : '优先级 ' + (index + 1)
 }
 
-// 规则层移动：template 恒在末位，禁止任何会把它换出末位的移动。
-function moveRuleLayer(index: number, delta: number): void {
-  const rows = ruleLayers.value
-  const target = index + delta
-  if (target < 0 || target >= rows.length) return
-  if (rows[index].key === 'template' || rows[target].key === 'template') return
-  const next = rows.slice()
-  const [row] = next.splice(index, 1)
-  next.splice(target, 0, row)
-  ruleLayers.value = next
-}
-
 // 分组层移动：同名分组先出现者胜出，顺序完全由用户决定。
 function moveGroupLayer(index: number, delta: number): void {
   const rows = groupLayers.value
@@ -194,10 +184,9 @@ const layerEditors = computed<LayerEditorConfig[]>(() => [
     testid: 'profile-rule-layers',
     prefix: 'rule',
     caption: '规则层',
-    hint: '规则层 = 按顺序拼接，先出现者优先；模板规则始终最后（MATCH/FINAL）。',
+    hint: '规则层 = 自定义规则 + 模板规则；机场规则在下方「规则源」里显式绑定。先出现者优先，模板规则始终最后（MATCH/FINAL）。',
     rows: ruleLayers.value,
     note: '模板规则始终最后（MATCH/FINAL）',
-    move: moveRuleLayer,
     lockTemplate: true,
   },
   {
@@ -227,11 +216,14 @@ async function load(): Promise<void> {
 // 规则源清单（D-33）：加载失败只降级成空选项，不影响方案页主功能（仍可编辑/保存其它字段）。
 async function loadRuleSourceOptions(): Promise<void> {
   try {
-    const res: { sources?: { name: string; latest?: string }[] } = await endpoints.listRuleSources()
+    const res = await endpoints.listRuleSources()
     // 只展示已有产物的源：无产物的源绑定后订阅会静默回退，保存时也会被后端拒绝。
     ruleSourceOptions.value = (res.sources ?? [])
       .filter((s) => (s.latest ?? '') !== '')
-      .map((s) => s.name)
+      .map((s) => ({
+        title: s.origin === 'airport' ? '机场规则 · ' + (s.label ?? s.name) : (s.label ?? s.name),
+        value: s.name,
+      }))
   } catch {
     // 规则源清单加载失败不阻断方案编辑：保留空选项，用户仍可保存其它字段
     ruleSourceOptions.value = []
@@ -282,8 +274,8 @@ function openCreate(): void {
     airport_ids: [],
     self_node_ids: [],
   }
-  ruleLayers.value = defaultLayers()
-  groupLayers.value = defaultLayers()
+  ruleLayers.value = defaultLayers(RULE_LAYER_KEYS)
+  groupLayers.value = defaultLayers(GROUP_LAYER_KEYS)
   // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
   void loadSourceOptions()
@@ -309,7 +301,7 @@ function openEdit(row: Profile): void {
     self_node_ids: [...(row.self_node_ids ?? [])],
   }
   ruleLayers.value = ruleRowsFrom(row.rule_layers)
-  groupLayers.value = layersToRows(row.group_layers)
+  groupLayers.value = layersToRows(row.group_layers, GROUP_LAYER_KEYS)
   // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
   void loadSourceOptions()
@@ -541,13 +533,15 @@ loadRuleSourceOptions()
           <v-select
             v-model="draft.rule_sources"
             :items="ruleSourceOptions"
+            item-title="title"
+            item-value="value"
             data-testid="profile-rule-sources"
             label="绑定规则源（产物内联进订阅，并替换模板规则）"
             multiple
             chips
             closable-chips
             variant="outlined"
-            hint="只显示已有产物的规则源；可多选、按顺序拼接。先在规则源页更新生成产物；产物里的 FINAL/MATCH 会被忽略。"
+            hint="机场规则源显示为「机场规则 · 名称」。只显示已有产物的规则源；可多选、按顺序拼接，顺序靠前的先命中。"
             persistent-hint
             class="mb-3"
           />
@@ -627,6 +621,7 @@ loadRuleSourceOptions()
               <span class="sf-layer-name">{{ LAYER_LABELS[row.key] }}</span>
               <span class="sf-layer-priority">{{ layerPriority(editor.rows, row.key) }}</span>
               <v-btn
+                v-if="editor.move"
                 icon="mdi-chevron-up"
                 size="x-small"
                 variant="text"
@@ -635,6 +630,7 @@ loadRuleSourceOptions()
                 @click="editor.move(index, -1)"
               />
               <v-btn
+                v-if="editor.move"
                 icon="mdi-chevron-down"
                 size="x-small"
                 variant="text"
