@@ -227,8 +227,11 @@ async function load(): Promise<void> {
 // 规则源清单（D-33）：加载失败只降级成空选项，不影响方案页主功能（仍可编辑/保存其它字段）。
 async function loadRuleSourceOptions(): Promise<void> {
   try {
-    const res: { sources?: { name: string }[] } = await endpoints.listRuleSources()
-    ruleSourceOptions.value = (res.sources ?? []).map((s) => s.name)
+    const res: { sources?: { name: string; latest?: string }[] } = await endpoints.listRuleSources()
+    // 只展示已有产物的源：无产物的源绑定后订阅会静默回退，保存时也会被后端拒绝。
+    ruleSourceOptions.value = (res.sources ?? [])
+      .filter((s) => (s.latest ?? '') !== '')
+      .map((s) => s.name)
   } catch {
     // 规则源清单加载失败不阻断方案编辑：保留空选项，用户仍可保存其它字段
     ruleSourceOptions.value = []
@@ -544,7 +547,7 @@ loadRuleSourceOptions()
             chips
             closable-chips
             variant="outlined"
-            hint="可多选；按顺序拼接。规则源页执行更新生成产物后才会生效；产物里的 FINAL/MATCH 会被忽略。"
+            hint="只显示已有产物的规则源；可多选、按顺序拼接。先在规则源页更新生成产物；产物里的 FINAL/MATCH 会被忽略。"
             persistent-hint
             class="mb-3"
           />

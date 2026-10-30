@@ -168,6 +168,32 @@ func normalizeIDListPtr(ids *[]int64) *[]int64 {
 	return &out
 }
 
+// validateProfileRuleSources 校验方案绑定的规则源存在且已有产物。
+// 只校验名字不够：源存在但没有产物时订阅仍会静默回退模板规则。
+func (s *Server) validateProfileRuleSources(ctx context.Context, m *subforge.Manager, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	statuses, err := m.ListRuleSources(ctx)
+	if err != nil {
+		return err
+	}
+	latest := make(map[string]string, len(statuses))
+	for _, st := range statuses {
+		latest[st.Name] = st.Latest
+	}
+	for _, name := range names {
+		value, ok := latest[name]
+		if !ok {
+			return fmt.Errorf("规则源 %q 不存在，请先在规则源页新增", name)
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("规则源 %q 还没有可用产物，请先在规则源页更新", name)
+		}
+	}
+	return nil
+}
+
 // validateProfileSourceIDs 校验方案选择的来源 id 存在，避免保存后订阅静默为空。
 func (s *Server) validateProfileSourceIDs(ctx context.Context, m *subforge.Manager, airportIDs, selfNodeIDs *[]int64) error {
 	if airportIDs == nil && selfNodeIDs == nil {
@@ -310,6 +336,10 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 		var normalizedRuleSources []string
 		if ruleSourcesProvided {
 			normalizedRuleSources = normalizeRuleSources(*body.RuleSources)
+			if err := s.validateProfileRuleSources(r.Context(), m, normalizedRuleSources); err != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, err)
+				return
+			}
 		}
 		airportIDs := normalizeIDListPtr(body.AirportIDs)
 		selfNodeIDs := normalizeIDListPtr(body.SelfNodeIDs)
@@ -418,10 +448,12 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// enabled 缺省 = 保持原值（契约 §4.1）：先读当前行，用它当兜底。
-		enabled := true
-		if cur, err := m.GetProfile(r.Context(), id); err == nil {
-			enabled = cur.Enabled
+		cur, curErr := m.GetProfile(r.Context(), id)
+		if curErr != nil {
+			s.writeAPIError(w, r, http.StatusNotFound, curErr)
+			return
 		}
+		enabled := cur.Enabled
 		if body.Enabled != nil {
 			enabled = *body.Enabled
 		}
@@ -430,6 +462,10 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 		var normalizedRuleSources []string
 		if ruleSourcesProvided {
 			normalizedRuleSources = normalizeRuleSources(*body.RuleSources)
+			if err := s.validateProfileRuleSources(r.Context(), m, normalizedRuleSources); err != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, err)
+				return
+			}
 		}
 		airportIDs := normalizeIDListPtr(body.AirportIDs)
 		selfNodeIDs := normalizeIDListPtr(body.SelfNodeIDs)

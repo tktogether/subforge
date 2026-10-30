@@ -81,11 +81,49 @@ func ruleSourceSubServer(t *testing.T) (*httptest.Server, string, *subforge.Mana
 
 // --- 方案 API ---
 
+// seedRuleSources 在一次 manifest 里登记多个源，并为每个源落一版产物。
+// 方案保存会校验“源存在且有产物”，所以归一化/上限测试也必须先把源准备好。
+func seedRuleSources(t *testing.T, mgr *subforge.Manager, names []string) {
+	t.Helper()
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "rules")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatalf("建产物目录: %v", err)
+	}
+	var b strings.Builder
+	b.WriteString("sources:\n")
+	for _, name := range names {
+		b.WriteString("  - name: " + name + "\n")
+		b.WriteString("    url: https://example.com/" + name + ".list\n")
+	}
+	b.WriteString("output:\n  format: yaml\n  path: " + filepath.ToSlash(outDir) + "\n")
+	mf := filepath.Join(dir, "manifest.yaml")
+	if err := os.WriteFile(mf, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("写 manifest: %v", err)
+	}
+	if err := mgr.SetSettings(t.Context(), map[string]string{
+		subforge.RuleManifestPathKey: mf,
+		subforge.RulesOutputDirKey:   outDir,
+	}); err != nil {
+		t.Fatalf("写规则源配置: %v", err)
+	}
+	for _, name := range names {
+		ruleSourceProduct(t, outDir, name, "rules:\n  - \"MATCH,DIRECT\"\n")
+	}
+}
+
 // TestProfilesRuleSourcesRoundTrip 覆盖 rule_sources 的 CRUD 语义：
 // 未绑定输出 []（不是 null）、POST 归一化（trim/丢空/去重保序/上限 20）、
 // PUT 只带 rule_sources 时层与命名都不动。
 func TestProfilesRuleSourcesRoundTrip(t *testing.T) {
-	ts, _, _ := profileServer(t)
+	ts, _, mgr := profileServer(t)
+	allNames := []string{"a", "b", "x", "y"}
+	names := make([]string, 0, 25)
+	for i := 0; i < 25; i++ {
+		names = append(names, fmt.Sprintf("s%02d", i))
+	}
+	allNames = append(allNames, names...)
+	seedRuleSources(t, mgr, allNames)
 
 	// 1) 未绑定：rule_sources 必须是空数组。
 	p := mustProfile(t, ts, "方案 RS")
@@ -113,10 +151,6 @@ func TestProfilesRuleSourcesRoundTrip(t *testing.T) {
 	}
 
 	// 3) 上限 20：第 21 个起丢弃，且保持原有顺序。
-	names := make([]string, 0, 25)
-	for i := 0; i < 25; i++ {
-		names = append(names, fmt.Sprintf("s%02d", i))
-	}
 	st, body = postAPIJSON(t, ts, "/api/profiles", map[string]any{"name": "RS 上限", "rule_sources": names})
 	if st != http.StatusCreated {
 		t.Fatalf("POST 上限用例状态 = %d；body=%s", st, body)
@@ -282,60 +316,26 @@ func TestSubscribeInjectsRuleSourceRules(t *testing.T) {
 
 // TestSubscribeRuleSourceMissingKeepsTemplateRules 源不存在 → 注入 0 条：
 // 订阅照常成功，模板规则与模板 FINAL 都保留（warning 只是提示，不阻断）。
-func TestSubscribeRuleSourceMissingKeepsTemplateRules(t *testing.T) {
-	ts, _, mgr := profileServer(t)
-	if _, err := mgr.AddAirport(t.Context(), "fx", fixtureURL(t), "", true); err != nil {
-		t.Fatalf("AddAirport: %v", err)
-	}
-	ruleSourceFixture(t, mgr, "src1", "yaml")
-	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(profileTemplateINI))
-	}))
-	t.Cleanup(tpl.Close)
-
-	p := mustProfilePayload(t, ts, map[string]any{
-		"name": "缺源方案", "config": tpl.URL + "/tpl.ini", "rule_sources": []string{"nope"},
+// TestSubscribeRuleSourceMissingRejected 绑定不存在的规则源应在保存时 400，
+// 而不是保存成功、订阅时静默回退模板规则。
+func TestSubscribeRuleSourceMissingRejected(t *testing.T) {
+	ts, _, _ := profileServer(t)
+	st, body := postAPIJSON(t, ts, "/api/profiles", map[string]any{
+		"name": "缺源方案", "rule_sources": []string{"nope"},
 	})
-	mustToken(t, ts, "t-miss", p.ID)
-
-	st, body := subscribe(t, ts, "t-miss")
-	if st != http.StatusOK {
-		t.Fatalf("缺源订阅状态 = %d；body=%s", st, body)
-	}
-	if !strings.Contains(body, "tplonly.test") {
-		t.Errorf("缺源时应保留模板规则 tplonly.test；正文：\n%s", body)
-	}
-	if !strings.Contains(body, "MATCH,") {
-		t.Errorf("缺源时应保留模板 FINAL；正文：\n%s", body)
+	if st != http.StatusBadRequest || !strings.Contains(body, "不存在") {
+		t.Fatalf("缺源应 400 且提示不存在；status=%d body=%s", st, body)
 	}
 }
 
-// TestSubscribeRuleSourceEmptyKeepsTemplateRules 源在 manifest 里但还没有产物：
-// 同样注入 0 条，模板规则保留。
-func TestSubscribeRuleSourceEmptyKeepsTemplateRules(t *testing.T) {
+// TestSubscribeRuleSourceEmptyRejected 源在 manifest 里但还没有产物：保存同样 400。
+func TestSubscribeRuleSourceEmptyRejected(t *testing.T) {
 	ts, _, mgr := profileServer(t)
-	if _, err := mgr.AddAirport(t.Context(), "fx", fixtureURL(t), "", true); err != nil {
-		t.Fatalf("AddAirport: %v", err)
-	}
 	ruleSourceFixture(t, mgr, "src1", "yaml") // 只登记源，不落产物
-	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(profileTemplateINI))
-	}))
-	t.Cleanup(tpl.Close)
-
-	p := mustProfilePayload(t, ts, map[string]any{
-		"name": "无产物方案", "config": tpl.URL + "/tpl.ini", "rule_sources": []string{"src1"},
+	st, body := postAPIJSON(t, ts, "/api/profiles", map[string]any{
+		"name": "无产物方案", "rule_sources": []string{"src1"},
 	})
-	mustToken(t, ts, "t-empty", p.ID)
-
-	st, body := subscribe(t, ts, "t-empty")
-	if st != http.StatusOK {
-		t.Fatalf("无产物订阅状态 = %d；body=%s", st, body)
-	}
-	if !strings.Contains(body, "tplonly.test") {
-		t.Errorf("无产物时应保留模板规则 tplonly.test；正文：\n%s", body)
-	}
-	if !strings.Contains(body, "MATCH,") {
-		t.Errorf("无产物时应保留模板 FINAL；正文：\n%s", body)
+	if st != http.StatusBadRequest || !strings.Contains(body, "还没有可用产物") {
+		t.Fatalf("无产物应 400 且提示先更新；status=%d body=%s", st, body)
 	}
 }

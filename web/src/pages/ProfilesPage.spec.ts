@@ -695,7 +695,7 @@ describe('ProfilesPage', () => {
   })
   it('新建方案：选中规则源后保存提交 rule_sources', async () => {
     const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
-    listSources.mockResolvedValue({ sources: [{ name: 'src1' }, { name: 'src2' }] })
+    listSources.mockResolvedValue({ sources: [{ name: 'src1', latest: 'v1' }, { name: 'src2', latest: 'v2' }, { name: 'empty', latest: '' }] })
     ;(endpoints.createProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile({ id: 7 }))
     const w = mountPage()
     await flushPromises()
@@ -728,7 +728,7 @@ describe('ProfilesPage', () => {
 
   it('编辑方案：回填已绑定的规则源并原样提交；旧数据缺字段回填为空数组', async () => {
     const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
-    listSources.mockResolvedValue({ sources: [{ name: 'a' }, { name: 'b' }] })
+    listSources.mockResolvedValue({ sources: [{ name: 'a', latest: 'v1' }, { name: 'b', latest: 'v1' }] })
     ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
       makeProfile({ id: 9, name: '已绑定方案', rule_sources: ['a', 'b'] }),
       makeProfile({ id: 10, name: '旧方案', rule_sources: undefined }),
