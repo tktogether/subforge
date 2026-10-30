@@ -143,7 +143,7 @@ func TestAPICheckEmptyIDs(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", code, raw)
 	}
-	if !strings.Contains(raw, "没有可测活的机场") {
+	if !strings.Contains(raw, "没有可检测的机场") {
 		t.Fatalf("body=%s", raw)
 	}
 }

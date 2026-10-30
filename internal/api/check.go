@@ -62,7 +62,7 @@ func (s *Server) handleAPICheck(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(ids) == 0 {
-			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有可测活的机场"))
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有可检测的机场"))
 			return
 		}
 	}

@@ -128,7 +128,7 @@ func validateProxyGroup(name, typ, regex string, interval int) (string, error) {
 		}
 	}
 	if interval < 0 {
-		return "", errors.New("测活间隔不能为负数")
+		return "", errors.New("检测间隔不能为负数")
 	}
 	return t, nil
 }

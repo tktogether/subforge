@@ -193,7 +193,7 @@ func TestGroupPostValidation(t *testing.T) {
 		{"空白名字", `{"name":"   ","type":"select"}`, "名称不能为空"},
 		{"非法类型", `{"name":"g","type":"bogus"}`, "分组类型必须是 select/url-test/fallback/load-balance 之一"},
 		{"非法正则", `{"name":"g","type":"select","regex":"[a-"}`, "匹配正则不合法: "},
-		{"负间隔", `{"name":"g","type":"url-test","interval":-5}`, "测活间隔不能为负数"},
+		{"负间隔", `{"name":"g","type":"url-test","interval":-5}`, "检测间隔不能为负数"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -251,7 +251,7 @@ func TestGroupPutValidation(t *testing.T) {
 		{"空名字", `{"name":"","type":"select"}`, "名称不能为空"},
 		{"非法类型", `{"name":"g","type":"bogus"}`, "分组类型必须是 select/url-test/fallback/load-balance 之一"},
 		{"非法正则", `{"name":"g","type":"select","regex":"[a-"}`, "匹配正则不合法: "},
-		{"负间隔", `{"name":"g","type":"url-test","interval":-1}`, "测活间隔不能为负数"},
+		{"负间隔", `{"name":"g","type":"url-test","interval":-1}`, "检测间隔不能为负数"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

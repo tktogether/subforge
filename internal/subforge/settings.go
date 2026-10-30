@@ -34,11 +34,11 @@ type settingDef struct {
 }
 
 var settingDefs = []settingDef{
-	{ScriptEnabledKey, SettingKindBool, "启用脚本步骤", "关闭时管线里的 ref= 脚本步骤会在编译阶段报错"},
-	{SubscheckEnabledKey, SettingKindBool, "启用订阅测活", "关闭后定时测活任务不再执行"},
-	{RuleManifestPathKey, SettingKindPath, "规则源清单路径", "manifest.yaml 的绝对路径"},
-	{RulesOutputDirKey, SettingKindPath, "规则源输出目录", "规则集版本文件的落盘目录（留空则用 manifest 里的 output.path）"},
-	{AirportWithRulesKey, SettingKindBool, "刷新时同时导入规则", "打开后「刷新全部流量」会顺带导入规则；刷新页面后仍保持此开关状态"},
+	{ScriptEnabledKey, SettingKindBool, "启用脚本步骤", "关闭后，引用脚本的管线步骤会在编译阶段报错。"},
+	{SubscheckEnabledKey, SettingKindBool, "启用订阅可用性检测", "关闭后，定时可用性检测任务不再执行。"},
+	{RuleManifestPathKey, SettingKindPath, "规则源清单路径", "规则源清单文件（manifest.yaml）的绝对路径。"},
+	{RulesOutputDirKey, SettingKindPath, "规则源输出目录", "规则源版本文件的保存目录；留空时使用清单中的输出路径。"},
+	{AirportWithRulesKey, SettingKindBool, "刷新时同时更新规则源", "开启后，「刷新全部流量」会同时更新规则源；该设置会保存。"},
 }
 
 func findSettingDef(key string) (settingDef, bool) {

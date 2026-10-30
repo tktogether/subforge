@@ -452,8 +452,8 @@ func TestWarnings_RewrittenRuleTargets(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("规则目标被校正后 Warnings 不应为空")
 	}
-	if joined := strings.Join(got, "\n"); !strings.Contains(joined, "兜底分组") {
-		t.Errorf("Warnings 应说明落到了兜底分组，实际: %v", got)
+	if joined := strings.Join(got, "\n"); !strings.Contains(joined, "默认分组") {
+		t.Errorf("Warnings 应说明落到了默认分组，实际: %v", got)
 	}
 }
 

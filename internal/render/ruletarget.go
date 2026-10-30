@@ -136,7 +136,7 @@ func ResolveRuleTargets(rules []string, valid []string, validSet map[string]bool
 	}
 	if unresolved > 0 {
 		warns = append(warns, fmt.Sprintf(
-			"%d 条规则的目标分组在产物里不存在，已指向兜底分组 %q；如需精确分流请在「规则」页改这些规则的目标",
+			"%d 条规则的目标分组在产物里不存在，已指向默认分组 %q；如需精确分流请在「规则」页改这些规则的目标",
 			unresolved, fallback))
 	}
 	return out, warns
