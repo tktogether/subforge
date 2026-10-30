@@ -120,9 +120,14 @@ do not have to repeat flags:
 | `SUBFORGE_TOKEN` | `-token` |
 | `SUBFORGE_CONFIG` | `-config` (an INI file, not a directory) |
 | `SUBFORGE_DATA_DIR` | `-data-dir` |
+| `SUBFORGE_ALLOW_PRIVATE_NETWORK` | `-allow-private-network` (allow private/loopback outbound fetches, off by default) |
 
 Precedence, lowest first: **environment variable < command-line parameter < the matching key in the INI
 `[subforge]` section**. The Dockerfiles in this repository preset `SUBFORGE_LISTEN` and `SUBFORGE_DATA_DIR`;
+For SSRF protection the server only fetches public http/https URLs by default. Local fixtures, intranet
+subscriptions and LAN rule sources require `-allow-private-network` (or `SUBFORGE_ALLOW_PRIVATE_NETWORK=1`);
+remote templates, rulesets and alert webhooks follow the same policy.
+
 the old name `SUBFORGE_DATA` is deprecated — a wrong name raises no error, it silently falls back to
 "subscription management disabled".
 

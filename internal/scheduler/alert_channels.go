@@ -56,10 +56,15 @@ type DingTalkChannel struct {
 }
 
 func NewDingTalkChannel(webhookURL string) *DingTalkChannel {
-	return &DingTalkChannel{
-		WebhookURL: webhookURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
+	return NewDingTalkChannelWithClient(webhookURL, nil)
+}
+
+// NewDingTalkChannelWithClient 允许调用方传入带出站地址防护的客户端。
+func NewDingTalkChannelWithClient(webhookURL string, client *http.Client) *DingTalkChannel {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
 	}
+	return &DingTalkChannel{WebhookURL: webhookURL, client: client}
 }
 
 func (d *DingTalkChannel) Name() string { return "dingtalk" }

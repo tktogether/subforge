@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tktogether/subforge/internal/netguard"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/template"
 	"github.com/tktogether/subforge/internal/transform"
@@ -35,6 +36,9 @@ func HTTPLoader(client *http.Client, headers map[string]string) RemoteLoader {
 		client = http.DefaultClient
 	}
 	return func(ctx context.Context, ref string) ([]byte, error) {
+		if err := netguard.ValidateHTTPURL(ref); err != nil {
+			return nil, err
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref, nil)
 		if err != nil {
 			return nil, err

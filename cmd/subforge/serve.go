@@ -19,6 +19,7 @@ import (
 	"github.com/tktogether/subforge/internal/buildinfo"
 	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/netguard"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/render/clashmeta"
 	"github.com/tktogether/subforge/internal/render/registry"
@@ -44,6 +45,7 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   -cache-dir  上游内容磁盘缓存目录（默认不缓存）
   -data-dir   订阅管理数据目录（SQLite，默认不启用）
   -pprof      启用 /debug/pprof（默认关闭；也可设 SUBFORGE_PPROF=1）
+  -allow-private-network  允许拉取私网/回环地址（默认关闭；本地 fixture 或内网订阅时开启）
   -name      写入产物注释头的配置名（启动时固定）
 
 环境变量（作为对应选项的默认值，显式传入的命令行参数优先级更高）:
@@ -105,7 +107,7 @@ func cmdServe(args []string) error {
 	var (
 		listen, token, cacheDir, dataDir, name, configFile string
 		mixedPort, timeoutSeconds, shutdownSeconds         int
-		pprofEnabled                                       bool
+		pprofEnabled, allowPrivate                         bool
 	)
 	fs.StringVar(&listen, "listen", envOr("SUBFORGE_LISTEN", "127.0.0.1:25500"), "监听地址")
 	fs.StringVar(&token, "token", envOr("SUBFORGE_TOKEN", ""), "访问令牌（空表示不鉴权）")
@@ -117,6 +119,7 @@ func cmdServe(args []string) error {
 	fs.IntVar(&timeoutSeconds, "timeout", 30, "上游请求与单请求超时秒数")
 	fs.IntVar(&shutdownSeconds, "shutdown", 10, "收到停止信号后的优雅关闭秒数")
 	fs.BoolVar(&pprofEnabled, "pprof", envOr("SUBFORGE_PPROF", "") == "1", "启用 /debug/pprof（默认关闭，生产不建议开启）")
+	fs.BoolVar(&allowPrivate, "allow-private-network", envOr("SUBFORGE_ALLOW_PRIVATE_NETWORK", "") == "1", "允许拉取私网/回环地址（本地 fixture、内网订阅时显式开启）")
 	fs.Usage = func() { fmt.Print(serveUsage) }
 
 	if err := fs.Parse(args); err != nil {
@@ -137,7 +140,8 @@ func cmdServe(args []string) error {
 	}
 
 	timeout := time.Duration(timeoutSeconds) * time.Second
-	fetcher, err := newFetcher(cacheDir, timeout)
+	safeClient := netguard.NewHTTPClient(timeout, allowPrivate)
+	fetcher, err := newFetcher(cacheDir, timeout, safeClient)
 	if err != nil {
 		return err
 	}
@@ -153,19 +157,20 @@ func cmdServe(args []string) error {
 		BaseTemplate: func() *config.Template { return snap.Load().Template },
 		// 请求参数 config= 指向的模板优先级更高，可以是本地路径或远程 URL。
 		LoadTemplate: func(ctx context.Context, ref string) (*config.Template, error) {
-			return config.LoadSource(ctx, ref, config.HTTPLoader(&http.Client{Timeout: timeout}, nil))
+			return config.LoadSource(ctx, ref, config.HTTPLoader(safeClient, nil))
 		},
 		Profile: render.Profile{Name: name, Version: buildinfo.Full()},
 	}
 
 	srv := api.New(api.Config{
-		Engine:  engine,
-		Token:   func() string { return snap.Load().Token },
-		Timeout: timeout,
-		Name:    "subforge",
-		Logger:  log.Default(),
-		DataDir: dataDir,
-		PProf:   pprofEnabled,
+		Engine:     engine,
+		Token:      func() string { return snap.Load().Token },
+		Timeout:    timeout,
+		Name:       "subforge",
+		Logger:     log.Default(),
+		DataDir:    dataDir,
+		PProf:      pprofEnabled,
+		HTTPClient: safeClient,
 	})
 
 	if dataDir != "" {
@@ -207,7 +212,7 @@ func cmdServe(args []string) error {
 				case "telegram":
 					sch.AddAlertChannel(scheduler.NewTelegramChannel(c.BotToken, c.ChatID))
 				case "dingtalk":
-					sch.AddAlertChannel(scheduler.NewDingTalkChannel(c.Webhook))
+					sch.AddAlertChannel(scheduler.NewDingTalkChannelWithClient(c.Webhook, safeClient))
 				case "smtp":
 					log.Printf("[serve] 告警通道 %q 为 smtp，SMTPChannel 尚未实现，已跳过", c.Kind)
 				default:

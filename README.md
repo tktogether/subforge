@@ -108,10 +108,14 @@ bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 | `SUBFORGE_TOKEN` | `-token` |
 | `SUBFORGE_CONFIG` | `-config`（指向 INI 文件，不是目录） |
 | `SUBFORGE_DATA_DIR` | `-data-dir` |
+| `SUBFORGE_ALLOW_PRIVATE_NETWORK` | `-allow-private-network`（允许拉取私网/回环地址，默认关闭） |
 
 优先级从低到高是**环境变量 < 命令行参数 < INI 的 `[subforge]` 同名项**。仓库内的 Dockerfile 预设了
 `SUBFORGE_LISTEN` 与 `SUBFORGE_DATA_DIR`；旧名字 `SUBFORGE_DATA` 已废弃，写错不会报错，只会静默地退回
 「未启用订阅管理」。
+
+出于 SSRF 防护，服务端默认只拉取公网 http/https 地址；本地 fixture、内网订阅或自建 LAN 规则源需要显式加
+`-allow-private-network`（或设 `SUBFORGE_ALLOW_PRIVATE_NETWORK=1`）。远程模板、规则集与告警 webhook 走同一策略。
 
 拉取上游订阅时的 User-Agent 可以用 `SUBFORGE_USER_AGENT` 覆盖，默认是 `mihomo/1.19.31 SubForge/<版本>`。
 不少机场按 User-Agent 决定返回什么内容：认成 Clash 内核时才返回带 `Subscription-Userinfo` 的完整配置，

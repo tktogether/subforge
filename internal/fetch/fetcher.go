@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tktogether/subforge/internal/netguard"
 	"github.com/tktogether/subforge/internal/parse"
 )
 
@@ -191,6 +192,9 @@ func (f *Fetcher) Fetch(ctx context.Context, sources []Source) ([]Result, error)
 func (f *Fetcher) fetchOnce(ctx context.Context, src Source) (Result, error) {
 	if src.URL == "" {
 		return Result{}, errors.New("来源 URL 为空")
+	}
+	if err := netguard.ValidateHTTPURL(src.URL); err != nil {
+		return Result{}, &PermanentError{Reason: err.Error()}
 	}
 
 	etag, modified := "", time.Time{}
