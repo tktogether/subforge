@@ -160,6 +160,7 @@ func (s *Server) Routes() http.Handler {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/version", s.handleAPIVersion)
+		r.Get("/overview", s.handleAPIOverview)
 		r.Get("/stats", s.handleAPIStats)
 		r.Get("/history", s.handleAPIHistory)
 		r.Get("/pipelines", s.handleAPIPipelines)

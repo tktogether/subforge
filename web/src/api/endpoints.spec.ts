@@ -23,6 +23,14 @@ describe('endpoints', () => {
     }
   }
 
+  it('overview → GET /api/overview', async () => {
+    const data = { name: 'subforge', version: 'v1', startedAt: 't', uptime: '1m', counts: {} }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.overview()
+    expect(fetchMock).toHaveBeenCalledWith('/api/overview', expect.objectContaining({ method: 'GET' }))
+    expect(result).toEqual(data)
+  })
+
   it('stats → GET /api/stats', async () => {
     const data = { history: { total: 1, cachedHits: 0, urlTotal: 1, cacheHitRate: 0 }, logs: 2, last: null }
     fetchMock.mockResolvedValue(respond(data))

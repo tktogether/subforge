@@ -153,6 +153,31 @@ export interface Stats {
   last: StatsLast | null
 }
 
+export interface OverviewCounts {
+  airports: number
+  airports_enabled: number
+  airport_nodes: number
+  self_nodes: number
+  self_nodes_enabled: number
+  profiles: number
+  profiles_enabled: number
+  tokens: number
+  groups: number
+  rules: number
+  rules_enabled: number
+  rule_sources: number
+  rule_sources_ready: number
+  rule_source_rules: number
+}
+
+export interface Overview {
+  name: string
+  version: string
+  startedAt: string
+  uptime: string
+  counts: OverviewCounts
+}
+
 export interface RulesetsResponse {
   rulesets: Record<string, string>
   rules: string[]
@@ -462,6 +487,7 @@ export interface ProfileInput {
 }
 
 export const endpoints = {
+  overview: (): Promise<Overview> => api.get<Overview>('/api/overview'),
   stats: (): Promise<Stats> => api.get<Stats>('/api/stats'),
   history: (): Promise<HistoryEntry[]> => api.get<HistoryEntry[]>('/api/history'),
   pipelines: (config: string): Promise<Pipeline[]> => api.get<Pipeline[]>('/api/pipelines', { query: { config } }),
