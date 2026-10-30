@@ -286,6 +286,8 @@ export interface RuleSourceStatus {
   rule_count?: number
   /** 当前版本文件修改时间（Unix 秒） */
   updated_at?: number
+  /** 机场源对应的机场已删除 */
+  airport_missing?: boolean
 }
 export type RuleSource = RuleSourceStatus
 

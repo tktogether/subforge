@@ -30,6 +30,18 @@ type AirportRuleSourceResult struct {
 // 单独维护。
 func (m *Manager) SaveAirportRuleSource(ctx context.Context, airportName string, airportID int64, url string, rules []string, providers []model.RuleProvider) (AirportRuleSourceResult, error) {
 	name := AirportRuleSourceName(airportName, airportID)
+	// 机场改名后复用已有源名，避免同一个机场出现两个规则源、方案绑定留在旧源上。
+	if sources, lerr := m.ListRuleSources(ctx); lerr == nil {
+		for _, src := range sources {
+			if src.Origin != "airport" {
+				continue
+			}
+			if id, ok := AirportIDFromRuleSourceName(src.Name); ok && id == airportID {
+				name = src.Name
+				break
+			}
+		}
+	}
 	if err := m.upsertManifestSource(ctx, manifest.Source{
 		Name: name, URL: url, Type: "clash", InputFormat: "clash",
 	}); err != nil {
@@ -121,4 +133,47 @@ func (m *Manager) upsertManifestSource(ctx context.Context, src manifest.Source)
 		return err
 	}
 	return manifest.SaveManifest(path, mf)
+}
+
+// UnbindAirportRuleSource 从所有方案的规则源绑定里移除指定机场的源。
+// 删除机场前调用：源作为历史快照保留，方案不再引用它。
+func (m *Manager) UnbindAirportRuleSource(ctx context.Context, airportID int64) (string, error) {
+	sources, err := m.ListRuleSources(ctx)
+	if err != nil {
+		return "", err
+	}
+	name := ""
+	for _, src := range sources {
+		if src.Origin != "airport" {
+			continue
+		}
+		if id, ok := AirportIDFromRuleSourceName(src.Name); ok && id == airportID {
+			name = src.Name
+			break
+		}
+	}
+	if name == "" {
+		return "", nil
+	}
+	profiles, err := m.ListProfiles(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range profiles {
+		next := make([]string, 0, len(p.RuleSources))
+		changed := false
+		for _, used := range p.RuleSources {
+			if used == name {
+				changed = true
+				continue
+			}
+			next = append(next, used)
+		}
+		if changed {
+			if err := m.SetProfileRuleSources(ctx, p.ID, next); err != nil {
+				return "", err
+			}
+		}
+	}
+	return name, nil
 }

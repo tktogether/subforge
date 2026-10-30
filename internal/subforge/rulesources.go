@@ -41,6 +41,9 @@ type RuleSourceStatus struct {
 	RuleCount int `json:"rule_count"`
 	// UpdatedAt 是当前版本文件的修改时间（Unix 秒）；无产物时为 0。
 	UpdatedAt int64 `json:"updated_at"`
+	// AirportMissing 表示机场源对应的机场已被删除：源不再可更新，
+	// 解绑方案后允许手动清理。
+	AirportMissing bool `json:"airport_missing"`
 }
 
 // extForRuleSourceFormat 根据输出格式推导文件扩展名（manifest.extForFormat 未导出，此处等价复刻）。
@@ -445,6 +448,14 @@ func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, erro
 		if isAirportRuleSource(name) {
 			status.Origin = "airport"
 			status.Label = AirportRuleSourceLabel(name)
+			// 展示名跟随当前机场名；机场改名后内部源名保持不变。
+			if id, ok := AirportIDFromRuleSourceName(name); ok {
+				if airport, gerr := m.GetAirport(ctx, id); gerr == nil && strings.TrimSpace(airport.Name) != "" {
+					status.Label = airport.Name
+				} else {
+					status.AirportMissing = true
+				}
+			}
 		} else {
 			status.Origin = "remote"
 		}

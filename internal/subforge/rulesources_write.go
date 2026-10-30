@@ -62,7 +62,14 @@ func (m *Manager) AddRuleSource(ctx context.Context, src manifest.Source) (strin
 func (m *Manager) RemoveRuleSource(ctx context.Context, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if isAirportRuleSource(name) {
-		return "", fmt.Errorf("机场规则源由机场维护，不能单独删除")
+		id, ok := AirportIDFromRuleSourceName(name)
+		if !ok {
+			return "", fmt.Errorf("机场规则源名称不合法")
+		}
+		if _, gerr := m.GetAirport(ctx, id); gerr == nil {
+			return "", fmt.Errorf("机场规则源由机场维护，不能单独删除")
+		}
+		// 机场已删除：源是历史快照，允许解绑后手动清理。
 	}
 	profiles, err := m.ListProfiles(ctx)
 	if err != nil {

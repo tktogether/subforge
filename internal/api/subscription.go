@@ -247,11 +247,16 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"airport": a})
 	case http.MethodDelete:
+		detached, derr := m.UnbindAirportRuleSource(r.Context(), id)
+		if derr != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, derr)
+			return
+		}
 		if err := m.DeleteAirport(r.Context(), id); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rule_source": detached})
 	default:
 		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/PUT/DELETE"))
 	}

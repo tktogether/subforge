@@ -369,6 +369,21 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
+  it('机场已删除的源可清理，仍存在的机场源仍由机场维护', async () => {
+    listMock.mockResolvedValue(makeManifest({ sources: [
+      { name: 'remote', latest: 'v1', origin: 'remote', label: 'remote', versions: ['v1'], rule_count: 1 },
+      { name: 'airport-1-old', latest: 'v1', origin: 'airport', label: 'old', airport_missing: true, versions: ['v1'], rule_count: 2 },
+      { name: 'airport-2-live', latest: 'v1', origin: 'airport', label: 'live', airport_missing: false, versions: ['v1'], rule_count: 2 },
+    ] }))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const rows = w.findAll('[data-testid="source-row"]')
+    expect(rows[1].find('[data-testid="source-airport-missing"]').exists()).toBe(true)
+    expect(rows[1].find('[data-testid="source-remove"]').attributes('disabled')).toBeUndefined()
+    expect(rows[2].find('[data-testid="source-remove"]').attributes('disabled')).toBeDefined()
+    w.unmount()
+  })
+
   it('不再单独渲染版本列表', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()

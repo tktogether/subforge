@@ -462,6 +462,7 @@ onMounted(() => {
         <tr v-for="s in sources" :key="s.name" data-testid="source-row">
           <td>
             <v-btn variant="text" size="small" data-testid="source-rules" @click="openRules(s)">{{ s.label || s.name }}</v-btn>
+            <span v-if="s.airport_missing" class="text-warning text-caption ml-1" data-testid="source-airport-missing">机场已删除</span>
           </td>
           <td>{{ originText(s) }}</td>
           <td>{{ s.rule_count ?? 0 }}</td>
@@ -470,7 +471,7 @@ onMounted(() => {
             <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" :disabled="updating" @click="updateOne(s.name)">更新</v-btn>
             <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
             <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="updating || s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1 || s.origin === 'airport'" @click="openRemove(s.name)">删除</v-btn>
+            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1 || (s.origin === 'airport' && !s.airport_missing)" @click="openRemove(s.name)">删除</v-btn>
           </td>
         </tr>
       </tbody>
