@@ -42,9 +42,6 @@ const LAYER_LABELS: Record<string, string> = {
   template: '模板',
 }
 
-// 超过这个量级说明 sort_order 是服务端回退的 UnixNano（D-41），前端显示「未设置」。
-const SORT_ORDER_UNSET_LIMIT = 1e12
-
 const EMPTY_PROFILE: Profile = {
   id: 0,
   name: '',
@@ -66,6 +63,8 @@ const EMPTY_PROFILE: Profile = {
 }
 
 const profiles = ref<Profile[]>([])
+const profilePage = ref(1)
+const profilePageSize = ref(10)
 const loading = ref(false)
 const error = ref('')
 
@@ -107,7 +106,6 @@ const draft = ref({
   include: '',
   exclude: '',
   enabled: true,
-  sort_order: 0,
   // 规则源（D-33）：方案绑定的规则源名列表；空 = 未绑定。
   rule_sources: [] as string[],
   // 未限制来源 = 使用全部启用机场/自建节点；打开后才按下面的 id 多选限制。
@@ -132,7 +130,6 @@ const headers = [
   { key: 'group_layers', title: '分组层' },
   { key: 'rule_sources', title: '规则源', sortable: false },
   { key: 'enabled', title: '启用' },
-  { key: 'sort_order', title: '顺序' },
   { key: 'actions', title: '操作' },
 ]
 
@@ -205,6 +202,16 @@ const layerEditors = computed<LayerEditorConfig[]>(() => [
     lockTemplate: false,
   },
 ])
+
+const profilePageCount = computed(() => Math.max(1, Math.ceil(profiles.value.length / profilePageSize.value)))
+watch([profiles, profilePageSize], () => {
+  profilePage.value = Math.min(profilePage.value, profilePageCount.value)
+})
+
+function setProfilePageSize(next: number): void {
+  profilePageSize.value = next
+  profilePage.value = 1
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -359,11 +366,6 @@ function layerText(layers: string[] | undefined): string {
   return layers.map((k) => LAYER_LABELS[k] ?? k).join(' → ')
 }
 
-// 顺序列：服务端回退的 UnixNano（19 位）显示「未设置」。
-function sortOrderText(value: number): string {
-  return value > SORT_ORDER_UNSET_LIMIT ? '未设置' : String(value)
-}
-
 function openCreate(): void {
   editingId.value = 0
   draft.value = {
@@ -375,7 +377,6 @@ function openCreate(): void {
     include: '',
     exclude: '',
     enabled: true,
-    sort_order: 0,
     rule_sources: [],
     limit_sources: false,
     airport_ids: [],
@@ -402,7 +403,6 @@ function openEdit(row: Profile): void {
     include: row.include ?? '',
     exclude: row.exclude ?? '',
     enabled: row.enabled,
-    sort_order: row.sort_order,
     rule_sources: [...(row.rule_sources ?? [])],
     limit_sources: row.airport_ids !== null || row.self_node_ids !== null,
     airport_ids: [...(row.airport_ids ?? [])],
@@ -434,7 +434,6 @@ async function save(): Promise<void> {
     include: draft.value.include,
     exclude: draft.value.exclude,
     enabled: draft.value.enabled,
-    sort_order: draft.value.sort_order,
     rule_layers,
     rule_sources: [...draft.value.rule_sources],
     group_layers,
@@ -497,15 +496,33 @@ loadRuleSourceOptions()
     </PageHeader>
 
     <AsyncSection
-      :loading="loading"
+      :loading="loading && profiles.length === 0"
       :error="error"
       :empty="profiles.length === 0"
       empty-text="还没有订阅方案"
       @retry="load"
     >
+      <div class="profiles-table-bar">
+        <span class="text-caption text-medium-emphasis">共 {{ profiles.length }} 条</span>
+        <v-spacer />
+        <v-select
+          :model-value="profilePageSize"
+          :items="[10, 25, 50, 100]"
+          label="每页条数"
+          density="compact"
+          variant="outlined"
+          hide-details
+          data-testid="profile-page-size"
+          class="profiles-page-size"
+          @update:model-value="setProfilePageSize"
+        />
+      </div>
       <v-data-table
+        :page="profilePage"
+        :items-per-page="profilePageSize"
         :items="profiles"
         :headers="headers"
+        :items-per-page-options="[10, 25, 50, 100]"
         density="comfortable"
         hover
         data-testid="profile-table"
@@ -537,9 +554,6 @@ loadRuleSourceOptions()
             <span>{{ item.enabled ? '启用' : '停用' }}</span>
           </span>
         </template>
-        <template #item.sort_order="{ item }">
-          <span data-testid="profile-sort-order">{{ sortOrderText(item.sort_order) }}</span>
-        </template>
         <template #item.actions="{ item }">
           <v-btn
             icon="mdi-pencil"
@@ -560,84 +574,104 @@ loadRuleSourceOptions()
       </v-data-table>
     </AsyncSection>
 
-    <v-dialog v-model="dialog" max-width="560">
+    <v-dialog v-model="dialog" max-width="760">
       <v-card>
         <v-card-title>{{ editingId === 0 ? '新建方案' : '编辑方案' }}</v-card-title>
         <v-card-text class="profile-dialog__body">
-          <v-text-field
-            v-model="draft.name"
-            label="名称"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-name"
-          />
-          <v-text-field
-            v-model="draft.description"
-            label="说明"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-description"
-          />
-          <v-text-field
-            v-model="draft.config"
-            label="模板"
-            hint="留空时使用默认模板"
-            variant="outlined"
-            density="comfortable"
-            hide-details
-            class="mb-3"
-            data-testid="profile-config"
-          />
-          <v-text-field
-            v-model="draft.pipeline"
-            label="管线"
-            hint="留空时不使用管线"
-            variant="outlined"
-            density="comfortable"
-            hide-details
-            class="mb-3"
-            data-testid="profile-pipeline"
-          />
-          <div class="sf-form-label">
-            <span>目标格式</span>
-            <InfoTip text="留空时使用 clash.meta。" label="目标格式" />
+          <div class="profile-form-row">
+            <v-text-field
+              v-model="draft.name"
+              label="名称"
+              variant="outlined"
+              density="comfortable"
+              class="mb-2"
+              data-testid="profile-name"
+            />
+            <v-text-field
+              v-model="draft.description"
+              label="说明"
+              variant="outlined"
+              density="comfortable"
+              class="mb-2"
+              data-testid="profile-description"
+            />
           </div>
-          <v-select
-            v-model="draft.target"
-            :items="targetOptions"
-            variant="outlined"
-            density="comfortable"
-            clearable
-            hide-details
-            class="mb-3"
-            data-testid="profile-target"
-          />
-          <div class="sf-form-label">
-            <span>包含节点</span>
-            <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不筛选。" example="香港,日本" label="包含节点" />
+          <div class="profile-form-row">
+            <v-text-field
+              v-model="draft.config"
+              label="模板"
+              hint="留空时使用默认模板"
+              variant="outlined"
+              density="comfortable"
+              hide-details
+              class="mb-3"
+              data-testid="profile-config"
+            />
+            <v-text-field
+              v-model="draft.pipeline"
+              label="管线"
+              hint="留空时不使用管线"
+              variant="outlined"
+              density="comfortable"
+              hide-details
+              class="mb-3"
+              data-testid="profile-pipeline"
+            />
           </div>
-          <v-text-field
-            v-model="draft.include"
-            variant="outlined"
-            density="comfortable"
-            hide-details
-            class="mb-3"
-            data-testid="profile-include"
-          />
-          <div class="sf-form-label">
-            <span>排除节点</span>
-            <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不排除。" example="过期,剩余" label="排除节点" />
+          <div class="profile-form-row">
+            <div class="mb-3">
+              <div class="sf-form-label">
+                <span>目标格式</span>
+                <InfoTip text="留空时使用 clash.meta。" label="目标格式" />
+              </div>
+              <v-select
+                v-model="draft.target"
+                :items="targetOptions"
+                variant="outlined"
+                density="comfortable"
+                clearable
+                hide-details
+                data-testid="profile-target"
+              />
+            </div>
+            <div class="profile-form-row__switch mb-3">
+              <v-switch
+                v-model="draft.enabled"
+                label="启用"
+                color="primary"
+                hide-details
+                data-testid="profile-enabled"
+              />
+            </div>
           </div>
-          <v-text-field
-            v-model="draft.exclude"
-            variant="outlined"
-            density="comfortable"
-            hide-details
-            class="mb-3"
-            data-testid="profile-exclude"
-          />
+          <div class="profile-form-row">
+            <div class="mb-3">
+              <div class="sf-form-label">
+                <span>包含节点</span>
+                <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不筛选。" example="香港,日本" label="包含节点" />
+              </div>
+              <v-text-field
+                v-model="draft.include"
+                variant="outlined"
+                density="comfortable"
+                hide-details
+                data-testid="profile-include"
+              />
+            </div>
+            <div class="mb-3">
+              <div class="sf-form-label">
+                <span>排除节点</span>
+                <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不排除。" example="过期,剩余" label="排除节点" />
+              </div>
+              <v-text-field
+                v-model="draft.exclude"
+                variant="outlined"
+                density="comfortable"
+                hide-details
+                data-testid="profile-exclude"
+              />
+            </div>
+          </div>
           <div class="mb-3">
             <div class="sf-form-label">
               <span>规则源（顺序即优先级）</span>
@@ -723,51 +757,37 @@ loadRuleSourceOptions()
             />
             <InfoTip text="关闭时使用全部启用的来源；开启后只使用下方选择的来源，均不选择表示不使用该类来源。" label="节点来源" />
           </div>
-          <v-select
-            v-model="draft.airport_ids"
-            :items="airportOptions"
-            :disabled="!draft.limit_sources"
-            label="机场来源"
-            multiple
-            chips
-            closable-chips
-            variant="outlined"
-            density="comfortable"
-            data-testid="profile-airports"
-            class="mb-2"
-          />
-          <v-select
-            v-model="draft.self_node_ids"
-            :items="selfNodeOptions"
-            :disabled="!draft.limit_sources"
-            label="自建节点来源"
-            multiple
-            chips
-            closable-chips
-            variant="outlined"
-            density="comfortable"
-            data-testid="profile-self-nodes"
-            class="mb-2"
-          />
-          <v-switch
-            v-model="draft.enabled"
-            label="启用"
-            color="primary"
-            hide-details
-            class="mb-2"
-            data-testid="profile-enabled"
-          />
-          <v-text-field
-            v-model.number="draft.sort_order"
-            label="顺序"
-            type="number"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-sort"
-          />
+          <div class="profile-form-row">
+            <v-select
+              v-model="draft.airport_ids"
+              :items="airportOptions"
+              :disabled="!draft.limit_sources"
+              label="机场来源"
+              multiple
+              chips
+              closable-chips
+              variant="outlined"
+              density="comfortable"
+              data-testid="profile-airports"
+              class="mb-2"
+            />
+            <v-select
+              v-model="draft.self_node_ids"
+              :items="selfNodeOptions"
+              :disabled="!draft.limit_sources"
+              label="自建节点来源"
+              multiple
+              chips
+              closable-chips
+              variant="outlined"
+              density="comfortable"
+              data-testid="profile-self-nodes"
+              class="mb-2"
+            />
+          </div>
 
-          <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3">
+          <div class="profile-form-row profile-form-row--layers">
+            <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3">
             <div class="sf-form-label">
               <span>{{ editor.caption }}</span>
               <InfoTip :text="editor.hint" :label="editor.caption" />
@@ -810,6 +830,7 @@ loadRuleSourceOptions()
               </span>
             </div>
             </div>
+          </div>
           </div>
         </v-card-text>
         <v-card-actions>
@@ -895,11 +916,48 @@ loadRuleSourceOptions()
 </template>
 
 <style scoped>
-/* 方案弹窗字段变多（来源/层顺序）后需要内部滚动，避免小屏溢出。 */
+/* 方案弹窗字段较多：双列排布压缩高度，内容超出时在弹窗内滚动。 */
 .profile-dialog__body {
-  max-height: 68vh;
+  max-height: 78vh;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+.profile-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 16px;
+  align-items: start;
+}
+.profile-form-row__switch {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  padding-top: 18px;
+}
+.profile-form-row--layers {
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .profile-form-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .profile-form-row__switch {
+    min-height: 0;
+    padding-top: 0;
+  }
+}
+.profiles-table-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.profiles-page-size {
+  max-width: 132px;
+}
+.profiles-table :deep(.v-data-table-footer__items-per-page) {
+  display: none;
 }
 .profiles-table {
   border: 1px solid var(--sf-border);

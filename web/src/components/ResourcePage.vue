@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useCrud, type CrudResource } from '../composables/useCrud'
 import { notify } from '../composables/useNotify'
 import PageHeader from './PageHeader.vue'
@@ -47,6 +47,8 @@ const confirmOpen = ref(false)
 const draft = ref<Row>({})
 const editing = ref<Row | null>(null)
 const pendingDelete = ref<Row | null>(null)
+const page = ref(1)
+const itemsPerPage = ref(10)
 
 const headers = computed(() => {
   if (props.readonlyMode === true) {
@@ -96,6 +98,15 @@ function cellPropsFor(data: { column?: { key?: string | null } }): Record<string
 }
 
 const emptyText = computed(() => props.emptyText ?? '暂无数据')
+const pageCount = computed(() => Math.max(1, Math.ceil(items.value.length / itemsPerPage.value)))
+watch([items, itemsPerPage], () => {
+  page.value = Math.min(page.value, pageCount.value)
+})
+
+function setPageSize(next: number): void {
+  itemsPerPage.value = next
+  page.value = 1
+}
 
 function fieldHint(field: ResourceField): string {
   const explicit = field.hint
@@ -194,13 +205,39 @@ reload()
   </PageHeader>
 
   <AsyncSection
-    :loading="loading"
+    :loading="loading && items.length === 0"
     :error="error"
     :empty="props.empty !== undefined && items.length === 0 ? props.empty : (items.length === 0)"
     :empty-text="emptyText"
     @retry="reload"
   >
-    <v-data-table :items="items" :headers="headers" :cell-props="cellPropsFor" density="comfortable" hover data-testid="table" class="resource-table">
+    <div class="resource-table-bar">
+      <span class="text-caption text-medium-emphasis">共 {{ items.length }} 条</span>
+      <v-spacer />
+      <v-select
+        :model-value="itemsPerPage"
+        :items="[10, 25, 50, 100]"
+        label="每页条数"
+        density="compact"
+        variant="outlined"
+        hide-details
+        data-testid="page-size"
+        class="resource-page-size"
+        @update:model-value="setPageSize"
+      />
+    </div>
+    <v-data-table
+      :page="page"
+      :items-per-page="itemsPerPage"
+      :items="items"
+      :headers="headers"
+      :items-per-page-options="[10, 25, 50, 100]"
+      :cell-props="cellPropsFor"
+      density="comfortable"
+      hover
+      data-testid="table"
+      class="resource-table"
+    >
       <template #item.enabled="{ value }">
         <span class="sf-status">
           <span class="sf-status__dot" :class="value ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
@@ -215,6 +252,9 @@ reload()
       </template>
       <template #item.token="{ value }">
         <code class="resource-mono resource-truncate" :title="value">{{ value }}</code>
+      </template>
+      <template #item.members_text="{ item, value }">
+        <slot name="members" :item="item" :value="value">{{ value }}</slot>
       </template>
       <template v-if="rankKey" #[`item.${rankKey}`]="{ item }">
         {{ rankOf(item) }}
@@ -320,6 +360,18 @@ reload()
   margin-bottom: 2px;
   font-size: 13px;
   color: var(--sf-text-muted);
+}
+ .resource-table-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.resource-page-size {
+  max-width: 132px;
+}
+:deep(.v-data-table-footer__items-per-page) {
+  display: none;
 }
 .resource-table {
   border: 1px solid var(--sf-border);

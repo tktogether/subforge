@@ -51,7 +51,6 @@ describe('GroupsPage', () => {
       { key: 'expand_text', title: '成员扩展' },
       { key: 'url', title: '检测地址' },
       { key: 'interval', title: '间隔(秒)' },
-      { key: 'sort_order', title: '顺序' },
     ])
     expect(rp.props('fields')).toEqual([
       { key: 'name', label: '名称', type: 'text', hint: '客户端中显示的策略组名称；规则通过该名称选择目标分组。', example: '香港' },
@@ -73,8 +72,8 @@ describe('GroupsPage', () => {
         default: false,
         hint: '将方案中选中的自建节点加入该分组。',
       },
-      { key: 'sort_order', label: '排序', type: 'number', hint: '数值越小越靠前。' },
     ])
+    expect(rp.props('rankKey')).toBeUndefined()
     const resource = rp.props('resource') as any
     expect(resource.list).not.toBe(endpoints.listGroups)
     expect(resource.create).toBe(endpoints.createGroup)
@@ -267,4 +266,35 @@ describe('GroupsPage', () => {
     expect(w.text()).toContain('故障转移')
     w.unmount()
   })
+
+
+  it('成员列按需打开完整列表并支持搜索', async () => {
+    listMock.mockResolvedValue([
+      { id: 1, name: '全部节点', type: 'select', regex: '', url: '', interval: 0, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'HK-2', 'HK-3', 'HK-4', 'HK-5', 'HK-6', 'HK-7', 'HK-8', 'HK-9', 'HK-10', 'JP-1', 'JP-2'], include_all_sources: true, include_self: true },
+    ])
+    const w = mount(GroupsPage, {
+      global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' } } },
+    })
+    await flushPromises()
+    const open = w.find('[data-testid="group-members-open"]')
+    expect(open.exists()).toBe(true)
+    expect(open.text()).toContain('12 个')
+    expect(w.find('[data-testid="group-members-dialog"]').exists()).toBe(false)
+    await open.trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="group-members-dialog"]').exists()).toBe(true)
+    expect(w.findAll('[data-testid="group-member-item"]').length).toBe(12)
+    expect(w.text()).toContain('HK-1')
+    expect(w.text()).toContain('JP-2')
+    await w.find('[data-testid="group-members-search"] input').setValue('jp')
+    await flushPromises()
+    expect(w.findAll('[data-testid="group-member-item"]').length).toBe(2)
+    expect(w.text()).toContain('JP-1')
+    expect(w.find('[data-testid="group-member-list"]').text()).not.toContain('HK-1')
+    await w.find('[data-testid="group-members-close"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).membersOpen).toBe(false)
+    w.unmount()
+  })
+
 })

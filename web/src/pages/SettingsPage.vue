@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { endpoints, type SettingItem } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
-import { useThemeMode } from '../composables/useThemeMode'
 import { notify } from '../composables/useNotify'
 import { pageHelp, fieldHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
@@ -11,13 +10,10 @@ import InfoTip from '../components/InfoTip.vue'
 
 const help = pageHelp('settings')
 
-const targets = ref<string[]>([])
-const statsHistory = ref(0)
 const error = ref('')
 const loading = ref(false)
 const settings = ref<SettingItem[]>([])
 const saving = ref(false)
-const theme = useThemeMode()
 
 // 转换模板（INI）：只有启动时指定 -config 才存在；保存后若路径就是 -config，服务会热重载。
 const templatePath = ref('')
@@ -66,13 +62,7 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const [t, s, st] = await Promise.all([
-      endpoints.targets(),
-      endpoints.stats(),
-      endpoints.listSettings(),
-    ])
-    targets.value = t
-    statsHistory.value = s.history.total
+    const st = await endpoints.listSettings()
     settings.value = st.settings ?? []
   } catch (err) {
     error.value = errorMessage(err)
@@ -119,35 +109,44 @@ onMounted(() => {
 <template>
   <PageHeader title="设置" :subtitle="help.oneLiner" help-key="settings" />
   <AsyncSection :loading="loading" :error="error" :empty="settings.length === 0" empty-text="" :empty-state="emptyState" @retry="load">
-    <div v-for="item in settings" :key="item.key" data-testid="setting-row" class="mb-4">
-      <v-card class="pa-4">
-        <div class="sf-setting-label">
-          <span data-testid="setting-label">{{ item.label }}</span>
-          <InfoTip :text="fieldHelp(item.key)?.hint ?? ''" :label="item.label" />
-          <code data-testid="setting-key" class="text-caption">{{ item.key }}</code>
+    <v-card class="pa-4 settings-card">
+      <div v-for="item in settings" :key="item.key" data-testid="setting-row" class="setting-row">
+        <div class="setting-row__label">
+          <div class="sf-setting-label">
+            <span data-testid="setting-label">{{ item.label }}</span>
+            <InfoTip :text="fieldHelp(item.key)?.hint ?? ''" :label="item.label" />
+          </div>
+          <div data-testid="setting-desc" class="text-caption text-medium-emphasis">{{ item.description }}</div>
+          <code data-testid="setting-key" class="setting-key">{{ item.key }}</code>
         </div>
-        <div data-testid="setting-desc" class="text-body-2 text-medium-emphasis mb-2">{{ item.description }}</div>
-        <v-switch
-          v-if="item.kind === 'bool'"
-          data-testid="setting-switch"
-          :model-value="item.value === 'true'"
-          @update:model-value="setSwitch(item, $event as boolean)"
-        />
-        <v-text-field
-          v-else
-          data-testid="setting-input"
-          v-model="item.value"
-          :placeholder="item.placeholder"
-        />
-        <span v-if="item.is_default === true" data-testid="setting-default-badge">当前为默认值</span>
-        <span v-if="item.placeholder" data-testid="setting-placeholder">默认：{{ item.placeholder }}</span>
-      </v-card>
-    </div>
-    <div class="d-flex ga-2 mt-4">
-      <v-btn data-testid="settings-save" :loading="saving" @click="save">保存</v-btn>
-      <v-btn data-testid="settings-reset" variant="tonal" @click="resetDefaults">重置为默认</v-btn>
-    </div>
-    <div class="text-caption text-medium-emphasis mt-2">清空输入框表示恢复默认值。</div>
+        <div class="setting-row__control">
+          <v-switch
+            v-if="item.kind === 'bool'"
+            data-testid="setting-switch"
+            :model-value="item.value === 'true'"
+            color="primary"
+            hide-details
+            @update:model-value="setSwitch(item, $event as boolean)"
+          />
+          <v-text-field
+            v-else
+            data-testid="setting-input"
+            v-model="item.value"
+            :placeholder="item.placeholder"
+            variant="outlined"
+            density="comfortable"
+            hide-details
+          />
+          <div v-if="item.is_default === true" data-testid="setting-default-badge" class="text-caption text-medium-emphasis mt-1">当前为默认值</div>
+          <div v-if="item.placeholder" data-testid="setting-placeholder" class="text-caption text-medium-emphasis mt-1">默认：{{ item.placeholder }}</div>
+        </div>
+      </div>
+      <div class="d-flex ga-2 mt-4">
+        <v-btn data-testid="settings-save" :loading="saving" @click="save">保存</v-btn>
+        <v-btn data-testid="settings-reset" variant="tonal" @click="resetDefaults">重置为默认</v-btn>
+      </div>
+      <div class="text-caption text-medium-emphasis mt-2">清空输入框表示恢复默认值。</div>
+    </v-card>
   </AsyncSection>
   <v-card class="pa-4 mt-4" data-testid="template-card">
     <div class="d-flex align-center ga-2 mb-2">
@@ -177,19 +176,42 @@ onMounted(() => {
     </v-alert>
     <div v-if="templateError !== ''" data-testid="template-error" class="text-error mt-2">{{ templateError }}</div>
   </v-card>
-  <v-card class="pa-4 mt-4">
-    <div class="mb-2">支持的目标格式：{{ targets.length === 0 ? '（无）' : targets.join(', ') }}</div>
-    <div class="mb-2">历史条数：{{ statsHistory }}</div>
-    <div class="d-flex ga-2">
-      <v-btn variant="tonal" @click="theme.setMode('light')">浅色</v-btn>
-      <v-btn variant="tonal" @click="theme.setMode('dark')">深色</v-btn>
-      <v-btn variant="tonal" @click="theme.setMode('system')">跟随系统</v-btn>
-    </div>
-  </v-card>
   <div v-if="error !== ''" class="text-error mt-2">{{ error }}</div>
 </template>
 
 <style scoped>
+.settings-card {
+  margin-top: 4px;
+}
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 360px);
+  gap: 20px;
+  align-items: start;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--sf-border);
+}
+.setting-row:last-of-type {
+  border-bottom: 0;
+}
+.setting-row__label {
+  min-width: 0;
+}
+.setting-key {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--sf-text-faint);
+  font-size: 11px;
+}
+.setting-row__control {
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .setting-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
 .sf-setting-label {
   display: flex;
   align-items: center;

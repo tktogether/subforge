@@ -1,9 +1,19 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { pageHelp } from '../content/help'
 import ResourcePage from '../components/ResourcePage.vue'
 import { endpoints, type ProxyGroup } from '../api/endpoints'
 
 const help = pageHelp('groups')
+
+const membersGroup = ref<ProxyGroup | null>(null)
+const membersOpen = ref(false)
+const membersSearch = ref('')
+const filteredMembers = computed(() => {
+  const members = membersGroup.value?.members ?? []
+  const q = membersSearch.value.trim().toLowerCase()
+  return q === '' ? members : members.filter((m) => m.toLowerCase().includes(q))
+})
 
 // v2：分组不再归属方案，按来源(source)分层。来源列展示文案：
 // '' → 「自定义」；'airport:<机场名>' → 「机场:<机场名>」；其它原样显示。
@@ -22,14 +32,23 @@ const groupColumns = [
   { key: 'expand_text', title: '成员扩展' },
   { key: 'url', title: '检测地址' },
   { key: 'interval', title: '间隔(秒)' },
-  { key: 'sort_order', title: '顺序' },
 ]
 
-// 机场自带分组的成员可能很多：只预览前三个，避免表格被长列表撑破。
+// 机场自带分组的成员可能很多：只预览前三个，完整列表按需打开。
 function membersText(members?: string[]): string {
   if (!members || members.length === 0) return '—'
   const preview = members.slice(0, 3).join('、')
   return members.length > 3 ? `${members.length} 个：${preview}…` : preview
+}
+
+function openMembers(group: any): void {
+  membersGroup.value = group
+  membersSearch.value = ''
+  membersOpen.value = true
+}
+
+function closeMembers(): void {
+  membersOpen.value = false
 }
 
 // 成员扩展是「全部来源 + 自建」两种开关的组合，表格只显示最终生效范围。
@@ -61,7 +80,6 @@ const groupFields = [
     default: false,
     hint: '将方案中选中的自建节点加入该分组。',
   },
-  { key: 'sort_order', label: '排序', type: 'number', hint: '数值越小越靠前。' },
 ]
 
 // 包装 list：给每行补一个 source_text 展示字段；新增/编辑透传 createGroup/updateGroup 原样。
@@ -93,8 +111,47 @@ const resource: any = {
       :fields="groupFields"
       :resource="resource"
       :empty="help.emptyState"
-      rank-key="sort_order"
-    />
+    >
+      <template #members="{ item }">
+        <button
+          v-if="item.members && item.members.length > 0"
+          type="button"
+          class="members-trigger"
+          data-testid="group-members-open"
+          @click="openMembers(item)"
+        >{{ membersText(item.members) }}</button>
+        <span v-else>—</span>
+      </template>
+
+    </ResourcePage>
+
+    <v-dialog :model-value="membersOpen" max-width="680" scrollable data-testid="group-members-dialog" @update:model-value="closeMembers">
+      <v-card>
+        <v-card-title>分组成员 · {{ membersGroup?.name }}</v-card-title>
+        <v-card-text>
+          <div class="text-caption text-medium-emphasis mb-2">共 {{ membersGroup?.members?.length ?? 0 }} 个成员</div>
+          <v-text-field
+            v-if="(membersGroup?.members?.length ?? 0) > 10"
+            v-model="membersSearch"
+            label="搜索成员"
+            density="compact"
+            variant="outlined"
+            hide-details
+            clearable
+            data-testid="group-members-search"
+            class="mb-3"
+          />
+          <div class="member-grid" data-testid="group-member-list">
+            <span v-for="member in filteredMembers" :key="member" class="member-item" data-testid="group-member-item">{{ member }}</span>
+          </div>
+          <div v-if="filteredMembers.length === 0" class="text-caption text-medium-emphasis mt-2">没有匹配的成员</div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" data-testid="group-members-close" @click="closeMembers">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <v-expansion-panels class="mt-4" data-testid="group-recipes">
       <v-expansion-panel>
@@ -110,3 +167,35 @@ const resource: any = {
     </v-expansion-panels>
   </div>
 </template>
+
+<style scoped>
+.members-trigger {
+  max-width: 260px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sf-accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.member-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 16px;
+}
+.member-item {
+  min-width: 0;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--sf-border);
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .member-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

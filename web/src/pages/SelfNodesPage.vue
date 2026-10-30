@@ -9,14 +9,12 @@ const selfNodeColumns = [
   { key: 'name', title: '名称' },
   { key: 'link', title: '链接' },
   { key: 'enabled', title: '启用' },
-  { key: 'sort_order', title: '顺序' },
 ]
 
 const selfNodeFields = [
   { key: 'name', label: '名称', type: 'text', hint: '输出到客户端显示的名字；留空则用链接里自带的名字', example: '自建-香港' },
   { key: 'link', label: '分享链接', type: 'text', hint: '标准分享链接，以 ss:// / vmess:// / vless:// / trojan:// / hysteria2:// 开头', example: 'vless://uuid@1.2.3.4:443?encryption=none&security=tls#香港' },
   { key: 'enabled', label: '启用', type: 'switch', hint: '关闭后不参与输出' },
-  { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
 ]
 
 const resource: any = {

@@ -136,7 +136,7 @@ describe('ProfilesPage', () => {
     ;(endpoints.targets as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(['clash.meta', 'sing-box'])
   })
 
-  it('渲染方案表格：模板/管线空值显示默认、模板超长截断、启用停用、顺序>1e12 显示未设置、层列顺序', async () => {
+  it('渲染方案表格：模板/管线空值显示默认、模板超长截断、启用停用与层列顺序', async () => {
     const longConfig = 'x'.repeat(80)
     ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
       makeProfile(),
@@ -164,8 +164,6 @@ describe('ProfilesPage', () => {
     expect(w.text()).toContain('启用')
     expect(w.text()).toContain('停用')
     expect(w.text()).toContain('pipeB')
-    expect(w.text()).toContain('7')
-    expect(w.text()).toContain('未设置')
 
     const ruleLayersText = w.findAll('[data-testid="profile-rule-layers-text"]')
     expect(ruleLayersText[0].text()).toBe('自定义 → 模板')
@@ -176,9 +174,6 @@ describe('ProfilesPage', () => {
     expect(groupLayersText[0].text()).toBe('自定义 → 机场导入 → 模板')
     expect(groupLayersText[2].text()).toBe('默认')
     expect(groupLayersText[3].text()).toBe('模板')
-
-    const orderCells = w.findAll('[data-testid="profile-sort-order"]')
-    expect(orderCells[2].text()).toBe('未设置')
   })
 
   it('帮助文案说明方案内容、来源限制、删除影响与层顺序', async () => {
@@ -216,7 +211,6 @@ describe('ProfilesPage', () => {
     await w.find('[data-testid="profile-config"]').find('input').setValue('cfg')
     await w.find('[data-testid="profile-pipeline"]').find('input').setValue('pipe')
     await w.find('[data-testid="profile-enabled"] input').setValue(false)
-    await w.find('[data-testid="profile-sort"]').find('input').setValue('9')
 
     // 规则层默认全开（自定义→模板）；机场规则是规则源，不在规则层里。
     const ruleBox = w.find('[data-testid="profile-rule-layers"]')
@@ -248,7 +242,6 @@ describe('ProfilesPage', () => {
       include: '',
       exclude: '',
       enabled: false,
-      sort_order: 9,
       rule_layers: ['custom', 'template'],
       rule_sources: [],
       group_layers: ['custom', 'airport', 'template'],
@@ -942,4 +935,16 @@ describe('ProfilesPage', () => {
       expect.objectContaining({ name: '兜底方案', rule_sources: [] }),
     )
     expect(notifyState.text).toBe('已保存')
-  })})
+  })
+
+  it('方案表格分页状态可由表格更新', async () => {
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as any
+    vm.setProfilePageSize(25)
+    await flushPromises()
+    expect(vm.profilePageSize).toBe(25)
+    w.unmount()
+  })
+
+})

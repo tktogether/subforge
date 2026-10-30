@@ -748,4 +748,71 @@ describe('ResourcePage', () => {
     await select!.setValue(3)
     expect(vm.draft.group).toBe(3)
   })
+
+
+  it('表格分页状态由表格更新，重新加载后仍保留', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, name: 'row-' + i, count: i, enabled: true }))
+    const resource = makeResource(many)
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify] },
+    })
+    await flushPromises()
+    const vm = w.vm as any
+    vm.setPageSize(25)
+    await flushPromises()
+    expect((w.vm as any).itemsPerPage).toBe(25)
+    await (w.vm as any).reload()
+    await flushPromises()
+    expect((w.vm as any).itemsPerPage).toBe(25)
+    vm.page = 5
+    vm.itemsPerPage = 10
+    await flushPromises()
+    expect((w.vm as any).page).toBeGreaterThanOrEqual(1)
+    w.unmount()
+  })
+
+  it('每页条数变大导致当前页超出时自动回到最后一页', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, name: 'row-' + i, count: i, enabled: true }))
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource: makeResource(rows) },
+      global: { plugins: [vuetify] },
+    })
+    await flushPromises()
+    const vm = w.vm as any
+    vm.page = 3
+    expect(vm.page).toBe(3)
+    vm.itemsPerPage = 100
+    expect(vm.itemsPerPage).toBe(100)
+    expect(vm.pageCount).toBe(1)
+    await flushPromises()
+    expect(vm.page).toBe(1)
+    w.unmount()
+  })
+
+  it('members 列通过插槽渲染自定义内容', async () => {
+    const resource = makeResource([{ id: 1, name: 'g', enabled: true, members_text: '预览' }])
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns: [{ key: 'name', title: '名称' }, { key: 'members_text', title: '成员' }], fields, resource },
+      global: { plugins: [vuetify] },
+      slots: { members: '<span data-testid="custom-members">自定义成员</span>' },
+    })
+    await flushPromises()
+    expect(w.find('[data-testid="custom-members"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+
+
+  it('members 列无自定义插槽时显示原值', async () => {
+    const resource = makeResource([{ id: 1, name: 'g', enabled: true, members_text: '原样成员' }])
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns: [{ key: 'name', title: '名称' }, { key: 'members_text', title: '成员' }], fields, resource },
+      global: { plugins: [vuetify] },
+    })
+    await flushPromises()
+    expect(w.text()).toContain('原样成员')
+    w.unmount()
+  })
+
 })

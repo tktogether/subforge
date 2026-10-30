@@ -19,21 +19,9 @@ vi.mock('../api/endpoints', () => ({
   },
 }))
 
-const mockSetMode = vi.fn()
-vi.mock('../composables/useThemeMode', () => ({
-  useThemeMode: () => ({
-    mode: { value: 'system' },
-    isDark: { value: false },
-    setMode: mockSetMode,
-    cycle: vi.fn(),
-  }),
-}))
-
 const vuetify = createVuetify({ components, directives })
 
 interface SettingsPageVm {
-  targets: string[]
-  statsHistory: number
   error: string
   settings: any[]
   saving: boolean
@@ -48,8 +36,6 @@ describe('SettingsPage', () => {
     vi.clearAllMocks()
     vi.mocked(endpoints.listSettings).mockResolvedValue({ settings: sampleSettings } as any)
     vi.mocked(endpoints.updateSettings).mockResolvedValue({ ok: true } as any)
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue({ history: { total: 0 } } as any)
     vi.mocked(endpoints.getTemplate).mockResolvedValue({ path: '/data/template.ini', content: '[custom]\n' } as any)
     vi.mocked(endpoints.putTemplate).mockResolvedValue({ ok: true } as any)
   })
@@ -97,111 +83,25 @@ describe('SettingsPage', () => {
     expect(w.find('[data-testid="template-error"]').text()).toContain('模板语法错误')
   })
 
-  it('onMounted 调用 load：targets 与 stats 并发调用，结果写入，error 为空', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue(['clash', 'yaml'])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
+  it('设置项集中渲染在单个卡片内', async () => {
     const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    const vm = w.vm as unknown as SettingsPageVm
     await flushPromises()
-    expect(endpoints.targets).toHaveBeenCalledTimes(1)
-    expect(endpoints.stats).toHaveBeenCalledTimes(1)
-    expect(vm.targets).toEqual(['clash', 'yaml'])
-    expect(vm.statsHistory).toBe(7)
-    expect(vm.error).toBe('')
+    expect(endpoints.listSettings).toHaveBeenCalledTimes(1)
+    expect(w.findAll('[data-testid="setting-row"]').length).toBe(2)
+    const cards = w.findAllComponents({ name: 'VCard' })
+    const settingsCard = cards.find((c) => c.classes().includes('settings-card'))
+    expect(settingsCard?.exists()).toBe(true)
+    expect(settingsCard?.text()).toContain('manifest 路径')
     w.unmount()
   })
 
-  it('load 失败：error 为 errorMessage(err)', async () => {
-    vi.mocked(endpoints.targets).mockRejectedValue(new Error('fail-load'))
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
+  it('加载设置失败显示错误', async () => {
+    vi.mocked(endpoints.listSettings).mockRejectedValueOnce(new Error('fail-load'))
     const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
     const vm = w.vm as unknown as SettingsPageVm
     await flushPromises()
     expect(vm.error).toBe('fail-load')
-    expect(vm.targets).toEqual([])
-    w.unmount()
-  })
-
-  it('load 失败（非 Error）：error 为 String(err)', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue(['clash'])
-    vi.mocked(endpoints.stats).mockRejectedValue('str-fail')
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    const vm = w.vm as unknown as SettingsPageVm
-    await flushPromises()
-    expect(vm.error).toBe('str-fail')
-    w.unmount()
-  })
-
-  it('模板：targets 为空时显示「（无）」', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).toContain('（无）')
-    expect(w.text()).toContain('7')
-    w.unmount()
-  })
-
-  it('模板：targets 非空时 join 渲染', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue(['clash', 'yaml'])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).toContain('clash, yaml')
-    expect(w.text()).not.toContain('（无）')
-    w.unmount()
-  })
-
-  it('模板：error 为空时不显示错误块', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).not.toContain('fail-load')
-    expect(w.find('.text-error').exists()).toBe(false)
-    w.unmount()
-  })
-
-  it('模板：error 非空时显示错误块', async () => {
-    vi.mocked(endpoints.targets).mockRejectedValue(new Error('boom'))
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).toContain('boom')
-    expect(w.find('.text-error').exists()).toBe(true)
-    w.unmount()
-  })
-
-  it('点击浅色按钮：theme.setMode("light")', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const btn = w.findAllComponents({ name: 'VBtn' }).find((b) => b.text().includes('浅色'))
-    await btn!.trigger('click')
-    expect(mockSetMode).toHaveBeenCalledWith('light')
-    w.unmount()
-  })
-
-  it('点击深色按钮：theme.setMode("dark")', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const btn = w.findAllComponents({ name: 'VBtn' }).find((b) => b.text().includes('深色'))
-    await btn!.trigger('click')
-    expect(mockSetMode).toHaveBeenCalledWith('dark')
-    w.unmount()
-  })
-
-  it('点击跟随系统按钮：theme.setMode("system")', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const btn = w.findAllComponents({ name: 'VBtn' }).find((b) => b.text().includes('跟随系统'))
-    await btn!.trigger('click')
-    expect(mockSetMode).toHaveBeenCalledWith('system')
+    expect(w.text()).toContain('fail-load')
     w.unmount()
   })
 

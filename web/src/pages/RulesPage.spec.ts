@@ -1002,11 +1002,10 @@ describe('RulesPage', () => {
     ])
     const w = mountRules()
     await flushPromises()
-    const vm = w.vm as unknown as { onRuleOptions: (o: { page: number; itemsPerPage: number }) => void }
-    vm.onRuleOptions({ page: 1, itemsPerPage: 25 })
-    vm.onRuleOptions({ page: 2, itemsPerPage: 50 })
+    const vm = w.vm as any
+    vm.setRulePageSize(50)
     await flushPromises()
-    expect(listRulesPageMock).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50, offset: 50 }))
+    expect(listRulesPageMock).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50, offset: 0 }))
     w.unmount()
   })
 

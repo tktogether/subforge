@@ -93,12 +93,9 @@ function setEnabledFilter(value: 'all' | 'enabled' | 'disabled'): void {
   void loadRules()
 }
 
-function onRuleOptions(options: { page: number; itemsPerPage: number }): void {
-  if (options.page === rulePage.value && options.itemsPerPage === rulePageSize.value) {
-    return
-  }
-  rulePage.value = options.page
-  rulePageSize.value = options.itemsPerPage
+function setRulePageSize(next: number): void {
+  rulePageSize.value = next
+  rulePage.value = 1
   void loadRules()
 }
 
@@ -459,6 +456,17 @@ onMounted(() => {
         <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-all" @click="setEnabledFilter('all')">全部</v-btn>
         <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-enabled" @click="setEnabledFilter('enabled')">已启用</v-btn>
         <v-btn size="small" variant="tonal" data-testid="filter-disabled" @click="setEnabledFilter('disabled')">已停用</v-btn>
+        <v-select
+          :model-value="rulePageSize"
+          :items="[25, 50, 100]"
+          label="每页条数"
+          density="compact"
+          variant="outlined"
+          hide-details
+          data-testid="rule-page-size"
+          class="rule-page-size"
+          @update:model-value="setRulePageSize"
+        />
         <v-spacer></v-spacer>
         <span class="text-caption text-medium-emphasis" data-testid="rule-selection-count">筛选命中 {{ ruleTotal }} 条 · 已选 {{ selectedRuleIds.length }} 条</span>
       </div>
@@ -485,11 +493,11 @@ onMounted(() => {
       @retry="reloadRules"
     >
       <v-data-table-server
+        :page="rulePage"
+        :items-per-page="rulePageSize"
         :items="rules"
         :headers="ruleHeaders"
         :items-length="ruleTotal"
-        :items-per-page="rulePageSize"
-        :page="rulePage"
         :items-per-page-options="[25, 50, 100]"
         :cell-props="cellPropsFor"
         show-select
@@ -500,7 +508,6 @@ onMounted(() => {
         hover
         data-testid="table"
         class="resource-table"
-        @update:options="onRuleOptions"
       >
         <template #item.enabled="{ value }">
           <span class="sf-status">
@@ -675,6 +682,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.rule-page-size {
+  max-width: 120px;
+}
+.resource-table :deep(.v-data-table-footer__items-per-page) {
+  display: none;
+}
 .sf-rule-field {
   margin-bottom: 12px;
 }

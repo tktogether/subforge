@@ -252,7 +252,7 @@ async function refreshAll(): Promise<void> {
   refreshLoading.value = true
   refreshError.value = ''
   try {
-    const r = await endpoints.refreshAllAirports(false)
+    const r = await endpoints.refreshAllAirports(true)
     refreshResult.value = r
   } catch (err) {
     refreshError.value = errorMessage(err)
@@ -310,21 +310,29 @@ onMounted(() => {
     <v-card-title>令牌</v-card-title>
     <v-card-text>
       <v-btn data-testid="create-token-btn" variant="tonal" class="mb-3" @click="openCreateToken">新建令牌</v-btn>
-      <table data-testid="token-table" class="w-100">
-        <thead><tr><th>令牌</th><th>名称</th><th>方案</th><th>操作</th></tr></thead>
+      <table v-if="tokens.length > 0" data-testid="token-table" class="token-table">
+        <colgroup>
+          <col class="token-col-token" />
+          <col class="token-col-name" />
+          <col class="token-col-profile" />
+          <col class="token-col-actions" />
+        </colgroup>
+        <thead>
+          <tr><th>令牌</th><th>名称</th><th>方案</th><th class="token-actions">操作</th></tr>
+        </thead>
         <tbody>
           <tr v-for="t in tokens" :key="t.token" data-testid="token-row">
-            <td><code>{{ maskToken(t.token) }}</code></td>
-            <td>{{ t.name }}</td>
-            <td data-testid="token-profile-name">{{ t.profile_name ?? '未绑定方案' }}</td>
-            <td>
+            <td><code class="token-value" :title="t.token">{{ maskToken(t.token) }}</code></td>
+            <td><span class="token-text" :title="t.name">{{ t.name || '—' }}</span></td>
+            <td data-testid="token-profile-name"><span class="token-text" :title="t.profile_name ?? '未绑定方案'">{{ t.profile_name ?? '未绑定方案' }}</span></td>
+            <td class="token-actions">
               <v-btn size="small" variant="text" data-testid="token-edit" @click="openEditToken(t)">编辑</v-btn>
               <v-btn size="small" variant="text" color="error" data-testid="token-delete" @click="deleteToken(t)">删除</v-btn>
             </td>
           </tr>
         </tbody>
       </table>
-      <div v-if="tokens.length === 0" class="text-medium-emphasis mt-2">还没有令牌。</div>
+      <div v-if="tokens.length === 0" class="token-empty" data-testid="token-empty">还没有令牌。点击「新建令牌」创建第一个。</div>
     </v-card-text>
   </v-card>
 
@@ -403,10 +411,10 @@ onMounted(() => {
 
   <!-- Block 4: refresh -->
   <v-card class="pa-4 mb-4" data-testid="block-refresh">
-    <v-card-title>余额刷新</v-card-title>
+    <v-card-title>刷新全部机场</v-card-title>
     <v-card-text>
-      <p class="text-body-2 mb-2">刷新会逐个请求机场的订阅地址。刷新失败时保留上一次成功获取的余额。</p>
-      <v-btn data-testid="refresh-btn" variant="tonal" :loading="refreshLoading" @click="refreshAll">立即刷新全部机场余额</v-btn>
+      <p class="text-body-2 mb-2">逐个请求机场的订阅地址，更新节点、流量与规则源。刷新失败时保留上一次成功获取的余额。</p>
+      <v-btn data-testid="refresh-btn" variant="tonal" :loading="refreshLoading" @click="refreshAll">立即刷新全部机场</v-btn>
       <div v-if="refreshError !== ''" data-testid="refresh-error" class="text-error mt-2">{{ refreshError }}</div>
       <div v-if="refreshResult !== null" data-testid="refresh-summary" class="mt-2">
         成功 {{ refreshResult.ok }} 个，失败 {{ refreshResult.fail }} 个
@@ -428,3 +436,60 @@ onMounted(() => {
     </v-card-text>
   </v-card>
 </template>
+<style scoped>
+.token-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.token-table th,
+.token-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sf-border);
+  text-align: left;
+  vertical-align: middle;
+}
+.token-table th {
+  background: var(--sf-surface-raised);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.token-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.token-table tbody tr:hover {
+  background: var(--sf-surface-raised);
+}
+.token-col-token { width: 24%; }
+.token-col-name { width: 20%; }
+.token-col-profile { width: auto; }
+.token-col-actions { width: 128px; }
+.token-value {
+  display: block;
+  overflow: hidden;
+  color: var(--sf-text);
+  font-family: var(--sf-font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-text {
+  display: block;
+  overflow: hidden;
+  color: var(--sf-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-actions {
+  text-align: right !important;
+  white-space: nowrap;
+}
+.token-empty {
+  padding: 18px 12px;
+  border: 1px dashed var(--sf-border);
+  border-radius: 8px;
+  color: var(--sf-text-muted);
+  text-align: center;
+}
+</style>

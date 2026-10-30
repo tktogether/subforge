@@ -78,4 +78,34 @@ describe('AppTopBar', () => {
     const w = mountTopBar({ title: '' })
     expect(w.find('[data-testid="topbar"]').exists()).toBe(true)
   })
+
+
+  it('页面模式入口常驻顶栏', () => {
+    const w = mountTopBar({ title: '机场' })
+    const btn = w.find('[data-testid="theme-button"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBe('页面模式')
+    expect(btn.attributes('aria-label')).toBe('页面模式')
+  })
+
+
+
+  it('页面模式菜单可切换主题', async () => {
+    localStorage.removeItem('subforge.theme')
+    const w = mount({
+      components: { VLayout: components.VLayout, AppTopBar },
+      template: '<v-layout><AppTopBar title="机场" /></v-layout>',
+    }, {
+      global: {
+        plugins: [vuetify],
+        stubs: { VMenu: { template: '<div><slot name="activator" :props="{}" /><slot /></div>' } },
+      },
+    })
+    const dark = w.find('[data-testid="theme-dark"]')
+    expect(dark.exists()).toBe(true)
+    await dark.trigger('click')
+    expect(localStorage.getItem('subforge.theme')).toBe('dark')
+    w.unmount()
+  })
+
 })
