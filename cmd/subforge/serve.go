@@ -43,6 +43,7 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   -shutdown   收到停止信号后的优雅关闭秒数（默认 10）
   -cache-dir  上游内容磁盘缓存目录（默认不缓存）
   -data-dir   订阅管理数据目录（SQLite，默认不启用）
+  -pprof      启用 /debug/pprof（默认关闭；也可设 SUBFORGE_PPROF=1）
   -name      写入产物注释头的配置名（启动时固定）
 
 环境变量（作为对应选项的默认值，显式传入的命令行参数优先级更高）:
@@ -96,7 +97,7 @@ const serveUsage = `subforge serve - 启动 HTTP 订阅服务
   /api/template     模板（GET/PUT）
   /api/override     覆盖（GET/PUT）
   GET /api/metrics  运行时指标（JSON）
-  /debug/pprof/*    性能分析
+  /debug/pprof/*    性能分析（仅启动时 -pprof 开启后可用）
 `
 
 func cmdServe(args []string) error {
@@ -104,6 +105,7 @@ func cmdServe(args []string) error {
 	var (
 		listen, token, cacheDir, dataDir, name, configFile string
 		mixedPort, timeoutSeconds, shutdownSeconds         int
+		pprofEnabled                                       bool
 	)
 	fs.StringVar(&listen, "listen", envOr("SUBFORGE_LISTEN", "127.0.0.1:25500"), "监听地址")
 	fs.StringVar(&token, "token", envOr("SUBFORGE_TOKEN", ""), "访问令牌（空表示不鉴权）")
@@ -114,6 +116,7 @@ func cmdServe(args []string) error {
 	fs.IntVar(&mixedPort, "mixed-port", config.DefaultMixedPort, "clash.meta 输出的 mixed-port")
 	fs.IntVar(&timeoutSeconds, "timeout", 30, "上游请求与单请求超时秒数")
 	fs.IntVar(&shutdownSeconds, "shutdown", 10, "收到停止信号后的优雅关闭秒数")
+	fs.BoolVar(&pprofEnabled, "pprof", envOr("SUBFORGE_PPROF", "") == "1", "启用 /debug/pprof（默认关闭，生产不建议开启）")
 	fs.Usage = func() { fmt.Print(serveUsage) }
 
 	if err := fs.Parse(args); err != nil {
@@ -162,6 +165,7 @@ func cmdServe(args []string) error {
 		Name:    "subforge",
 		Logger:  log.Default(),
 		DataDir: dataDir,
+		PProf:   pprofEnabled,
 	})
 
 	if dataDir != "" {

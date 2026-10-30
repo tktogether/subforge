@@ -458,7 +458,7 @@ flowchart TD
 
 ### 8.1 pprof
 
-`/debug/pprof/*` 默认关闭，只有在查询参数带 `debug=1` 或环境变量 `SUBFORGE_DEBUG=1` 时才生效（`internal/api/pprof.go:16-26`）。可用路径包括 `/debug/pprof/`、`/cmdline`、`/profile`、`/symbol`、`/trace`、`/heap`、`/goroutine`、`/allocs`、`/block`、`/mutex`、`/threadcreate`（`internal/api/pprof.go:29-125`）。未开启时由标准库返回纯文本 404。
+`/debug/pprof/*` 默认关闭，只有在启动时显式 `-pprof` 或设置 `SUBFORGE_PPROF=1` 时才生效；请求带 `?debug=1` 不会开启（`internal/api/pprof.go`）。可用路径包括 `/debug/pprof/`、`/cmdline`、`/profile`、`/symbol`、`/trace`、`/heap`、`/goroutine`、`/allocs`、`/block`、`/mutex`、`/threadcreate`（`internal/api/pprof.go:29-125`）。未开启时由标准库返回纯文本 404。
 
 ### 8.2 GET /api/metrics
 

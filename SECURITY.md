@@ -103,7 +103,7 @@ sequenceDiagram
 
 ### 5.3 不要把调试与管理接口暴露到公网
 
-- `/debug/pprof/*` 仅在请求带 `?debug=1` 或进程环境变量 `SUBFORGE_DEBUG=1` 时才响应，其他情况返回 `404`（`internal/api/pprof.go:3-4`、`internal/api/pprof.go:16-26`、`internal/api/pprof.go:30-33`）。生产环境不要设置该环境变量。
+- `/debug/pprof/*` 只在启动时显式开启（`serve -pprof` 或 `SUBFORGE_PPROF=1`）后响应；默认返回 `404`，即使请求带 `?debug=1` 也不开放。生产环境不要开启。
 - 即使处于调试模式，pprof 与管理 API 仍受全局令牌保护，但不应作为唯一防线：请通过反向代理限制来源，不要直接暴露 `/api/*` 与 `/debug/pprof/*`。
 - 默认监听地址为 `127.0.0.1:25500`，只在本机可达（`cmd/subforge/serve.go:108`）。需要远程访问时，建议保持本机监听并由反向代理提供 HTTPS；`deploy/subforge.service:30-35` 的单元文件即按此方式配置。容器镜像把默认值改成了 `0.0.0.0:25500`，此时反向代理之外还应有网络层隔离。
 

@@ -172,7 +172,7 @@ curl http://127.0.0.1:25500/healthz    # {"status":"ok"}
 
 非测试代码里读取环境变量的位置：上面四个选项（`cmd/subforge/serve.go:108-113`）、
 `SUBFORGE_DATA_DIR`（`cmd/subforge/doctor.go:62`）、`PATH`（`cmd/subforge/doctor.go:126`）、
-`TELEGRAM_CHAT_ID`（`cmd/subforge/scheduler.go:47`）、`SUBFORGE_DEBUG`（`internal/api/pprof.go:22`）。
+`TELEGRAM_CHAT_ID`（`cmd/subforge/scheduler.go:47`）、`SUBFORGE_PPROF`（启动时开启 `/debug/pprof`，默认关闭）。
 `SUBFORGE_DATA` 这个旧名字**没有任何代码读取**，别再用。
 
 ## 4. OpenWrt

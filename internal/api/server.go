@@ -44,6 +44,8 @@ type Config struct {
 	// DataDir 数据目录；用于订阅管理的 SQLite 数据库。
 	// 为空时不启用订阅管理。
 	DataDir string
+	// PProf 是否开放 /debug/pprof；由启动参数/环境变量决定，默认关闭。
+	PProf bool
 }
 
 // Server 是 HTTP 服务。
