@@ -108,3 +108,39 @@ func TestValidateForWrite(t *testing.T) {
 		t.Fatalf("合法 manifest 不应报错: %v", err)
 	}
 }
+
+// TestSaveProduct 覆盖产品写入：目录创建、版本命名、内容与保留策略。
+func TestSaveProduct(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "rules", "nested")
+	res, err := SaveProduct(dir, "airport-2-demo", "yaml", []byte("rules:\n  - DOMAIN,a.com,DIRECT\n"), 1)
+	if err != nil {
+		t.Fatalf("SaveProduct: %v", err)
+	}
+	if res.Source != "airport-2-demo" || res.Version == "" {
+		t.Fatalf("结果不符: %+v", res)
+	}
+	wantName := "airport-2-demo-" + res.Version + ".yaml"
+	if filepath.Base(res.Path) != wantName {
+		t.Fatalf("文件名 = %q, want %q", filepath.Base(res.Path), wantName)
+	}
+	body, err := os.ReadFile(res.Path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(body), "DOMAIN,a.com,DIRECT") {
+		t.Fatalf("内容不符: %s", body)
+	}
+
+	// retention=1：再写一版后上一版应被清理。
+	second, err := SaveProduct(dir, "airport-2-demo", "yaml", []byte("rules: []\n"), 1)
+	if err != nil {
+		t.Fatalf("SaveProduct(second): %v", err)
+	}
+	versions, err := ListVersions(dir, "airport-2-demo", "yaml")
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(versions) != 1 || versions[0] != filepath.Base(second.Path) {
+		t.Fatalf("保留策略未生效: %v", versions)
+	}
+}

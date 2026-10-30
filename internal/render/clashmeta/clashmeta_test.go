@@ -456,3 +456,21 @@ func TestWarnings_RewrittenRuleTargets(t *testing.T) {
 		t.Errorf("Warnings 应说明落到了兜底分组，实际: %v", got)
 	}
 }
+
+// TestRender_RuleProviders 校验规则源产物的 rule-providers 渲染到顶层映射。
+func TestRender_RuleProviders(t *testing.T) {
+	body := renderTest(t, render.Request{
+		Nodes: testNodes(),
+		Rules: []string{"RULE-SET,ads,DIRECT", "MATCH,DIRECT"},
+		RuleProviders: []model.RuleProvider{
+			{Name: "ads", Raw: map[string]any{"type": "http", "url": "https://example.com/ads.yaml", "interval": 3600}},
+		},
+	})
+	s := string(body)
+	if !strings.Contains(s, "rule-providers:\n") {
+		t.Fatalf("缺少 rule-providers: %s", s)
+	}
+	if !strings.Contains(s, "\n  ads:\n") || !strings.Contains(s, "url: https://example.com/ads.yaml") {
+		t.Fatalf("provider 定义未渲染: %s", s)
+	}
+}
