@@ -20,6 +20,7 @@
 .v-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
+  box-shadow: var(--sf-shadow);
 }
 
 /* th/td 的 padding 与表头排版。
@@ -37,6 +38,7 @@
    th 高度回落成 --v-table-header-height（40px ≤ 41px 验收线）。 */
 .v-table > .v-table__wrapper > table > thead > tr > th {
   background: var(--sf-surface-raised);
+  border-bottom: 1px solid var(--sf-border);
   color: var(--sf-text-muted);
   font-size: 12px;
   font-weight: 600;
@@ -69,7 +71,7 @@
 
 /* ===== 卡片 ===== */
 .v-card {
-  box-shadow: none;
+  box-shadow: var(--sf-shadow);
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
 }
@@ -111,6 +113,7 @@
 /* ===== 抽屉 / 导航 ===== */
 .v-navigation-drawer {
   width: 248px !important;
+  border-right: 1px solid var(--sf-border);
 }
 
 .v-navigation-drawer .v-list-item,

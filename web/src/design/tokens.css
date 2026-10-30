@@ -1,92 +1,70 @@
 /*
- * SubForge 设计令牌 —— P3 森林柔和（Everforest 系）
+ * SubForge 设计令牌 —— 高对比中性蓝
  *
  * 【唯一真值源】本文件是 SubForge 设计令牌的唯一真值源；上层样式（web/src/styles/**、
  * 组件 <style>、内联样式）只许通过 var(--sf-*) 引用，不得再写字面色值或另立同名变量。
  *
- * 【取值出处】逐字取自 docs/design/mockups/palette-p3-forest.html，不得自行改色：
- *   浅色（默认）:root  → palette-p3-forest.html:10-25
- *   深色覆盖          → palette-p3-forest.html:31-46
- *   视觉契约          → docs/design/frontend-visual-upgrade-decision.md:29-36
+ * 【对比度目标】正文与次级文字在浅色/深色背景上均达到 WCAG AA；主按钮文字、
+ * 状态色与焦点轮廓满足 4.5:1；输入框轮廓与开关轨道满足非文本 3:1。
  *
- * 【逐令牌出处】
- *   19 个必需令牌：--sf-bg :10 / --sf-bg-subtle :11 / --sf-surface :12 /
- *     --sf-surface-raised :13 / --sf-border :14 / --sf-border-strong :15 /
- *     --sf-text :16 / --sf-text-muted :17 / --sf-text-faint :18 / --sf-accent :19 /
- *     --sf-accent-hover :20 / --sf-accent-fg :21 / --sf-ok :22 / --sf-warn :23 /
- *     --sf-danger :24 / --sf-info :25 / --sf-radius :26 / --sf-space :27 /
- *     --sf-font-mono :28
- *   扩展：--sf-accent-strong 浅 :20 深 :41 / --sf-font-sans :108 / --sf-ease :109
- *   --sf-shell：1280px 取自 docs/design/mockups/d3-console.html:108，
- *     与决策文档「正文容器 ≤ 1280px」（frontend-visual-upgrade-decision.md:31）一致。
- *
- * 【深色命中】应用层 data-theme=dark 标记、Vuetify 深色主题类、以及主题名 subforgeDark
- * 对应的 html 主题类，三者写在下方同一个选择器组里，共用同一份深色值，不复制三份。
+ * 【主题命中】data-theme=dark、Vuetify 的 v-theme--dark，以及主题名 subforgeDark
+ * 对应的类共用同一份深色值。
  *
  * 【反模式红线】无纯黑色值、无毛玻璃滤镜、无渐变文字、无外部样式导入、无字体下载。
  */
 
-/* ===== 语义令牌：浅色主题（默认）· palette-p3-forest.html:10-25 ===== */
+/* ===== 语义令牌：浅色主题 ===== */
 :root {
-  --sf-bg: #F0F2E6;              /* palette-p3-forest.html:10 */
-  --sf-bg-subtle: #E8EBDC;       /* palette-p3-forest.html:11 */
-  --sf-surface: #F9FAEF;         /* palette-p3-forest.html:12 */
-  --sf-surface-raised: #FDFEF6;  /* palette-p3-forest.html:13 */
-  --sf-border: #D9DECC;          /* palette-p3-forest.html:14 */
-  --sf-border-strong: #A8AE9A;   /* palette-p3-forest.html:15 */
-  --sf-text: #242B26;            /* palette-p3-forest.html:16 */
-  --sf-text-muted: #4C5A52;      /* palette-p3-forest.html:17 */
-  --sf-text-faint: #7E897F;      /* palette-p3-forest.html:18 */
-  --sf-accent: #4F6E35;          /* palette-p3-forest.html:19 */
-  --sf-accent-hover: #405B2B;    /* palette-p3-forest.html:20 */
-  --sf-accent-strong: #405B2B;   /* palette-p3-forest.html:20 */
-  --sf-accent-fg: #F9FAEF;       /* palette-p3-forest.html:21 */
-  --sf-ok: #2b7b41;              /* palette-p3-forest.html:22 */
-  --sf-warn: #976000;            /* palette-p3-forest.html:23 */
-  --sf-danger: #B3382E;          /* palette-p3-forest.html:24 */
-  --sf-info: #2B6198;            /* palette-p3-forest.html:25 */
-  --sf-radius: 6px;              /* d1-instrument.html:71 */
-  --sf-space: 16px;              /* d1-instrument.html:72 */
-  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace; /* d1-instrument.html:73 */
-  --sf-font-sans: 'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif; /* d1-instrument.html:75 */
-  --sf-ease: cubic-bezier(0.16, 1, 0.3, 1); /* d1-instrument.html:76 */
-  --sf-shell: 1280px;            /* d3-console.html:108 */
+  --sf-bg: #EEF2F7;
+  --sf-bg-subtle: #E3E9F1;
+  --sf-surface: #FFFFFF;
+  --sf-surface-raised: #F5F8FC;
+  --sf-border: #C9D2DE;
+  --sf-border-strong: #7C8A9E;
+  --sf-text: #0F172A;
+  --sf-text-muted: #334155;
+  --sf-text-faint: #5B6B80;
+  --sf-accent: #174C80;
+  --sf-accent-hover: #103A63;
+  --sf-accent-strong: #0B2A4A;
+  --sf-accent-fg: #FFFFFF;
+  --sf-ok: #15803D;
+  --sf-warn: #9A5B00;
+  --sf-danger: #B42318;
+  --sf-info: #0E7490;
+  --sf-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
+  --sf-radius: 6px;
+  --sf-space: 16px;
+  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  --sf-font-sans: 'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif;
+  --sf-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --sf-shell: 1280px;
 }
 
-/* ===== 语义令牌：深色主题 · palette-p3-forest.html:31-46 =====
- * 契约要求的前三种命中方式 + 一条实证补强，共用一个选择器组、一份值：
- *   1) 应用层 data-theme=dark 属性标记（useThemeMode().isDark）
- *   2) Vuetify 深色主题类 v-theme--dark（仅当主题名恰为 dark 时出现）
- *   3) 主题名 subforgeDark 对应的 html 主题类
- *   4) 主题名 subforgeDark 的 Vuetify 主题类（不带 html 限定）
- * 为什么需要第 4 条：本应用由 <v-app> 承载主题类（web/src/layout/AppShell.vue:20），
- * Vuetify 把 v-theme--{name} 加在 .v-application 元素上而非 html 上
- * （web/node_modules/vuetify/lib/composables/theme.js:264 生成类名，
- *  web/node_modules/vuetify/lib/components/VApp/VApp.js:38 落到 VApp 根元素），
- * 只写 html.v-theme--subforgeDark 在切换主题后不会命中。
- */
+/* ===== 语义令牌：深色主题 ===== */
 [data-theme="dark"],
 .v-theme--dark,
 html.v-theme--subforgeDark,
 .v-theme--subforgeDark {
-  --sf-bg: #232B30;              /* palette-p3-forest.html:31 */
-  --sf-bg-subtle: #2B343A;       /* palette-p3-forest.html:32 */
-  --sf-surface: #323C41;         /* palette-p3-forest.html:33 */
-  --sf-surface-raised: #3B474D;  /* palette-p3-forest.html:34 */
-  --sf-border: #415150;          /* palette-p3-forest.html:35 */
-  --sf-border-strong: #5D6F6F;   /* palette-p3-forest.html:36 */
-  --sf-text: #D8DCC6;            /* palette-p3-forest.html:37 */
-  --sf-text-muted: #A3B1A2;      /* palette-p3-forest.html:38 */
-  --sf-text-faint: #7e8d83;      /* palette-p3-forest.html:39 */
-  --sf-accent: #A5C08B;          /* palette-p3-forest.html:40 */
-  --sf-accent-hover: #B7D2A0;    /* palette-p3-forest.html:41 */
-  --sf-accent-strong: #4F6E35;   /* palette-p3-forest.html:41 */
-  --sf-accent-fg: #232B30;       /* palette-p3-forest.html:42 */
-  --sf-ok: #93CA83;              /* palette-p3-forest.html:43 */
-  --sf-warn: #DBBC7F;            /* palette-p3-forest.html:44 */
-  --sf-danger: #f9837a;          /* palette-p3-forest.html:45 */
-  --sf-info: #7CB6C8;            /* palette-p3-forest.html:46 */
-  --sf-radius: 6px;              /* d1-instrument.html:97 */
-  --sf-space: 16px;              /* d1-instrument.html:98 */
-  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace; /* d1-instrument.html:99 */
+  --sf-bg: #0B1220;
+  --sf-bg-subtle: #101A2C;
+  --sf-surface: #162033;
+  --sf-surface-raised: #1D2A40;
+  --sf-border: #334155;
+  --sf-border-strong: #7C8DA6;
+  --sf-text: #F1F5F9;
+  --sf-text-muted: #CBD5E1;
+  --sf-text-faint: #A3B2C7;
+  --sf-accent: #8BB8FF;
+  --sf-accent-hover: #B3D1FF;
+  --sf-accent-strong: #174C80;
+  --sf-accent-fg: #08111F;
+  --sf-ok: #5BD68A;
+  --sf-warn: #F5C451;
+  --sf-danger: #FF9B90;
+  --sf-info: #6FD8E8;
+  --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --sf-radius: 6px;
+  --sf-space: 16px;
+  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
 }
