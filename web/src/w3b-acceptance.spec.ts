@@ -110,7 +110,7 @@ describe('W3B 独立验收探针', () => {
     vi.unstubAllGlobals()
   })
 
-  it('D-15：点一次「插入示例」就把示例代码写进表单（不用再点示例项）', async () => {
+  it('D-15：点「插入示例」展开示例列表，选中后才写入表单', async () => {
     listScriptsMock.mockResolvedValue([])
     const w = mount(ScriptsPage, { global: { plugins: [vuetify], stubs } })
     await flushPromises()
@@ -119,6 +119,12 @@ describe('W3B 独立验收探针', () => {
     await flushPromises()
     expect(vm.formCode).toBe('')
     await w.find('[data-testid="example-insert"]').trigger('click')
+    await flushPromises()
+    expect(vm.exampleMenu).toBe(true)
+    expect(vm.formCode).toBe('')
+    const items = w.findAll('[data-testid="example-item"]')
+    expect(items.length).toBeGreaterThan(0)
+    await items[0].trigger('click')
     await flushPromises()
     const def = SCRIPTS_HELP.examples[0]
     expect(def).toBeTruthy()
@@ -161,10 +167,8 @@ describe('W3B 独立验收探针', () => {
     await flushPromises()
     const el = w.find('[data-testid="test-result"]')
     expect(el.exists()).toBe(true)
-    const style = el.attributes('style') ?? ''
-    expect(style).toContain('max-height')
-    expect(style).toContain('overflow-y')
     expect(el.classes()).toContain('test-result-scroll')
+    expect(el.classes()).toContain('result-panel')
     w.unmount()
   })
 

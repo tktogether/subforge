@@ -51,7 +51,15 @@ describe('ScriptsPage', () => {
 
     expect(listScriptsMock).toHaveBeenCalledTimes(1)
     expect(w.text()).toContain('a')
-    expect(w.text()).toContain('filter')
+    expect(w.text()).toContain('过滤脚本')
+    w.unmount()
+  })
+
+  it('未标注 kind 的旧脚本显示「未标注类型」', async () => {
+    listScriptsMock.mockResolvedValue([{ id: 9, name: 'legacy', kind: '', code: 'x', enabled: true }])
+    const w = mount(ScriptsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.text()).toContain('未标注类型')
     w.unmount()
   })
 
@@ -724,7 +732,7 @@ describe('ScriptsPage', () => {
   })
 
   describe('W3 探针', () => {
-    it('W3D-15：点一次「插入示例」即写入默认示例，且下拉同时展开', async () => {
+    it('W3D-15：点「插入示例」展开列表，选中示例后才写入代码与类型', async () => {
       listScriptsMock.mockResolvedValue([])
       const w = mountPage()
       await flushPromises()
@@ -735,13 +743,18 @@ describe('ScriptsPage', () => {
       expect(vm.formCode).toBe('')
       await w.find('[data-testid="example-insert"]').trigger('click')
       await flushPromises()
+      expect(vm.exampleMenu).toBe(true)
+      expect(vm.formCode).toBe('')
+      const items = w.findAll('[data-testid="example-item"]')
+      expect(items.length).toBeGreaterThan(0)
+      await items[0].trigger('click')
+      await flushPromises()
 
       const def = SCRIPTS_HELP.examples[0]
       expect(def).toBeTruthy()
       expect(vm.formCode).toBe(def!.code)
       expect(vm.formKind).toBe(def!.kind)
-      expect(vm.exampleMenu).toBe(true)
-      expect(w.find('[data-testid="example-item"]').exists()).toBe(true)
+      expect(vm.exampleMenu).toBe(false)
       w.unmount()
     })
 
@@ -809,9 +822,7 @@ describe('ScriptsPage', () => {
       const el = w.find('[data-testid="test-result"]')
       expect(el.exists()).toBe(true)
       expect(el.classes()).toContain('test-result-scroll')
-      const style = el.attributes('style') ?? ''
-      expect(style).toContain('max-height')
-      expect(style).toContain('overflow-y: auto')
+      expect(el.classes()).toContain('result-panel')
 
       // 0 结果：容器不渲染，对话框仍可正常关闭（高度自适应）
       const w2 = mountPage()

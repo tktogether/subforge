@@ -76,6 +76,79 @@
   border-radius: var(--sf-radius);
 }
 
+/* ===== 正文链接 ===== */
+/* 浏览器默认的纯蓝链接与设计令牌冲突；导航和按钮由 Vuetify 自己管理，不在此列。 */
+a:not(.v-btn):not(.v-list-item):not(.quick-link) {
+  color: var(--sf-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:not(.v-btn):not(.v-list-item):not(.quick-link):hover {
+  color: var(--sf-accent-hover);
+}
+
+/* ===== 数据表行分隔 ===== */
+/* v-table 默认只在表格外圈有边框；多行数据会粘成一块，这里统一补行线与悬停。 */
+.sf-table-rows > .v-table__wrapper > table > tbody > tr > td {
+  border-bottom: 1px solid var(--sf-border);
+}
+
+.sf-table-rows > .v-table__wrapper > table > tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.sf-table-rows > .v-table__wrapper > table > tbody > tr:hover {
+  background: var(--sf-surface-raised);
+}
+
+.sf-table-rows > .v-table__wrapper > table > tbody > tr > td.sf-row-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ===== 表单分组 ===== */
+.sf-form-section {
+  margin-bottom: 20px;
+}
+
+.sf-form-section:last-child {
+  margin-bottom: 0;
+}
+
+.sf-form-section__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sf-form-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sf-text);
+}
+
+.sf-form-section__caption {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+
+.sf-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+@media (max-width: 700px) {
+  .sf-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
 /* ===== 按钮 ===== */
 .v-btn {
   text-transform: none;

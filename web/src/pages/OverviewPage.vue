@@ -86,14 +86,42 @@ onMounted(() => {
   <AsyncSection :loading="loading" :error="error" :empty="empty()" empty-text="暂无概览数据" @retry="load">
     <!-- Block 1: what this page does -->
     <v-card class="mb-4 pa-4" data-testid="block-intro">
-      <div class="text-subtitle-2 mb-1">首次使用路径</div>
-      <ol class="pl-4 mb-2">
-        <li><router-link to="/airports">机场</router-link>：添加上游订阅地址（节点来源）</li>
-        <li><router-link to="/groups">分组</router-link>与<router-link to="/rules">规则</router-link>：设置节点分组与流量分流</li>
-        <li><router-link to="/subscriptions">订阅</router-link>：创建令牌并获取订阅地址</li>
-        <li><router-link to="/pipelines">管线</router-link>：需要过滤、改名或排序时添加处理步骤</li>
-      </ol>
-      <div class="text-caption text-medium-emphasis">概览页只读，所有修改都在对应页面做。</div>
+      <div class="text-subtitle-2 mb-3">首次使用路径</div>
+      <div class="quick-links">
+        <router-link to="/airports" class="quick-link">
+          <span class="quick-link__index">1</span>
+          <span class="quick-link__body">
+            <span class="quick-link__title">机场</span>
+            <span class="quick-link__detail">添加上游订阅地址</span>
+          </span>
+          <v-icon size="18" icon="mdi-arrow-right" />
+        </router-link>
+        <router-link to="/groups" class="quick-link">
+          <span class="quick-link__index">2</span>
+          <span class="quick-link__body">
+            <span class="quick-link__title">分组与规则</span>
+            <span class="quick-link__detail">设置节点分组与流量分流</span>
+          </span>
+          <v-icon size="18" icon="mdi-arrow-right" />
+        </router-link>
+        <router-link to="/subscriptions" class="quick-link">
+          <span class="quick-link__index">3</span>
+          <span class="quick-link__body">
+            <span class="quick-link__title">订阅</span>
+            <span class="quick-link__detail">创建令牌并获取订阅地址</span>
+          </span>
+          <v-icon size="18" icon="mdi-arrow-right" />
+        </router-link>
+        <router-link to="/pipelines" class="quick-link">
+          <span class="quick-link__index">4</span>
+          <span class="quick-link__body">
+            <span class="quick-link__title">管线</span>
+            <span class="quick-link__detail">需要过滤、改名或排序时添加步骤</span>
+          </span>
+          <v-icon size="18" icon="mdi-arrow-right" />
+        </router-link>
+      </div>
+      <div class="text-caption text-medium-emphasis mt-3">概览页只读，所有修改都在对应页面做。</div>
     </v-card>
 
     <!-- Block 2: persistent resources -->
@@ -192,10 +220,10 @@ onMounted(() => {
         </div>
         <v-divider class="my-4" />
         <div class="text-subtitle-2 mb-2">最近转换历史</div>
-        <div v-if="history.length === 0" data-testid="history-empty" class="text-center pa-4">
+        <div v-if="history.length === 0" data-testid="history-empty" class="history-empty pa-4">
           <div class="text-subtitle-1">还没有转换记录</div>
-          <div class="text-caption text-medium-emphasis">在转换页执行一次转换，或请求一次订阅地址后，这里会显示记录。</div>
-          <router-link to="/convert" data-testid="history-empty-action">转换</router-link>
+          <div class="text-caption text-medium-emphasis mb-3">在转换页执行一次转换，或请求一次订阅地址后，这里会显示记录。</div>
+          <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-arrow-right" data-testid="history-empty-action" to="/convert">去转换</v-btn>
         </div>
         <v-data-table v-else :items="history" density="comfortable" hover show-expand :expanded="expanded" @update:expanded="(v: readonly string[]) => (expanded = [...v])" data-testid="history-table" class="history-table">
           <template #item.at="{ value }">{{ fmtTime(String(value)) }}</template>
@@ -232,7 +260,7 @@ onMounted(() => {
           <span class="status-dot"></span>正常
         </v-chip>
         <v-spacer />
-        <router-link to="/logs" class="text-caption">查看日志</router-link>
+        <v-btn variant="text" size="small" prepend-icon="mdi-text-box-search-outline" to="/logs">查看日志</v-btn>
       </div>
       <div class="status-grid">
         <div class="status-item" data-testid="service-uptime">
@@ -277,6 +305,66 @@ onMounted(() => {
 }
 .metric-card .text-h5 {
   font-variant-numeric: tabular-nums;
+}
+.quick-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (min-width: 960px) {
+  .quick-links {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.quick-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--sf-border);
+  border-radius: 8px;
+  background: var(--sf-surface-raised);
+  color: var(--sf-text);
+  text-decoration: none;
+  transition: border-color var(--sf-dur-micro), background var(--sf-dur-micro);
+}
+.quick-link:hover {
+  border-color: var(--sf-accent);
+  background: var(--sf-surface);
+}
+.quick-link__index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--sf-accent);
+  color: var(--sf-accent-fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+.quick-link__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.quick-link__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.quick-link__detail {
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.history-empty {
+  border: 1px dashed var(--sf-border);
+  border-radius: 8px;
+  background: var(--sf-surface-raised);
+  text-align: center;
 }
 .history-table {
   border: 1px solid var(--sf-border);

@@ -202,11 +202,12 @@ describe('ConvertPage', () => {
     expect(w.text()).not.toContain('已复制')
   })
 
-  it('模板：result 为 null 时显示 empty-state', async () => {
+  it('模板：result 为 null 时显示空结果提示', async () => {
     const w = mount(ConvertPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.find('[data-testid="empty-state"]').exists()).toBe(true)
-    expect(w.find('[data-testid="empty-state-title"]').text()).toContain('转换结果')
+    const card = w.find('[data-testid="convert-result-card"]')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toContain('还没有转换结果')
   })
 
   it('模板：有结果时 textarea 的 value 等于 result.body', async () => {
@@ -218,7 +219,7 @@ describe('ConvertPage', () => {
     await vm.submit()
     await flushPromises()
     await (w.vm as any).$nextTick()
-    const ta = w.find('textarea[rows="12"]')
+    const ta = w.find('[data-testid="result-body"] textarea')
     expect((ta.element as HTMLTextAreaElement).value).toBe('THE OUTPUT')
   })
 
