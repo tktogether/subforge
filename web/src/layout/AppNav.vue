@@ -62,6 +62,7 @@ function onUpdate(value: boolean): void {
   height: 36px;
 }
 .brand-logo {
+  margin-right: 8px;
   border-radius: 6px;
   flex: 0 0 auto;
 }
