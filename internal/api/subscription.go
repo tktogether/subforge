@@ -657,7 +657,7 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		t, err := m.GetSubToken(r.Context(), token)
 		if err != nil {
-			s.writeAPIError(w, r, http.StatusNotFound, err)
+			s.writeAPIError(w, r, http.StatusNotFound, errors.New("令牌不存在"))
 			return
 		}
 		if err := s.fillTokenProfileName(r.Context(), m, t); err != nil {
@@ -697,7 +697,7 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := m.UpdateSubToken(r.Context(), token, upd); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				s.writeAPIError(w, r, http.StatusNotFound, errors.New("令牌 "+token+" 不存在"))
+				s.writeAPIError(w, r, http.StatusNotFound, errors.New("令牌不存在"))
 				return
 			}
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -835,7 +835,8 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	subTok, err := m.GetSubToken(r.Context(), token)
 	if err != nil {
-		s.writeAPIError(w, r, http.StatusNotFound, err)
+		// 不回显令牌值：订阅令牌本身就是凭据，错误文案与日志都不该二次扩散。
+		s.writeAPIError(w, r, http.StatusNotFound, errors.New("订阅令牌不存在"))
 		return
 	}
 
