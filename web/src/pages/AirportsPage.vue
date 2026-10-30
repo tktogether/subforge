@@ -5,6 +5,7 @@ import {
   type Airport,
   type AirportInput,
   type ImportRulesOutcome,
+  type ImportRulesResult,
   type SubscheckResult,
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
@@ -200,6 +201,8 @@ const importDialog = ref(false)
 const importTarget = ref<AirportRow | null>(null)
 const importCreateGroups = ref(true)
 const importEnableRules = ref(true)
+// 手动导入的结果保留在页面上：snackbar 会被上一条“已新增”占用/抢时间，用户可能看不到。
+const manualImport = ref<{ name: string; result: ImportRulesResult } | null>(null)
 
 function openImportDialog(row: AirportRow): void {
   importTarget.value = row
@@ -226,6 +229,7 @@ async function confirmImportRules(): Promise<void> {
     if (r.groups_created && r.groups_created > 0) {
       text += '，新建分组 ' + r.groups_created
     }
+    manualImport.value = { name: row.name, result: r }
     notify(text, 'ok')
     if (r.warnings && r.warnings.length > 0) {
       notify(r.warnings[0], 'info')
@@ -331,10 +335,18 @@ async function restoreLastCheck(): Promise<void> {
     </PageHeader>
 
     <div class="airports-page__toolbar">
-        <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact"
-          :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="mb-2"
-          @update:model-value="saveWithRules"></v-switch>
+      <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact"
+        :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="airports-page__switch"
+        @update:model-value="saveWithRules"></v-switch>
     </div>
+
+    <v-alert v-if="manualImport" data-testid="manual-import-result" type="success" variant="tonal" closable
+      class="mb-4" @click:close="manualImport = null">
+      {{ manualImport.name }}：新增 {{ manualImport.result.rules_added }}，
+      启用 {{ manualImport.result.rules_enabled ?? 0 }}，
+      跳过 {{ manualImport.result.rules_skipped }}<span v-if="(manualImport.result.groups_created ?? 0) > 0">，
+      新建分组 {{ manualImport.result.groups_created }}</span>
+    </v-alert>
 
     <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
       <template v-slot:default>
@@ -433,10 +445,10 @@ async function restoreLastCheck(): Promise<void> {
       <v-card>
         <v-card-title>{{ editing === null ? '新增机场' : '编辑机场' }}</v-card-title>
         <v-card-text>
-          <v-text-field v-model="draft.name" label="名称" :hint="nameHelp?.hint" :placeholder="nameHelp?.example" persistent-hint></v-text-field>
-          <v-text-field v-model="draft.subscription_url" label="订阅地址" :hint="urlHelp?.hint" :placeholder="urlHelp?.example" persistent-hint></v-text-field>
-          <v-text-field v-model="draft.remarks" label="备注" :hint="remarksHelp?.hint" :placeholder="remarksHelp?.example" persistent-hint></v-text-field>
-          <v-switch v-model="draft.enabled" label="启用"></v-switch>
+          <v-text-field v-model="draft.name" data-testid="airport-name" label="名称" :hint="nameHelp?.hint" :placeholder="nameHelp?.example" persistent-hint></v-text-field>
+          <v-text-field v-model="draft.subscription_url" data-testid="airport-url" label="订阅地址" :hint="urlHelp?.hint" :placeholder="urlHelp?.example" persistent-hint></v-text-field>
+          <v-text-field v-model="draft.remarks" data-testid="airport-remarks" label="备注" :hint="remarksHelp?.hint" :placeholder="remarksHelp?.example" persistent-hint></v-text-field>
+          <v-switch v-model="draft.enabled" data-testid="airport-enabled-new" label="启用"></v-switch>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
@@ -559,19 +571,38 @@ async function restoreLastCheck(): Promise<void> {
   font-size: 13px;
   color: var(--sf-text-muted);
 }
-/* W8A：开关挪到表格上方的右对齐工具行，复用 section 容器语言 + 右对齐 */
+/* 工具条占满一行，开关与说明离边框至少 12px；窄屏换行不溢出。 */
 .airports-page__toolbar {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 16px;
+  padding: 12px 16px;
   border: 1px solid var(--sf-border);
-  border-radius: 6px;
-  padding: 4px 12px 4px 4px;
+  border-radius: 10px;
   background: var(--sf-surface);
-  justify-content: flex-end;
+}
+.airports-page__switch {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.airports-page__switch :deep(.v-input__control) {
+  min-height: 0;
+}
+.airports-page__switch :deep(.v-messages) {
+  max-width: 100%;
+  margin-top: 4px;
 }
 .airports-page__toolbar :deep(.v-label) {
   font-size: 13px;
   color: var(--sf-text-muted);
+}
+@media (max-width: 700px) {
+  .airports-page__toolbar {
+    padding: 10px 12px;
+  }
 }
 </style>

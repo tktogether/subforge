@@ -296,6 +296,27 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
+  it('手动导入结果面板可关闭', async () => {
+    importMock.mockResolvedValueOnce({ rules_added: 1, rules_skipped: 0, rules_enabled: 1, providers_added: 0, warnings: [] })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
+      await (w.vm as any).confirmImportRules()
+      await flushPromises()
+      const alert = w.find('[data-testid="manual-import-result"]')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text()).toContain('启用 1')
+      const alertComp = w.findComponent({ name: 'VAlert' })
+      expect(alertComp.exists()).toBe(true)
+      alertComp.vm.$emit('click:close')
+      await flushPromises()
+      expect(w.find('[data-testid="manual-import-result"]').exists()).toBe(false)
+    } finally {
+      w.unmount()
+    }
+  })
+
   it('导入规则失败', async () => {
     importMock.mockRejectedValueOnce(new Error('ierr'))
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
@@ -368,6 +389,9 @@ describe('AirportsPage', () => {
     await flushPromises()
     expect(notifyState.text).toBe('已导入并启用规则：新增 2，跳过 1，新建分组 3')
     expect(notifyState.kind).toBe('ok')
+    const alert = w.find('[data-testid="manual-import-result"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('启用 0')
     w.unmount()
   })
 
