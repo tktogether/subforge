@@ -154,22 +154,25 @@ type synonymRule struct {
 	keys    []string
 	wants   []string // 候选分组名里要出现的关键词（归一化后）
 	builtin string
-	special string
+	// fallbackBuiltin 在候选分组里找不到语义分组时使用（如「直连」没有对应
+	// 分组时应落到内核内置 DIRECT，而不是兜底代理分组）。
+	fallbackBuiltin string
+	special         string
 }
 
 var synonymRules = []synonymRule{
 	{keys: []string{"广告", "拦截", "adblock", "adguard", "ads"}, builtin: "REJECT"},
-	{keys: []string{"国内", "直连", "direct", "mainland"}, wants: []string{"直连"}},
+	{keys: []string{"国内", "直连", "direct", "mainland"}, wants: []string{"直连"}, fallbackBuiltin: "DIRECT"},
 	{keys: []string{"漏网", "其他", "默认", "兜底", "final", "default", "other"}, special: "fallback"},
-	{keys: []string{"苹果", "apple", "icloud"}, wants: []string{"苹果"}},
+	{keys: []string{"苹果", "apple", "icloud"}, wants: []string{"苹果", "apple"}},
 	{keys: []string{"电报", "telegram"}, wants: []string{"电报", "telegram"}},
-	{keys: []string{"微软", "microsoft"}, wants: []string{"微软"}},
-	{keys: []string{"谷歌", "google"}, wants: []string{"谷歌"}},
+	{keys: []string{"微软", "microsoft"}, wants: []string{"微软", "microsoft"}},
+	{keys: []string{"谷歌", "google"}, wants: []string{"谷歌", "google"}},
 	{keys: []string{"openai", "chatgpt", "claude", "gemini", "perplexity", "copilot"}, wants: []string{"ai", "chatgpt", "copilot"}},
 	{keys: []string{"巴哈", "bahamut", "动画疯"}, wants: []string{"bahamut", "巴哈"}},
 	{keys: []string{"priv", "pt站"}, wants: []string{"pt"}},
 	{keys: []string{"youtube", "油管"}, wants: []string{"youtube"}},
-	{keys: []string{"游戏", "game"}, wants: []string{"游戏"}},
+	{keys: []string{"游戏", "game"}, wants: []string{"游戏", "steam"}},
 }
 
 // resolveBySynonym 按关键词表把目标名翻译成产物里存在的分组或内置出站。
@@ -202,6 +205,9 @@ func resolveBySynonym(target string, candidates []string, fallback string) strin
 					return c
 				}
 			}
+		}
+		if rule.fallbackBuiltin != "" {
+			return rule.fallbackBuiltin
 		}
 	}
 	return ""
