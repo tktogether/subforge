@@ -26,6 +26,10 @@ type ImportOptions struct {
 	EnableRules bool
 	// UpstreamGroups 是机场订阅自带的 proxy-groups；CreateGroups=true 时落库。
 	UpstreamGroups []model.UpstreamGroup
+	// UpstreamNodeNames 是同一份机场订阅解析出的节点名，用来判断某个上游分组
+	// 是否覆盖全部机场节点：覆盖的组（通常是主节点组/漏网之鱼）默认在订阅里
+	// 追加方案选中的自建节点，子集组保持原样。
+	UpstreamNodeNames []string
 }
 
 // ImportResult 汇总一次订阅规则导入的结果。
@@ -36,6 +40,33 @@ type ImportResult struct {
 	// GroupsCreated 是本次导入自动新建的目标分组个数（仅 createGroups=true 时可能非 0）。
 	GroupsCreated int      `json:"groups_created"`
 	Warnings      []string `json:"warnings"`
+}
+
+// coversAllNodes 判断分组成员是否覆盖全部给定节点名。
+// 只认成员里逐字出现的节点名；成员里的子组名（如 PROXY）不展开。
+// 没有可识别节点名时返回 false，避免把只有子组引用的分组误判成节点组。
+func coversAllNodes(members, nodeNames []string) bool {
+	if len(nodeNames) == 0 {
+		return false
+	}
+	memberSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		if v := strings.TrimSpace(m); v != "" {
+			memberSet[v] = true
+		}
+	}
+	seen := 0
+	for _, n := range nodeNames {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		seen++
+		if !memberSet[n] {
+			return false
+		}
+	}
+	return seen > 0
 }
 
 // normalizeUpstreamGroupType 把机场分组类型收敛到渲染器支持的范围；未知类型退化为 select。
@@ -134,8 +165,9 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 			if _, exists := groupIDByName[name]; exists {
 				continue
 			}
-			g, gErr := m.AddProxyGroupWithMembers(ctx, name, normalizeUpstreamGroupType(ug.Type),
-				"", ug.URL, ug.Interval, 0, source, ug.Members)
+			includeSelf := coversAllNodes(ug.Members, opts.UpstreamNodeNames)
+			g, gErr := m.AddProxyGroupWithMembersAndIncludeSelf(ctx, name, normalizeUpstreamGroupType(ug.Type),
+				"", ug.URL, ug.Interval, 0, source, ug.Members, includeSelf)
 			if gErr != nil {
 				return result, gErr
 			}

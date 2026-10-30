@@ -19,6 +19,7 @@ const groupColumns = [
   { key: 'type', title: '类型' },
   { key: 'regex', title: '匹配正则' },
   { key: 'members_text', title: '成员' },
+  { key: 'include_self_text', title: '含自建' },
   { key: 'url', title: '测活地址' },
   { key: 'interval', title: '间隔(秒)' },
   { key: 'sort_order', title: '顺序' },
@@ -38,6 +39,13 @@ const groupFields = [
   { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名匹配成员；留空则不自动收节点', example: '香港|HK' },
   { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
   { key: 'interval', label: '测活间隔（秒）', type: 'number', hint: '仅 url-test 需要；太小会频繁测活', example: '300' },
+  {
+    key: 'include_self',
+    label: '包含自建节点',
+    type: 'switch',
+    default: false,
+    hint: '开启后，订阅会在该分组成员末尾追加方案选中的自建节点。机场分组按成员渲染，自建节点不会自动出现；导入时成员覆盖全部机场节点的组默认开启，子集组默认关闭。',
+  },
   { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
 ]
 
@@ -45,7 +53,12 @@ const groupFields = [
 const resource: any = {
   list: async (): Promise<(ProxyGroup & { source_text?: string })[]> => {
     const groups = await endpoints.listGroups()
-    return groups.map((g) => ({ ...g, source_text: sourceText(g.source), members_text: membersText(g.members) }))
+    return groups.map((g) => ({
+      ...g,
+      source_text: sourceText(g.source),
+      members_text: membersText(g.members),
+      include_self_text: g.include_self ? '是' : '否',
+    }))
   },
   create: endpoints.createGroup,
   update: (item: any) => endpoints.updateGroup(item.id, item),
@@ -61,6 +74,7 @@ const resource: any = {
         <p class="mb-1"><strong>成员怎么来：</strong>填了「匹配正则」的分组，会把<strong>名字匹配该正则</strong>的节点收进来（例如 <code>香港|HK</code> 收所有名字带香港或 HK 的节点）。正则留空的分组不自动收节点。</p>
         <p class="mb-1"><strong>它怎么影响输出（关键）：</strong><strong>规则行里的 <code>rule_config</code> 填的就是这里的分组 id。</strong>分组被删掉或改名，引用它的规则行会退化成 <code>DIRECT</code>（直连）——改分组前先去「规则」页看一眼有没有规则在引用。</p>
         <p class="mb-1"><strong>机场自带分组：</strong>导入机场规则时会保留机场自己的分组与成员，显示在「成员」列；这类分组按成员渲染，编辑「匹配正则」不会覆盖成员。</p>
+        <p class="mb-1"><strong>自建节点：</strong>机场分组只认自己的成员，自建节点不会自动出现。需要时打开「包含自建节点」，订阅会在原成员后追加方案选中的自建节点；导入时成员覆盖全部机场节点的组默认开启，子集组默认关闭。</p>
         <p class="mb-0"><strong>顺序：</strong><code>sort_order</code> 越小越靠前，决定客户端里分组的显示顺序。</p>
       </div>
     </v-alert>

@@ -133,6 +133,26 @@ describe('ResourcePage', () => {
     expect(vm.draft).toEqual({ name: '', count: 0, enabled: true })
   })
 
+  it('blank()：字段声明 default 时优先使用该值', async () => {
+    const localFields = [
+      { key: 'name', label: '名称', type: 'text' },
+      { key: 'include_self', label: '包含自建节点', type: 'switch', default: false },
+      { key: 'enabled', label: '启用', type: 'switch' },
+    ]
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    expect(vm.draft).toEqual({ name: '', include_self: false, enabled: true })
+    w.unmount()
+  })
+
   it('openEdit(row)：draft 是副本、editing 为 row、dialog 打开', async () => {
     const resource = makeResource()
     const row = { name: 'a', count: 1, enabled: false }

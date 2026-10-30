@@ -47,6 +47,7 @@ describe('GroupsPage', () => {
       { key: 'type', title: '类型' },
       { key: 'regex', title: '匹配正则' },
       { key: 'members_text', title: '成员' },
+      { key: 'include_self_text', title: '含自建' },
       { key: 'url', title: '测活地址' },
       { key: 'interval', title: '间隔(秒)' },
       { key: 'sort_order', title: '顺序' },
@@ -57,6 +58,13 @@ describe('GroupsPage', () => {
       { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名匹配成员；留空则不自动收节点', example: '香港|HK' },
       { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
       { key: 'interval', label: '测活间隔（秒）', type: 'number', hint: '仅 url-test 需要；太小会频繁测活', example: '300' },
+      {
+        key: 'include_self',
+        label: '包含自建节点',
+        type: 'switch',
+        default: false,
+        hint: '开启后，订阅会在该分组成员末尾追加方案选中的自建节点。机场分组按成员渲染，自建节点不会自动出现；导入时成员覆盖全部机场节点的组默认开启，子集组默认关闭。',
+      },
       { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
     ])
     const resource = rp.props('resource') as any
@@ -70,8 +78,8 @@ describe('GroupsPage', () => {
 
   it('resource.list 包装 endpoints.listGroups，给每行补 source_text 并渲染进表格', async () => {
     listMock.mockResolvedValue([
-      { id: 1, name: '分组A', type: 'select', regex: '', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'JP-1', 'SG-1', 'US-1'] },
-      { id: 2, name: '自定义组', type: 'select', regex: '.*', url: '', interval: 0, sort_order: 2, source: '' },
+      { id: 1, name: '分组A', type: 'select', regex: '', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'JP-1', 'SG-1', 'US-1'], include_self: true },
+      { id: 2, name: '自定义组', type: 'select', regex: '.*', url: '', interval: 0, sort_order: 2, source: '', include_self: false },
     ])
 
     const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
@@ -85,6 +93,10 @@ describe('GroupsPage', () => {
     expect(w.text()).toContain('自定义')
     expect(w.text()).toContain('4 个：HK-1、JP-1、SG-1…')
     expect(w.text()).toContain('—')
+    expect(w.text()).toContain('含自建')
+    const rows = await (w.findComponent(ResourcePage).props('resource') as any).list()
+    expect(rows[0].include_self_text).toBe('是')
+    expect(rows[1].include_self_text).toBe('否')
     w.unmount()
   })
 
@@ -179,6 +191,30 @@ describe('GroupsPage', () => {
 
     expect(updateMock).toHaveBeenCalledTimes(1)
     expect(updateMock.mock.calls[0][1]).not.toHaveProperty('profile_id')
+    w.unmount()
+  })
+
+  it('编辑分组时「包含自建节点」开关回填并随提交保存', async () => {
+    listMock.mockResolvedValue([
+      { id: 9, name: '机场组', type: 'select', regex: '', url: '', interval: 0, sort_order: 1, source: 'airport:机场X', members: ['HK-1'], include_self: true },
+    ])
+    updateMock.mockResolvedValue({ id: 9, name: '机场组' })
+    const w = mount(GroupsPage, {
+      global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+
+    const switches = w.findAllComponents({ name: 'VSwitch' })
+    expect(switches.length).toBe(1)
+    expect(switches[0].props('modelValue')).toBe(true)
+    await switches[0].setValue(false)
+    await w.find('[data-testid="dialog-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    expect(updateMock.mock.calls[0][1].include_self).toBe(false)
     w.unmount()
   })
 

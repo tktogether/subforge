@@ -230,6 +230,26 @@ func (m *Manager) AddProxyGroupWithMembers(ctx context.Context, name, typ, regex
 	return &g, nil
 }
 
+// AddProxyGroupWithMembersAndIncludeSelf 新增分组并指定是否在订阅里追加自建节点。
+func (m *Manager) AddProxyGroupWithMembersAndIncludeSelf(ctx context.Context, name, typ, regex, url string, interval, sortOrder int, source string, members []string, includeSelf bool) (*ProxyGroup, error) {
+	g, err := m.db.AddProxyGroupWithMembersAndIncludeSelf(ctx, name, typ, regex, url, interval, sortOrder, source, members, includeSelf)
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+// SetProxyGroupIncludeSelf 保存分组是否在订阅里追加自建节点。
+func (m *Manager) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf bool) error {
+	if err := m.db.SetProxyGroupIncludeSelf(ctx, id, includeSelf); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("代理分组 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
+}
+
 // DeleteProxyGroup 删除代理分组。
 func (m *Manager) DeleteProxyGroup(ctx context.Context, id int64) error {
 	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM proxy_groups WHERE id = ?", id)

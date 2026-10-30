@@ -614,28 +614,68 @@ func TestImportRulesToLibraryReusesExistingGroup(t *testing.T) {
 // 不再为同名目标建 regex="." 的占位组。
 func TestImportRulesWithUpstreamGroups(t *testing.T) {
 	m := newTestManager(t)
-	upstream := []model.UpstreamGroup{{
-		Name: "PROXY", Type: "select", Members: []string{"HK-1", "JP-1"},
-	}}
+	upstream := []model.UpstreamGroup{
+		{Name: "PROXY", Type: "select", Members: []string{"HK-1", "JP-1"}},
+		{Name: "HK-ONLY", Type: "select", Members: []string{"HK-1"}},
+		{Name: "GROUP-ONLY", Type: "select", Members: []string{"PROXY", "DIRECT"}},
+	}
 	res, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:HK",
 		[]string{"DOMAIN-SUFFIX,x.test,PROXY"}, nil,
-		ImportOptions{CreateGroups: true, EnableRules: true, UpstreamGroups: upstream})
+		ImportOptions{
+			CreateGroups:      true,
+			EnableRules:       true,
+			UpstreamGroups:    upstream,
+			UpstreamNodeNames: []string{"HK-1", "JP-1"},
+		})
 	if err != nil {
 		t.Fatalf("ImportRulesToLibraryWithOptions: %v", err)
 	}
-	if res.GroupsCreated != 1 {
-		t.Fatalf("GroupsCreated = %d，应为 1（只保留上游 PROXY）", res.GroupsCreated)
+	if res.GroupsCreated != 3 {
+		t.Fatalf("GroupsCreated = %d，应为 3", res.GroupsCreated)
 	}
 	groups, err := m.ListProxyGroups(t.Context())
-	if err != nil || len(groups) != 1 {
+	if err != nil || len(groups) != 3 {
 		t.Fatalf("分组数不符: %+v err=%v", groups, err)
 	}
-	g := groups[0]
-	if g.Name != "PROXY" || strings.Join(g.Members, ",") != "HK-1,JP-1" {
-		t.Fatalf("上游分组未保留: %+v", g)
+	byName := make(map[string]ProxyGroup, len(groups))
+	for _, g := range groups {
+		byName[g.Name] = g
+	}
+	if g := byName["PROXY"]; strings.Join(g.Members, ",") != "HK-1,JP-1" || !g.IncludeSelf {
+		t.Fatalf("覆盖全部机场节点的 PROXY 应开启 include_self: %+v", g)
+	}
+	if g := byName["HK-ONLY"]; g.IncludeSelf {
+		t.Fatalf("子集组 HK-ONLY 不应开启 include_self: %+v", g)
+	}
+	if g := byName["GROUP-ONLY"]; g.IncludeSelf {
+		t.Fatalf("只引用子组的 GROUP-ONLY 不应开启 include_self: %+v", g)
 	}
 	rules, err := m.ListRulesByLayers(t.Context(), []string{"airport"})
-	if err != nil || len(rules) != 1 || rules[0].RuleConfig != g.ID || !rules[0].Enabled {
+	if err != nil || len(rules) != 1 || rules[0].RuleConfig != byName["PROXY"].ID || !rules[0].Enabled {
 		t.Fatalf("规则未指向上游分组: %+v err=%v", rules, err)
+	}
+}
+
+// TestCoversAllNodes 覆盖全节点判断的边界：空名单、空成员、子组名、部分覆盖。
+func TestCoversAllNodes(t *testing.T) {
+	cases := []struct {
+		name      string
+		members   []string
+		nodeNames []string
+		want      bool
+	}{
+		{"空节点名单", []string{"HK-1"}, nil, false},
+		{"空成员", nil, []string{"HK-1"}, false},
+		{"全部覆盖", []string{"HK-1", "JP-1"}, []string{"HK-1", "JP-1"}, true},
+		{"含子组名也覆盖", []string{"PROXY", "HK-1", "JP-1", "DIRECT"}, []string{"HK-1", "JP-1"}, true},
+		{"只缺一个", []string{"HK-1"}, []string{"HK-1", "JP-1"}, false},
+		{"节点名单只有空白", []string{"HK-1"}, []string{"  "}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := coversAllNodes(c.members, c.nodeNames); got != c.want {
+				t.Fatalf("coversAllNodes(%v,%v) = %v，应为 %v", c.members, c.nodeNames, got, c.want)
+			}
+		})
 	}
 }

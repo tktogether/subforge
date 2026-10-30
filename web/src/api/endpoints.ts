@@ -28,6 +28,8 @@ export interface ProxyGroup {
   source?: string
   // 机场自带分组的成员；手工分组通常为空，按 regex 展开。
   members?: string[]
+  // 订阅渲染时是否在成员末尾追加方案选中的自建节点。
+  include_self?: boolean
 }
 
 export interface SelfNode {
@@ -180,6 +182,7 @@ export interface GroupInput {
   regex: string
   url: string
   interval: number
+  include_self?: boolean
 }
 
 export interface SelfNodeInput {

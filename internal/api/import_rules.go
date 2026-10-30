@@ -50,6 +50,10 @@ func (s *Server) importRulesToLibrary(ctx context.Context, m *subforge.Manager, 
 	}
 	if opts.CreateGroups {
 		opts.UpstreamGroups = dec.ProxyGroups
+		opts.UpstreamNodeNames = make([]string, 0, len(dec.Nodes))
+		for _, n := range dec.Nodes {
+			opts.UpstreamNodeNames = append(opts.UpstreamNodeNames, parse.NameOf(n))
+		}
 	}
 	ir, err := m.ImportRulesToLibraryWithOptions(ctx, "airport:"+a.Name, dec.Rules, dec.RuleProviders, opts)
 	if err != nil {

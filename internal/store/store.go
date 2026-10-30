@@ -106,9 +106,13 @@ type ProxyGroup struct {
 	Source    string `json:"source"`
 	// Members 是机场自带分组的成员（节点名/子组名）。
 	// 非空时订阅按成员原样渲染，优先于 Regex；手工分组通常为空。
-	Members   []string  `json:"members"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Members []string `json:"members"`
+	// IncludeSelf 表示订阅渲染时是否把方案选中的自建节点追加到该分组成员末尾。
+	// 机场分组按显式成员渲染，自建节点不会自动出现；成员覆盖全部机场节点的组
+	// 导入时默认开启，子集组默认关闭。
+	IncludeSelf bool      `json:"include_self"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // SelfNode 是 self_nodes 表的一行。
@@ -396,13 +400,19 @@ func (d *DB) AddProxyGroupWithSource(ctx context.Context, name, gtype, regex, ur
 // AddProxyGroupWithMembers 新增带来源与成员列表的代理分组。
 // members 非空时用于机场自带分组；空列表仍按 regex 展开成员。
 func (d *DB) AddProxyGroupWithMembers(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string) (ProxyGroup, error) {
+	return d.AddProxyGroupWithMembersAndIncludeSelf(ctx, name, gtype, regex, url, interval, sortOrder, source, members, false)
+}
+
+// AddProxyGroupWithMembersAndIncludeSelf 同 AddProxyGroupWithMembers，额外指定
+// 是否在订阅渲染时追加自建节点。
+func (d *DB) AddProxyGroupWithMembersAndIncludeSelf(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string, includeSelf bool) (ProxyGroup, error) {
 	membersJSON, err := marshalLayerList(members)
 	if err != nil {
 		return ProxyGroup{}, err
 	}
 	res, err := d.db.ExecContext(ctx,
-		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source, members) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source, membersJSON)
+		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source, members, include_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source, membersJSON, includeSelf)
 	if err != nil {
 		return ProxyGroup{}, err
 	}
@@ -422,8 +432,8 @@ func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 	var g ProxyGroup
 	var members string
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), COALESCE(members, ''), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
-		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &members, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), COALESCE(members, ''), COALESCE(include_self, 0), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
+		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &members, &g.IncludeSelf, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -438,6 +448,24 @@ func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex,
 		"UPDATE proxy_groups SET name = ?, type = ?, regex = ?, url = ?, interval = ?, "+
 			"sort_order = CASE WHEN ? > 0 THEN ? ELSE sort_order END, updated_at = ? WHERE id = ?",
 		name, gtype, regex, url, interval, sortOrder, sortOrder, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetProxyGroupIncludeSelf 保存分组是否在订阅里追加自建节点。
+func (d *DB) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf bool) error {
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE proxy_groups SET include_self = ?, updated_at = ? WHERE id = ?",
+		includeSelf, time.Now(), id)
 	if err != nil {
 		return err
 	}
@@ -590,9 +618,10 @@ func migrate(db *sql.DB) error {
 			regex       TEXT,
 			url         TEXT,
 			interval    INTEGER,
-			sort_order  INTEGER DEFAULT 0,
-			members     TEXT NOT NULL DEFAULT '',
-			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			sort_order   INTEGER DEFAULT 0,
+			members      TEXT NOT NULL DEFAULT '',
+			include_self INTEGER NOT NULL DEFAULT 0,
+			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
 		// 规则管理
@@ -789,6 +818,9 @@ func migrate(db *sql.DB) error {
 	}
 	if err := addColumnIfMissing(db, "proxy_groups", "members", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("迁移 proxy_groups.members: %w", err)
+	}
+	if err := addColumnIfMissing(db, "proxy_groups", "include_self", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("迁移 proxy_groups.include_self: %w", err)
 	}
 	// rule_providers 唯一索引：先按 (source, name) 去重，保留最小 id，避免老库重复行导致建索引失败。
 	if _, err := db.Exec("DELETE FROM rule_providers WHERE id NOT IN (SELECT MIN(id) FROM rule_providers GROUP BY source, name)"); err != nil {

@@ -22,6 +22,8 @@ export interface ResourceField {
   // T10: select 字段的下拉选项（title 显示、value 承载，值类型 number/string）。
   // 不传 options 的字段行为与改动前完全一致。
   options?: { title: string; value: number | string }[]
+  // 新建表单的初始值；不传时按类型兜底（switch=true、number=0、select=首项、text=''）。
+  default?: boolean | number | string
 }
 
 const props = defineProps<{
@@ -115,6 +117,10 @@ function fieldExample(field: ResourceField): string {
 function blank(): Row {
   const row: Row = {}
   for (const field of props.fields) {
+    if (field.default !== undefined) {
+      row[field.key] = field.default
+      continue
+    }
     // T10: select 默认取第一个选项的 value（无 options 时退回 ''）。
     // 不兜这一层时 select 会落成 ''，而 rule_config 在后端是 int64（internal/store/store.go:190、
     // internal/api/subscription.go:275-281），新增表单不改下拉就会提交 "" → 400。

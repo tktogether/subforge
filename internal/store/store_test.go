@@ -1656,3 +1656,40 @@ func TestProxyGroupMembersRoundTrip(t *testing.T) {
 		t.Fatalf("手工分组 members 应为 nil: %+v", plain.Members)
 	}
 }
+
+// TestProxyGroupIncludeSelfRoundTrip 分组「包含自建节点」开关应能落库、读回并更新。
+func TestProxyGroupIncludeSelfRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	g, err := d.AddProxyGroupWithMembersAndIncludeSelf(ctx, "ALL", "select", "", "", 0, 0, "airport:fx", []string{"HK-1"}, true)
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembersAndIncludeSelf: %v", err)
+	}
+	got, err := d.GetProxyGroup(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if !got.IncludeSelf {
+		t.Fatalf("include_self 未落库: %+v", got)
+	}
+	list, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
+	if err != nil || len(list) != 1 || !list[0].IncludeSelf {
+		t.Fatalf("列表 include_self 不符: %+v err=%v", list, err)
+	}
+	if err := d.SetProxyGroupIncludeSelf(ctx, g.ID, false); err != nil {
+		t.Fatalf("SetProxyGroupIncludeSelf: %v", err)
+	}
+	got, err = d.GetProxyGroup(ctx, g.ID)
+	if err != nil || got.IncludeSelf {
+		t.Fatalf("更新后 include_self = %v err=%v，应为 false", got.IncludeSelf, err)
+	}
+	if err := d.SetProxyGroupIncludeSelf(ctx, 99999, true); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+	plain, err := d.AddProxyGroup(ctx, "PLAIN", "select", ".", "", 0, 0)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+	if plain.IncludeSelf {
+		t.Fatalf("手工分组 include_self 默认应为 false: %+v", plain)
+	}
+}
