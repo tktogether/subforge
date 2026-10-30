@@ -210,6 +210,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/", s.handleAPIRules)
 		r.Post("/", s.handleAPIRules)
 		r.Post("/bulk", s.handleAPIRulesBulk)
+		r.Get("/sources", s.handleAPIRuleSourceCounts)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPIRule)
 			r.Put("/", s.handleAPIRule)

@@ -102,7 +102,7 @@ func TestRuleSourceRulesSearchAndImport(t *testing.T) {
 	if res.Added != 0 || res.Overwrote != 1 || res.Skipped != 0 {
 		t.Fatalf("覆盖挑选结果不对：%+v body=%s", res, body)
 	}
-	custom = listRules(t, ts, "?source=")
+	custom = listRules(t, ts, "?source=&include_raw=1")
 	foundDirect := false
 	for _, r := range custom {
 		if r.RuleParam == "example.com" {

@@ -400,8 +400,18 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 // ruleView 是 GET /api/rules 的响应视图：在 store.Rule 基础上追加
 // group_name（由 rule_config 经 ListProxyGroups 映射得到；映射不上或 rule_config=0 时为空字符串）。
 type ruleView struct {
-	subforge.Rule
-	GroupName string `json:"group_name"`
+	ID         int64  `json:"id"`
+	RuleType   string `json:"rule_type"`
+	RuleParam  string `json:"rule_param"`
+	RuleConfig int64  `json:"rule_config"`
+	ResolveDNS bool   `json:"resolve_dns"`
+	Enabled    bool   `json:"enabled"`
+	SortOrder  int    `json:"sort_order"`
+	Source     string `json:"source"`
+	GroupName  string `json:"group_name"`
+	// raw/origin_key 体积大且只有少数编辑场景需要，默认不返回。
+	Raw       string `json:"raw,omitempty"`
+	OriginKey string `json:"origin_key,omitempty"`
 }
 
 // parseSourceFilter 解析 GET /api/rules、/api/groups 的来源过滤参数：
@@ -447,6 +457,36 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		q := r.URL.Query()
+		limit := 0
+		offset := 0
+		if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+			v, perr := strconv.Atoi(raw)
+			if perr != nil || v <= 0 || v > 500 {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("limit 需要 1-500 的整数"))
+				return
+			}
+			limit = v
+		}
+		if raw := strings.TrimSpace(q.Get("offset")); raw != "" {
+			v, perr := strconv.Atoi(raw)
+			if perr != nil || v < 0 {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("offset 需要非负整数"))
+				return
+			}
+			offset = v
+		}
+		var enabledFilter *bool
+		if raw, exists := q["enabled"]; exists && strings.TrimSpace(raw[0]) != "" {
+			v, perr := strconv.ParseBool(strings.TrimSpace(raw[0]))
+			if perr != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("enabled 需要布尔值"))
+				return
+			}
+			enabledFilter = &v
+		}
+		includeRaw := isTruthyQuery(q.Get("include_raw"))
+		search := strings.ToLower(strings.TrimSpace(q.Get("q")))
 		rules, err := m.ListRulesFiltered(r.Context(), filter)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -461,12 +501,42 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 		}
 		views := make([]ruleView, 0, len(rules))
 		for _, ru := range rules {
-			views = append(views, ruleView{
-				Rule:      ru,
-				GroupName: groupNameByID[ru.RuleConfig],
-			})
+			if enabledFilter != nil && ru.Enabled != *enabledFilter {
+				continue
+			}
+			groupName := groupNameByID[ru.RuleConfig]
+			if search != "" {
+				haystack := strings.ToLower(strings.Join([]string{ru.RuleType, ru.RuleParam, ru.Source, groupName}, " "))
+				if !strings.Contains(haystack, search) {
+					continue
+				}
+			}
+			v := ruleView{
+				ID: ru.ID, RuleType: ru.RuleType, RuleParam: ru.RuleParam,
+				RuleConfig: ru.RuleConfig, ResolveDNS: ru.ResolveDNS,
+				Enabled: ru.Enabled, SortOrder: ru.SortOrder, Source: ru.Source,
+				GroupName: groupName,
+			}
+			if includeRaw {
+				v.Raw = ru.Raw
+				v.OriginKey = ru.OriginKey
+			}
+			views = append(views, v)
 		}
-		s.writeJSON(w, http.StatusOK, map[string]any{"rules": views})
+		total := len(views)
+		if limit > 0 {
+			if offset > total {
+				offset = total
+			}
+			end := offset + limit
+			if end > total {
+				end = total
+			}
+			views = views[offset:end]
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"rules": views, "total": total, "limit": limit, "offset": offset,
+		})
 	case http.MethodPost:
 		var req struct {
 			RuleType   string `json:"rule_type"`

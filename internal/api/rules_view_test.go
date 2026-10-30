@@ -29,7 +29,7 @@ func TestRulesViewGroupNames(t *testing.T) {
 		t.Fatalf("insert rule2: %v", err)
 	}
 
-	status, _, body := uiGet(t, ts, "/api/rules")
+	status, _, body := uiGet(t, ts, "/api/rules?include_raw=1")
 	if status != http.StatusOK {
 		t.Fatalf("GET /api/rules status = %d, body=%s", status, body)
 	}

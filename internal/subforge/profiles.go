@@ -91,6 +91,11 @@ func (m *Manager) ListRulesFiltered(ctx context.Context, f SourceFilter) ([]Rule
 	return m.db.ListRulesFiltered(ctx, f)
 }
 
+// ListRuleSourceCounts 返回规则来源及条数（轻量来源列表）。
+func (m *Manager) ListRuleSourceCounts(ctx context.Context) ([]store.RuleSourceCount, error) {
+	return m.db.ListRuleSourceCounts(ctx)
+}
+
 // BatchSetRulesEnabledBySource 按来源批量启用/停用规则，返回实际更新的行数。
 // All=true 时 store 拒绝（全表批量操作有风险），返回「必须指定来源才能批量操作」。
 func (m *Manager) BatchSetRulesEnabledBySource(ctx context.Context, f SourceFilter, enabled bool) (int64, error) {

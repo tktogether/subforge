@@ -74,3 +74,25 @@ func (s *Server) handleAPIRuleProviderSetEnabled(w http.ResponseWriter, r *http.
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// handleAPIRuleSourceCounts 处理 GET /api/rules/sources：
+// 轻量返回规则来源及条数，供规则页来源筛选，避免为了下拉选项拉全量规则。
+func (s *Server) handleAPIRuleSourceCounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 GET"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	sources, err := m.ListRuleSourceCounts(r.Context())
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	if sources == nil {
+		sources = []store.RuleSourceCount{}
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"sources": sources})
+}

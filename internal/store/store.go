@@ -221,6 +221,31 @@ type Rule struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// RuleSourceCount 是规则来源及条数（轻量来源列表）。
+type RuleSourceCount struct {
+	Source string `json:"source"`
+	Count  int64  `json:"count"`
+}
+
+// ListRuleSourceCounts 按来源聚合规则条数，供规则页来源筛选使用。
+func (d *DB) ListRuleSourceCounts(ctx context.Context) ([]RuleSourceCount, error) {
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT COALESCE(source, ''), COUNT(*) FROM rules GROUP BY COALESCE(source, '') ORDER BY COALESCE(source, '')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RuleSourceCount
+	for rows.Next() {
+		var item RuleSourceCount
+		if err := rows.Scan(&item.Source, &item.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 // Script 是 scripts 表的一行：goja 脚本库。
 // 时间列用 INTEGER unix 秒（与 fetch_audit 一致），由 Create/Update 写入。
 type Script struct {

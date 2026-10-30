@@ -61,6 +61,7 @@ type ruleJSON struct {
 	Enabled    bool   `json:"enabled"`
 	Source     string `json:"source"`
 	Raw        string `json:"raw"`
+	OriginKey  string `json:"origin_key"`
 	GroupName  string `json:"group_name"`
 }
 
