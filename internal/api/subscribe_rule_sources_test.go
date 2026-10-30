@@ -250,7 +250,8 @@ func TestNormalizeProfileSourcesForJSON(t *testing.T) {
 // --- /subscribe ---
 
 // TestSubscribeInjectsRuleSourceRules 方案绑定 src1 且产物有内容：
-// 产物规则内联进订阅，模板规则整层停用，FINAL/MATCH 兜底行被丢弃。
+// 产物规则内联进订阅，模板规则整层停用；模板自带的 FINAL/MATCH 被丢弃，
+// 但渲染器必须补一条兜底 MATCH，否则未匹配流量会静默直连。
 func TestSubscribeInjectsRuleSourceRules(t *testing.T) {
 	ts, tplURL, _ := ruleSourceSubServer(t)
 
@@ -271,8 +272,11 @@ func TestSubscribeInjectsRuleSourceRules(t *testing.T) {
 	if strings.Contains(body, "tplonly.test") {
 		t.Errorf("产物注入后模板规则应整层停用，但 tplonly.test 仍在；正文：\n%s", body)
 	}
-	if strings.Contains(body, "MATCH,") {
-		t.Errorf("FINAL/MATCH 兜底行必须丢弃；正文：\n%s", body)
+	if !strings.Contains(body, "MATCH,🚀 手动选择") {
+		t.Errorf("产物注入后必须补兜底 MATCH,🚀 手动选择；正文：\n%s", body)
+	}
+	if strings.Count(body, "MATCH,") != 1 {
+		t.Errorf("兜底 MATCH 不应重复；正文：\n%s", body)
 	}
 }
 

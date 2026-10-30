@@ -8,6 +8,7 @@ package clashmeta
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -143,6 +144,8 @@ func (r *Renderer) Render(req render.Request) ([]byte, error) {
 	rules := req.Rules
 	if len(rules) == 0 {
 		rules = defaultRules(groups)
+	} else {
+		rules = ensureCatchAll(rules, groups)
 	}
 	// 规则与分组来自不同上游，目标名对不上时内核会拒绝加载整份配置。
 	// 这里按「同义分组 → MATCH 兜底分组」的顺序校正，并把结果记进警告。
@@ -412,6 +415,45 @@ func defaultRules(groups []render.Group) []string {
 		}
 	}
 	return []string{"GEOIP,CN,DIRECT", "MATCH," + catchAll}
+}
+
+// ensureCatchAll 保证用户规则（DB 规则 / 规则源产物 / 模板规则）最后有兜底。
+//
+// 只有规则来自"空集合"时才会走 defaultRules；一旦用户启用了一条规则或绑定了规则源，
+// 规则集合就非空，原来的实现会直接渲染这组规则，未匹配流量由内核按默认 DIRECT 处理。
+// 这里补一条 MATCH，目标优先选常见的兜底组，其次第一个 select 组，最后才 DIRECT。
+func ensureCatchAll(rules []string, groups []render.Group) []string {
+	for _, line := range rules {
+		fields := strings.Split(line, ",")
+		if len(fields) < 2 {
+			continue
+		}
+		typ := strings.Trim(strings.TrimSpace(fields[0]), `"'`)
+		if strings.EqualFold(typ, "MATCH") || strings.EqualFold(typ, "FINAL") {
+			return rules
+		}
+	}
+	return append(rules, "MATCH,"+catchAllGroup(groups))
+}
+
+// catchAllGroup 选择兜底目标：漏网之鱼 → 节点选择 → 第一个 select → 第一个组 → DIRECT。
+func catchAllGroup(groups []render.Group) string {
+	for _, want := range []string{"🐟 漏网之鱼", "🚀 节点选择"} {
+		for _, g := range groups {
+			if g.Name == want {
+				return g.Name
+			}
+		}
+	}
+	for _, g := range groups {
+		if g.Type == "select" {
+			return g.Name
+		}
+	}
+	if len(groups) > 0 {
+		return groups[0].Name
+	}
+	return "DIRECT"
 }
 
 func headerLines(p render.Profile) []string {

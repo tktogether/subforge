@@ -220,6 +220,65 @@ func TestRender_NoNodes(t *testing.T) {
 	}
 }
 
+// 用户启用任意一条规则后，规则集合不再为空；此时仍必须补一条兜底 MATCH，
+// 否则未匹配流量会落到内核默认 DIRECT。见订阅审计 SF-01。
+func TestRender_AppendsCatchAllWhenRulesLackMatch(t *testing.T) {
+	body := renderTest(t, render.Request{
+		Nodes:  testNodes(),
+		Groups: []render.Group{{Name: "pick-1", Type: "select", Proxies: []string{"."}}},
+		Rules:  []string{"DOMAIN-SUFFIX,example.test,DIRECT"},
+	})
+	text := string(body)
+	if !strings.Contains(text, "  - MATCH,pick-1") {
+		t.Fatalf("缺少兜底 MATCH,pick-1，实际:\n%s", text)
+	}
+	if got := strings.Count(text, "MATCH,"); got != 1 {
+		t.Fatalf("MATCH 条数 = %d，期望 1:\n%s", got, text)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(text), "MATCH,pick-1") {
+		t.Fatalf("兜底 MATCH 必须在最后，实际:\n%s", text)
+	}
+}
+
+func TestRender_DoesNotDuplicateExistingCatchAll(t *testing.T) {
+	body := renderTest(t, render.Request{
+		Nodes:  testNodes(),
+		Groups: []render.Group{{Name: "pick-1", Type: "select", Proxies: []string{"."}}},
+		Rules:  []string{"DOMAIN-SUFFIX,example.test,DIRECT", "MATCH,pick-1"},
+	})
+	text := string(body)
+	if got := strings.Count(text, "MATCH,"); got != 1 {
+		t.Fatalf("MATCH 条数 = %d，期望 1:\n%s", got, text)
+	}
+}
+
+func TestRender_CatchAllPrefersLoneFishGroup(t *testing.T) {
+	body := renderTest(t, render.Request{
+		Nodes: testNodes(),
+		Groups: []render.Group{
+			{Name: "pick-1", Type: "select", Proxies: []string{"."}},
+			{Name: "🐟 漏网之鱼", Type: "select", Proxies: []string{"pick-1"}},
+		},
+		Rules: []string{"DOMAIN-SUFFIX,example.test,pick-1"},
+	})
+	text := string(body)
+	if !strings.Contains(text, "MATCH,🐟 漏网之鱼") {
+		t.Fatalf("兜底应优先选择漏网之鱼，实际:\n%s", text)
+	}
+}
+
+func TestRender_CatchAllWithOnlyUrlTestGroup(t *testing.T) {
+	body := renderTest(t, render.Request{
+		Nodes:  testNodes(),
+		Groups: []render.Group{{Name: "auto", Type: "url-test", Proxies: []string{"."}}},
+		Rules:  []string{"DOMAIN-SUFFIX,example.test,DIRECT"},
+	})
+	text := string(body)
+	if !strings.Contains(text, "  - MATCH,auto") {
+		t.Fatalf("没有 select 组时应退到第一个组，实际:\n%s", text)
+	}
+}
+
 func TestRender_CustomGroupsAndRules(t *testing.T) {
 	body := renderTest(t, render.Request{
 		Nodes: testNodes(),
