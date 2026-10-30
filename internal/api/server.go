@@ -301,6 +301,7 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/api/metrics", s.handleMetrics)
 
 	r.NotFound(s.handleNotFound)
+	r.MethodNotAllowed(s.handleMethodNotAllowed)
 	return r
 }
 
@@ -388,9 +389,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
-// handleNotFound 统一 404 形状。
+// handleNotFound 统一 404 形状：路由未命中与业务 404 都走 JSON，
+// 用 code 区分「路由没注册」与「资源不存在」，便于前端与服务探测。
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
-	s.writeText(w, http.StatusNotFound, "text/plain; charset=utf-8", "404: 路径不存在\n")
+	s.writeJSON(w, http.StatusNotFound, map[string]any{"error": "路径不存在", "code": "route_not_found"})
+}
+
+// handleMethodNotAllowed 统一路由层 405 形状。
+func (s *Server) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	s.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "方法不允许", "code": "method_not_allowed"})
 }
 
 // writeJSON 写出 JSON 响应。

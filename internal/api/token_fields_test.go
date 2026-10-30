@@ -202,7 +202,7 @@ func TestAPITokenPutPartialAndClear(t *testing.T) {
 	if status != http.StatusMethodNotAllowed {
 		t.Fatalf("PATCH status=%d body=%s，期望 405", status, body)
 	}
-	if body != "" && !strings.Contains(body, "GET/PUT/DELETE") {
+	if body != "" && !strings.Contains(body, "GET/PUT/DELETE") && !strings.Contains(body, "方法不允许") {
 		t.Errorf("405 文案异常: %s", body)
 	}
 }
