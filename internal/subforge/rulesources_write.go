@@ -64,6 +64,22 @@ func (m *Manager) RemoveRuleSource(ctx context.Context, name string) (string, er
 	if isAirportRuleSource(name) {
 		return "", fmt.Errorf("机场规则源由机场维护，不能单独删除")
 	}
+	profiles, err := m.ListProfiles(ctx)
+	if err != nil {
+		return "", err
+	}
+	bound := make([]string, 0, 2)
+	for _, p := range profiles {
+		for _, used := range p.RuleSources {
+			if used == name {
+				bound = append(bound, p.Name)
+				break
+			}
+		}
+	}
+	if len(bound) > 0 {
+		return "", fmt.Errorf("规则源 %q 正被方案 %s 使用，请先在方案里解绑", name, strings.Join(bound, "、"))
+	}
 	path, err := m.ResolveRuleManifestPath(ctx)
 	if err != nil {
 		return "", err

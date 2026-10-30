@@ -533,6 +533,10 @@ func (s *Server) handleAPIRuleSourcesRemove(w http.ResponseWriter, r *http.Reque
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
+		if strings.Contains(err.Error(), "正被方案") {
+			s.writeAPIError(w, r, http.StatusConflict, err)
+			return
+		}
 		if strings.Contains(err.Error(), "不存在") {
 			s.writeAPIError(w, r, http.StatusNotFound, err)
 			return

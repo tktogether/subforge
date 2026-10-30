@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -157,4 +158,36 @@ func uiGetBody(t *testing.T, ts *httptest.Server, path string) (int, string) {
 	t.Helper()
 	st, _, body := uiGet(t, ts, path)
 	return st, body
+}
+
+// TestRemoveRuleSourceBlockedWhenBound 被方案绑定的规则源不能直接删除，
+// 必须先解绑；否则订阅会静默丢规则。
+func TestRemoveRuleSourceBlockedWhenBound(t *testing.T) {
+	ts, _, _ := profileServer(t)
+	up := rulesUpstream(t)
+	if st, _, body := uiPostJSON(t, ts, "/api/rule-sources",
+		`{"name":"remote-src","url":"`+up.URL+`"}`); st != http.StatusOK {
+		t.Fatalf("新增规则源状态 = %d；body=%s", st, body)
+	}
+	if st, _, body := uiPostJSON(t, ts, "/api/rule-sources/update-one",
+		`{"name":"remote-src"}`); st != http.StatusOK {
+		t.Fatalf("更新规则源状态 = %d；body=%s", st, body)
+	}
+	if st, _, body := uiPostJSON(t, ts, "/api/rule-sources",
+		`{"name":"keep-src","url":"`+up.URL+`"}`); st != http.StatusOK {
+		t.Fatalf("新增保留源状态 = %d；body=%s", st, body)
+	}
+	p := mustProfilePayload(t, ts, map[string]any{
+		"name": "绑定源方案", "rule_sources": []string{"remote-src"},
+	})
+	st, _, body := uiPostJSON(t, ts, "/api/rule-sources/remove", `{"name":"remote-src"}`)
+	if st != http.StatusConflict || !strings.Contains(body, "正被方案") {
+		t.Fatalf("绑定中的规则源删除状态 = %d body=%s，应 409", st, body)
+	}
+	if st, _, body := uiDoJSON(t, ts, "DELETE", fmt.Sprintf("/api/profiles/%d", p.ID), ""); st != http.StatusOK {
+		t.Fatalf("删除方案状态 = %d；body=%s", st, body)
+	}
+	if st, _, body := uiPostJSON(t, ts, "/api/rule-sources/remove", `{"name":"remote-src"}`); st != http.StatusOK {
+		t.Fatalf("解绑后删除规则源状态 = %d；body=%s", st, body)
+	}
 }
