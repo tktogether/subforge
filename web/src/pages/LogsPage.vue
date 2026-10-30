@@ -45,13 +45,14 @@ function levelText(level: LogLevel): string {
 
 const filteredLogs = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  return logs.value.filter((entry) => {
+  const matched = logs.value.filter((entry) => {
     if (levelFilter.value !== 'all' && classify(entry.line) !== levelFilter.value) {
       return false
     }
     if (kw === '') return true
     return entry.line.toLowerCase().includes(kw)
   })
+  return matched.slice().reverse()
 })
 
 const longLine = (line: string): boolean => line.length > 220 || line.includes('\n')
@@ -100,10 +101,10 @@ function clear(): void {
   lastId = maxId
 }
 
-function scrollToBottom(): void {
-  const last = container.value?.lastElementChild
-  if (last !== null && last !== undefined && typeof last.scrollIntoView === 'function') {
-    last.scrollIntoView({ block: 'end' })
+function scrollToLatest(): void {
+  const latest = container.value?.querySelector('[data-testid="log-row"]')
+  if (latest !== null && latest !== undefined && typeof latest.scrollIntoView === 'function') {
+    latest.scrollIntoView({ block: 'start' })
   }
 }
 
@@ -142,7 +143,7 @@ onUnmounted(() => {
   <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="logs" />
 
   <p class="text-body-2 text-medium-emphasis mb-3">
-    最多显示最近 200 行。级别由前端按关键词归类，仅用于浏览；长日志显示摘要，可打开详情查看全文。
+    最新日志在前，最多显示最近 200 行。级别由前端按关键词归类，仅用于浏览；长日志显示摘要，可打开详情查看全文。
   </p>
 
   <v-card class="pa-3 mb-3">
@@ -182,7 +183,7 @@ onUnmounted(() => {
       />
       <v-spacer />
       <v-btn variant="tonal" data-testid="clear" @click="clear">清空显示</v-btn>
-      <v-btn variant="tonal" data-testid="scroll-bottom" @click="scrollToBottom">定位到最新</v-btn>
+      <v-btn variant="tonal" data-testid="scroll-bottom" @click="scrollToLatest">定位到最新</v-btn>
     </div>
   </v-card>
 

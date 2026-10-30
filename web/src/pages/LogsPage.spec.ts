@@ -119,11 +119,11 @@ describe('LogsPage', () => {
     await flushPromises()
     const rows = w.findAll('[data-testid="log-row"]')
     expect(rows.length).toBe(5)
-    expect(rows[0].classes()).toContain('log-row--info')
+    expect(rows[0].classes()).toContain('log-row--warn')
     expect(rows[1].classes()).toContain('log-row--error')
     expect(rows[2].classes()).toContain('log-row--error')
     expect(rows[3].classes()).toContain('log-row--error')
-    expect(rows[4].classes()).toContain('log-row--warn')
+    expect(rows[4].classes()).toContain('log-row--info')
     w.unmount()
   })
 
@@ -180,7 +180,7 @@ describe('LogsPage', () => {
     // no throw
   })
 
-  it('scroll-bottom 按钮可点击', async () => {
+  it('定位到最新按钮可点击', async () => {
     logsMock.mockResolvedValue({ logs: [{ id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'x' }] })
     const w = mount(LogsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
@@ -250,7 +250,7 @@ describe('LogsPage', () => {
     logsMock.mockResolvedValue({ logs: [] })
     const w = mount(LogsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    ;(w.vm as any).scrollToBottom()
+    ;(w.vm as any).scrollToLatest()
     await flushPromises()
     w.unmount()
   })
@@ -386,6 +386,23 @@ describe('LogsPage', () => {
     await (w.vm as any).copyDetail()
     await flushPromises()
     expect((w.vm as any).detailOpen).toBe(false)
+    w.unmount()
+  })
+
+
+
+  it('日志按最新在前渲染', async () => {
+    logsMock.mockResolvedValue({ logs: [
+      { id: 1, ts: '2026-10-19T04:00:00+08:00', line: 'oldest' },
+      { id: 2, ts: '2026-10-19T04:00:01+08:00', line: 'middle' },
+      { id: 3, ts: '2026-10-19T04:00:02+08:00', line: 'newest' },
+    ] })
+    const w = mount(LogsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const rows = w.findAll('[data-testid="log-row"]')
+    expect(rows.length).toBe(3)
+    expect(rows[0].text()).toContain('newest')
+    expect(rows[2].text()).toContain('oldest')
     w.unmount()
   })
 
