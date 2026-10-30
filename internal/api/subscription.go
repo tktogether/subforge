@@ -5,6 +5,7 @@ package api
 import (
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -955,7 +956,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			fp := filepath.Join(tmpDir, fmt.Sprintf("self-%d.txt", n.ID))
-			if err := os.WriteFile(fp, []byte(n.Link), 0o600); err != nil {
+			if err := os.WriteFile(fp, []byte(applySelfNodeName(n.Link, n.Name)), 0o600); err != nil {
 				s.writeAPIError(w, r, http.StatusInternalServerError, err)
 				return
 			}
@@ -1095,6 +1096,66 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
+}
+
+// applySelfNodeName 把控制台填写的名称写进分享链接。
+//
+// 自建节点的「名称」是用户在界面上明确配置的输出名，链接自带的 fragment/ps
+// 只应作为兜底；直接写原始链接会让界面上的名称完全失效（VMess 链接的 ps
+// 常为空，输出甚至会出现无名字节点）。URI 类链接写 fragment，vmess 写
+// base64 JSON 的 ps 字段。
+func applySelfNodeName(link, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return link
+	}
+	if strings.HasPrefix(strings.ToLower(link), "vmess://") {
+		if out, ok := vmessWithName(link, name); ok {
+			return out
+		}
+		return link
+	}
+	base := link
+	if i := strings.IndexByte(base, '#'); i >= 0 {
+		base = base[:i]
+	}
+	escaped := strings.ReplaceAll(url.PathEscape(name), "+", "%2B")
+	return base + "#" + escaped
+}
+
+// vmessWithName 解出 vmess 链接的 Base64 JSON，写入 ps 后重新编码。
+// 链接不是合法 vmess 时返回 ok=false，由调用方保留原文（校验在入库时已完成）。
+func vmessWithName(link, name string) (string, bool) {
+	raw := strings.TrimSpace(link[len("vmess://"):])
+	if i := strings.IndexByte(raw, '#'); i >= 0 {
+		raw = raw[:i]
+	}
+	raw = strings.TrimSpace(raw)
+	encodings := []*base64.Encoding{
+		base64.StdEncoding, base64.RawStdEncoding,
+		base64.URLEncoding, base64.RawURLEncoding,
+	}
+	var decoded []byte
+	ok := false
+	for _, enc := range encodings {
+		if b, err := enc.DecodeString(raw); err == nil {
+			decoded, ok = b, true
+			break
+		}
+	}
+	if !ok {
+		return "", false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(decoded, &obj); err != nil {
+		return "", false
+	}
+	obj["ps"] = name
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return "", false
+	}
+	return "vmess://" + base64.StdEncoding.EncodeToString(b), true
 }
 
 // idFilter 把方案里的来源 id 数组转成查找表。
