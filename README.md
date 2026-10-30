@@ -117,7 +117,7 @@ bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 出于 SSRF 防护，服务端默认只拉取公网 http/https 地址；本地 fixture、内网订阅或自建 LAN 规则源需要显式加
 `-allow-private-network`（或设 `SUBFORGE_ALLOW_PRIVATE_NETWORK=1`）。远程模板、规则集与告警 webhook 走同一策略。
 
-拉取上游订阅时的 User-Agent 可以用 `SUBFORGE_USER_AGENT` 覆盖，默认是 `mihomo/1.19.31 SubForge/<版本>`。
+拉取上游订阅时的 User-Agent 可以用 `SUBFORGE_USER_AGENT` 覆盖，默认是 `mihomo/1.19.31 SubForge/<版本>`；若默认请求缺少流量头，会自动用 `clash.meta/1.18.0` 补取一次。
 不少机场按 User-Agent 决定返回什么内容：认成 Clash 内核时才返回带 `Subscription-Userinfo` 的完整配置，
 否则只给一份纯节点链接清单——没有流量信息、也没有机场自带的规则与规则集。
 
