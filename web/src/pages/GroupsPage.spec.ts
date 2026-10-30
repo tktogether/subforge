@@ -47,7 +47,7 @@ describe('GroupsPage', () => {
       { key: 'type', title: '类型' },
       { key: 'regex', title: '匹配正则' },
       { key: 'members_text', title: '成员' },
-      { key: 'include_self_text', title: '含自建' },
+      { key: 'expand_text', title: '成员扩展' },
       { key: 'url', title: '测活地址' },
       { key: 'interval', title: '间隔(秒)' },
       { key: 'sort_order', title: '顺序' },
@@ -59,11 +59,18 @@ describe('GroupsPage', () => {
       { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
       { key: 'interval', label: '测活间隔（秒）', type: 'number', hint: '仅 url-test 需要；太小会频繁测活', example: '300' },
       {
+        key: 'include_all_sources',
+        label: '包含全部来源节点',
+        type: 'switch',
+        default: false,
+        hint: '开启后，订阅会把方案里所有机场的节点都并入该组。成员覆盖了本机场全部节点的「全部节点」组（如守候网络的「守候网络」）导入时默认开启；子集组默认关闭。',
+      },
+      {
         key: 'include_self',
         label: '包含自建节点',
         type: 'switch',
         default: false,
-        hint: '开启后，订阅会在该分组成员末尾追加方案选中的自建节点。机场分组按成员渲染，自建节点不会自动出现；导入时成员覆盖全部机场节点的组默认开启，子集组默认关闭。',
+        hint: '开启后，订阅会在该分组成员末尾追加方案选中的自建节点。只影响自建；其他机场由「包含全部来源节点」控制。',
       },
       { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
     ])
@@ -78,8 +85,10 @@ describe('GroupsPage', () => {
 
   it('resource.list 包装 endpoints.listGroups，给每行补 source_text 并渲染进表格', async () => {
     listMock.mockResolvedValue([
-      { id: 1, name: '分组A', type: 'select', regex: '', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'JP-1', 'SG-1', 'US-1'], include_self: true },
+      { id: 1, name: '分组A', type: 'select', regex: '', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'JP-1', 'SG-1', 'US-1'], include_all_sources: true, include_self: true },
       { id: 2, name: '自定义组', type: 'select', regex: '.*', url: '', interval: 0, sort_order: 2, source: '', include_self: false },
+      { id: 3, name: '其他机场组', type: 'select', regex: '', url: '', interval: 0, sort_order: 3, source: 'airport:机场Y', members: ['HK-1'], include_all_sources: true, include_self: false },
+      { id: 4, name: '仅自建组', type: 'select', regex: '', url: '', interval: 0, sort_order: 4, source: '', members: ['HK-1'], include_self: true },
     ])
 
     const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
@@ -92,11 +101,13 @@ describe('GroupsPage', () => {
     expect(w.text()).toContain('自定义组')
     expect(w.text()).toContain('自定义')
     expect(w.text()).toContain('4 个：HK-1、JP-1、SG-1…')
-    expect(w.text()).toContain('—')
-    expect(w.text()).toContain('含自建')
+    expect(w.text()).toContain('成员扩展')
+    expect(w.text()).toContain('全部来源')
     const rows = await (w.findComponent(ResourcePage).props('resource') as any).list()
-    expect(rows[0].include_self_text).toBe('是')
-    expect(rows[1].include_self_text).toBe('否')
+    expect(rows[0].expand_text).toBe('全部来源')
+    expect(rows[1].expand_text).toBe('—')
+    expect(rows[2].expand_text).toBe('其他机场')
+    expect(rows[3].expand_text).toBe('自建')
     w.unmount()
   })
 
@@ -194,7 +205,7 @@ describe('GroupsPage', () => {
     w.unmount()
   })
 
-  it('编辑分组时「包含自建节点」开关回填并随提交保存', async () => {
+  it('编辑分组时「包含全部来源/包含自建」开关回填并随提交保存', async () => {
     listMock.mockResolvedValue([
       { id: 9, name: '机场组', type: 'select', regex: '', url: '', interval: 0, sort_order: 1, source: 'airport:机场X', members: ['HK-1'], include_self: true },
     ])
@@ -207,13 +218,16 @@ describe('GroupsPage', () => {
     await flushPromises()
 
     const switches = w.findAllComponents({ name: 'VSwitch' })
-    expect(switches.length).toBe(1)
-    expect(switches[0].props('modelValue')).toBe(true)
-    await switches[0].setValue(false)
+    expect(switches.length).toBe(2)
+    expect(switches[0].props('modelValue')).toBe(false)
+    expect(switches[1].props('modelValue')).toBe(true)
+    await switches[0].setValue(true)
+    await switches[1].setValue(false)
     await w.find('[data-testid="dialog-submit"]').trigger('click')
     await flushPromises()
 
     expect(updateMock).toHaveBeenCalledTimes(1)
+    expect(updateMock.mock.calls[0][1].include_all_sources).toBe(true)
     expect(updateMock.mock.calls[0][1].include_self).toBe(false)
     w.unmount()
   })

@@ -221,15 +221,6 @@ func (m *Manager) AddProxyGroup(ctx context.Context, name, typ, regex, url strin
 	return m.db.AddProxyGroup(ctx, name, typ, regex, url, interval, sortOrder)
 }
 
-// AddProxyGroupWithMembers 新增带成员列表的分组（机场自带分组导入用）。
-func (m *Manager) AddProxyGroupWithMembers(ctx context.Context, name, typ, regex, url string, interval, sortOrder int, source string, members []string) (*ProxyGroup, error) {
-	g, err := m.db.AddProxyGroupWithMembers(ctx, name, typ, regex, url, interval, sortOrder, source, members)
-	if err != nil {
-		return nil, err
-	}
-	return &g, nil
-}
-
 // AddProxyGroupWithMembersAndIncludeSelf 新增分组并指定是否在订阅里追加自建节点。
 func (m *Manager) AddProxyGroupWithMembersAndIncludeSelf(ctx context.Context, name, typ, regex, url string, interval, sortOrder int, source string, members []string, includeSelf bool) (*ProxyGroup, error) {
 	g, err := m.db.AddProxyGroupWithMembersAndIncludeSelf(ctx, name, typ, regex, url, interval, sortOrder, source, members, includeSelf)
@@ -239,9 +230,29 @@ func (m *Manager) AddProxyGroupWithMembersAndIncludeSelf(ctx context.Context, na
 	return &g, nil
 }
 
+// AddProxyGroupWithMembersAndFlags 新增分组并指定自建/全部来源扩展。
+func (m *Manager) AddProxyGroupWithMembersAndFlags(ctx context.Context, name, typ, regex, url string, interval, sortOrder int, source string, members []string, includeSelf, includeAllSources bool) (*ProxyGroup, error) {
+	g, err := m.db.AddProxyGroupWithMembersAndFlags(ctx, name, typ, regex, url, interval, sortOrder, source, members, includeSelf, includeAllSources)
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
 // SetProxyGroupIncludeSelf 保存分组是否在订阅里追加自建节点。
 func (m *Manager) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf bool) error {
 	if err := m.db.SetProxyGroupIncludeSelf(ctx, id, includeSelf); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("代理分组 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
+}
+
+// SetProxyGroupIncludeAllSources 保存分组是否把方案里所有机场的节点并入。
+func (m *Manager) SetProxyGroupIncludeAllSources(ctx context.Context, id int64, includeAll bool) error {
+	if err := m.db.SetProxyGroupIncludeAllSources(ctx, id, includeAll); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("代理分组 %d 不存在", id)
 		}

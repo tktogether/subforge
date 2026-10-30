@@ -67,14 +67,14 @@ func TestImportSubscribePreservesUpstreamGroups(t *testing.T) {
 	for _, g := range groups {
 		byName[g.Name] = g
 	}
-	if g := byName["PROXY"]; strings.Join(g.Members, ",") != "HK-1,JP-1" || !g.IncludeSelf {
-		t.Fatalf("覆盖全部机场节点的 PROXY 应开启 include_self: %+v", g)
+	if g := byName["PROXY"]; strings.Join(g.Members, ",") != "HK-1,JP-1" || !g.IncludeSelf || !g.IncludeAllSources {
+		t.Fatalf("覆盖全部机场节点的 PROXY 应开启自建/全部来源扩展: %+v", g)
 	}
-	if byName["HK-ONLY"].IncludeSelf {
-		t.Fatalf("子集组 HK-ONLY 不应开启 include_self: %+v", byName["HK-ONLY"])
+	if byName["HK-ONLY"].IncludeSelf || byName["HK-ONLY"].IncludeAllSources {
+		t.Fatalf("子集组 HK-ONLY 不应开启扩展: %+v", byName["HK-ONLY"])
 	}
-	if byName["GROUP-ONLY"].IncludeSelf {
-		t.Fatalf("只引用子组的 GROUP-ONLY 不应开启 include_self: %+v", byName["GROUP-ONLY"])
+	if byName["GROUP-ONLY"].IncludeSelf || byName["GROUP-ONLY"].IncludeAllSources {
+		t.Fatalf("只引用子组的 GROUP-ONLY 不应开启扩展: %+v", byName["GROUP-ONLY"])
 	}
 
 	ts := httptest.NewServer(srv.Routes())

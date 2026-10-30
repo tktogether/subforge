@@ -128,6 +128,58 @@ func ResolveGroups(groups []render.Group, names []string) []render.Group {
 	return out
 }
 
+// expandGroupExtras 把分组的「包含全部来源 / 包含自建」落成成员名。
+//
+// 全部来源 = 订阅里除自建以外的所有节点；自建节点由调用方按文件来源识别，
+// 与机场节点分开，保证关掉 IncludeSelf 时不会被全量扩展带回来。
+func expandGroupExtras(groups []render.Group, nodes model.NodeList, selfSources map[string]bool) []render.Group {
+	if len(groups) == 0 {
+		return groups
+	}
+	var all, self []string
+	for _, n := range nodes {
+		if n.Name == "" {
+			continue
+		}
+		if selfSources[n.Source] {
+			self = append(self, n.Name)
+		} else {
+			all = append(all, n.Name)
+		}
+	}
+	out := make([]render.Group, len(groups))
+	copy(out, groups)
+	for i := range out {
+		if out[i].IncludeAllSources {
+			out[i].Proxies = appendMissingNames(out[i].Proxies, all)
+		}
+		if out[i].IncludeSelf {
+			out[i].Proxies = appendMissingNames(out[i].Proxies, self)
+		}
+	}
+	return out
+}
+
+// appendMissingNames 把 extra 里尚未出现的名字追加到 base 末尾，保持顺序并去重。
+func appendMissingNames(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]bool, len(base)+len(extra))
+	for _, n := range base {
+		seen[n] = true
+	}
+	out := base
+	for _, n := range extra {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
 // resolveMembers 展开成员项：同一节点被多个模式命中只出现一次，顺序按首次命中。
 func resolveMembers(patterns, names []string, known map[string]bool) []string {
 	if len(patterns) == 0 {

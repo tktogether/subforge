@@ -641,14 +641,14 @@ func TestImportRulesWithUpstreamGroups(t *testing.T) {
 	for _, g := range groups {
 		byName[g.Name] = g
 	}
-	if g := byName["PROXY"]; strings.Join(g.Members, ",") != "HK-1,JP-1" || !g.IncludeSelf {
-		t.Fatalf("覆盖全部机场节点的 PROXY 应开启 include_self: %+v", g)
+	if g := byName["PROXY"]; strings.Join(g.Members, ",") != "HK-1,JP-1" || !g.IncludeSelf || !g.IncludeAllSources {
+		t.Fatalf("覆盖全部机场节点的 PROXY 应开启自建/全部来源扩展: %+v", g)
 	}
-	if g := byName["HK-ONLY"]; g.IncludeSelf {
-		t.Fatalf("子集组 HK-ONLY 不应开启 include_self: %+v", g)
+	if g := byName["HK-ONLY"]; g.IncludeSelf || g.IncludeAllSources {
+		t.Fatalf("子集组 HK-ONLY 不应开启扩展: %+v", g)
 	}
-	if g := byName["GROUP-ONLY"]; g.IncludeSelf {
-		t.Fatalf("只引用子组的 GROUP-ONLY 不应开启 include_self: %+v", g)
+	if g := byName["GROUP-ONLY"]; g.IncludeSelf || g.IncludeAllSources {
+		t.Fatalf("只引用子组的 GROUP-ONLY 不应开启扩展: %+v", g)
 	}
 	rules, err := m.ListRulesByLayers(t.Context(), []string{"airport"})
 	if err != nil || len(rules) != 1 || rules[0].RuleConfig != byName["PROXY"].ID || !rules[0].Enabled {
@@ -677,5 +677,49 @@ func TestCoversAllNodes(t *testing.T) {
 				t.Fatalf("coversAllNodes(%v,%v) = %v，应为 %v", c.members, c.nodeNames, got, c.want)
 			}
 		})
+	}
+}
+
+// TestImportRefreshUpdatesAllSourceFlag 同一机场再次导入时，派生的成员与
+// 「全部来源」标志要跟随订阅变化；用户改过的类型保留。
+func TestImportRefreshUpdatesAllSourceFlag(t *testing.T) {
+	m := newTestManager(t)
+	nodes := []string{"HK-1", "JP-1"}
+	upstream := []model.UpstreamGroup{{Name: "ALL", Type: "select", Members: nodes}}
+	opts := ImportOptions{
+		CreateGroups:      true,
+		UpstreamGroups:    upstream,
+		UpstreamNodeNames: nodes,
+	}
+	if _, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:fx", nil, nil, opts); err != nil {
+		t.Fatalf("首次导入: %v", err)
+	}
+	groups, _ := m.ListProxyGroups(t.Context())
+	if len(groups) != 1 || !groups[0].IncludeAllSources {
+		t.Fatalf("首次导入应开启全部来源: %+v", groups)
+	}
+	if err := m.UpdateProxyGroup(t.Context(), groups[0].ID, "ALL", "url-test", "", "https://test", 300, 0); err != nil {
+		t.Fatalf("UpdateProxyGroup: %v", err)
+	}
+
+	// 第二次导入变成子集组：标志应关闭，成员跟随订阅，类型保留。
+	opts.UpstreamGroups = []model.UpstreamGroup{{Name: "ALL", Type: "select", Members: []string{"HK-1"}}}
+	opts.UpstreamNodeNames = []string{"HK-1", "JP-1"}
+	res, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:fx", nil, nil, opts)
+	if err != nil {
+		t.Fatalf("二次导入: %v", err)
+	}
+	if res.GroupsCreated != 0 {
+		t.Fatalf("同源分组应刷新而不是新建，GroupsCreated = %d", res.GroupsCreated)
+	}
+	got, err := m.GetProxyGroup(t.Context(), groups[0].ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if got.IncludeAllSources || len(got.Members) != 1 || got.Members[0] != "HK-1" {
+		t.Fatalf("二次导入未刷新扩展/成员: %+v", got)
+	}
+	if got.Type != "url-test" || got.URL != "https://test" {
+		t.Fatalf("用户编辑的类型/测活不应被覆盖: %+v", got)
 	}
 }

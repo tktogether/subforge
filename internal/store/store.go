@@ -110,9 +110,13 @@ type ProxyGroup struct {
 	// IncludeSelf 表示订阅渲染时是否把方案选中的自建节点追加到该分组成员末尾。
 	// 机场分组按显式成员渲染，自建节点不会自动出现；成员覆盖全部机场节点的组
 	// 导入时默认开启，子集组默认关闭。
-	IncludeSelf bool      `json:"include_self"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	IncludeSelf bool `json:"include_self"`
+	// IncludeAllSources 表示订阅渲染时是否把方案里所有机场的节点并入该组。
+	// 机场的「全部节点」分组（成员覆盖该机场全部节点）导入时自动开启：
+	// 组名表达的是「全部」，只保留本机场节点会在多机场方案里漏掉其他机场。
+	IncludeAllSources bool      `json:"include_all_sources"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // SelfNode 是 self_nodes 表的一行。
@@ -431,13 +435,18 @@ func (d *DB) AddProxyGroupWithMembers(ctx context.Context, name, gtype, regex, u
 // AddProxyGroupWithMembersAndIncludeSelf 同 AddProxyGroupWithMembers，额外指定
 // 是否在订阅渲染时追加自建节点。
 func (d *DB) AddProxyGroupWithMembersAndIncludeSelf(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string, includeSelf bool) (ProxyGroup, error) {
+	return d.AddProxyGroupWithMembersAndFlags(ctx, name, gtype, regex, url, interval, sortOrder, source, members, includeSelf, false)
+}
+
+// AddProxyGroupWithMembersAndFlags 新增带成员列表的分组，并指定自建/全部来源扩展。
+func (d *DB) AddProxyGroupWithMembersAndFlags(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string, includeSelf, includeAllSources bool) (ProxyGroup, error) {
 	membersJSON, err := marshalLayerList(members)
 	if err != nil {
 		return ProxyGroup{}, err
 	}
 	res, err := d.db.ExecContext(ctx,
-		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source, members, include_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source, membersJSON, includeSelf)
+		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source, members, include_self, include_all_sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source, membersJSON, includeSelf, includeAllSources)
 	if err != nil {
 		return ProxyGroup{}, err
 	}
@@ -457,8 +466,8 @@ func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 	var g ProxyGroup
 	var members string
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), COALESCE(members, ''), COALESCE(include_self, 0), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
-		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &members, &g.IncludeSelf, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), COALESCE(members, ''), COALESCE(include_self, 0), COALESCE(include_all_sources, 0), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
+		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &members, &g.IncludeSelf, &g.IncludeAllSources, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -491,6 +500,47 @@ func (d *DB) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf
 	res, err := d.db.ExecContext(ctx,
 		"UPDATE proxy_groups SET include_self = ?, updated_at = ? WHERE id = ?",
 		includeSelf, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetProxyGroupIncludeAllSources 保存分组是否把方案里所有机场的节点并入。
+func (d *DB) SetProxyGroupIncludeAllSources(ctx context.Context, id int64, includeAll bool) error {
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE proxy_groups SET include_all_sources = ?, updated_at = ? WHERE id = ?",
+		includeAll, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateImportedGroupMembersFlags 刷新机场分组的成员与扩展标志。
+// 只更新上游派生字段，保留用户在分组页改过的类型、测活与排序。
+func (d *DB) UpdateImportedGroupMembersFlags(ctx context.Context, id int64, members []string, includeSelf, includeAllSources bool) error {
+	membersJSON, err := marshalLayerList(members)
+	if err != nil {
+		return err
+	}
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE proxy_groups SET members = ?, include_self = ?, include_all_sources = ?, updated_at = ? WHERE id = ?",
+		membersJSON, includeSelf, includeAllSources, time.Now(), id)
 	if err != nil {
 		return err
 	}
@@ -666,6 +716,7 @@ func migrate(db *sql.DB) error {
 			sort_order   INTEGER DEFAULT 0,
 			members      TEXT NOT NULL DEFAULT '',
 			include_self INTEGER NOT NULL DEFAULT 0,
+			include_all_sources INTEGER NOT NULL DEFAULT 0,
 			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
@@ -866,6 +917,9 @@ func migrate(db *sql.DB) error {
 	}
 	if err := addColumnIfMissing(db, "proxy_groups", "include_self", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return fmt.Errorf("迁移 proxy_groups.include_self: %w", err)
+	}
+	if err := addColumnIfMissing(db, "proxy_groups", "include_all_sources", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("迁移 proxy_groups.include_all_sources: %w", err)
 	}
 	// rule_providers 唯一索引：先按 (source, name) 去重，保留最小 id，避免老库重复行导致建索引失败。
 	if _, err := db.Exec("DELETE FROM rule_providers WHERE id NOT IN (SELECT MIN(id) FROM rule_providers GROUP BY source, name)"); err != nil {

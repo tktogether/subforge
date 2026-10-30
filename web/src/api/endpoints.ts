@@ -30,6 +30,8 @@ export interface ProxyGroup {
   members?: string[]
   // 订阅渲染时是否在成员末尾追加方案选中的自建节点。
   include_self?: boolean
+  // 订阅渲染时是否把方案里所有机场的节点并入（机场「全部节点」组默认开启）。
+  include_all_sources?: boolean
 }
 
 export interface SelfNode {
@@ -207,6 +209,7 @@ export interface GroupInput {
   url: string
   interval: number
   include_self?: boolean
+  include_all_sources?: boolean
 }
 
 export interface SelfNodeInput {

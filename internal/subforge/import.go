@@ -151,9 +151,13 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 		return result, err
 	}
 	groupIDByName := make(map[string]int64, len(groups))
+	existingByName := make(map[string]ProxyGroup, len(groups))
 	for _, g := range groups {
 		if _, ok := groupIDByName[g.Name]; !ok {
 			groupIDByName[g.Name] = g.ID
+		}
+		if _, ok := existingByName[g.Name]; !ok {
+			existingByName[g.Name] = g
 		}
 	}
 
@@ -169,16 +173,24 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 			if name == "" || len(ug.Members) == 0 {
 				continue
 			}
-			if _, exists := groupIDByName[name]; exists {
+			includeAll := coversAllNodes(ug.Members, opts.UpstreamNodeNames)
+			if existing, exists := existingByName[name]; exists {
+				// 同一机场刷新时更新派生的成员与「全部来源」标志；保留用户改过的
+				// 类型/测活/排序，也保留用户关掉的「包含自建」。
+				if existing.Source == source {
+					if err := m.db.UpdateImportedGroupMembersFlags(ctx, existing.ID, ug.Members, existing.IncludeSelf, includeAll); err != nil {
+						return result, err
+					}
+				}
 				continue
 			}
-			includeSelf := coversAllNodes(ug.Members, opts.UpstreamNodeNames)
-			g, gErr := m.AddProxyGroupWithMembersAndIncludeSelf(ctx, name, normalizeUpstreamGroupType(ug.Type),
-				"", ug.URL, ug.Interval, 0, source, ug.Members, includeSelf)
+			g, gErr := m.AddProxyGroupWithMembersAndFlags(ctx, name, normalizeUpstreamGroupType(ug.Type),
+				"", ug.URL, ug.Interval, 0, source, ug.Members, includeAll, includeAll)
 			if gErr != nil {
 				return result, gErr
 			}
 			groupIDByName[name] = g.ID
+			existingByName[name] = *g
 			result.GroupsCreated++
 			createdGroups[name]++
 		}

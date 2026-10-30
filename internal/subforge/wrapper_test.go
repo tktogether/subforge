@@ -62,24 +62,34 @@ func TestProfileWrapperOptions(t *testing.T) {
 func TestProxyGroupWrappers(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
-	g, err := m.AddProxyGroupWithMembers(ctx, "香港", "select", "", "", 0, 0, "airport:守候", []string{"HK-01", "HK-02"})
+	g, err := m.AddProxyGroupWithMembersAndFlags(ctx, "香港", "select", "", "", 0, 0, "airport:守候", []string{"HK-01", "HK-02"}, true, true)
 	if err != nil {
-		t.Fatalf("AddProxyGroupWithMembers: %v", err)
+		t.Fatalf("AddProxyGroupWithMembersAndFlags: %v", err)
 	}
-	if g.Name != "香港" || len(g.Members) != 2 || g.Source != "airport:守候" || g.IncludeSelf {
+	if g.Name != "香港" || len(g.Members) != 2 || g.Source != "airport:守候" || !g.IncludeSelf || !g.IncludeAllSources {
 		t.Fatalf("分组字段不符: %+v", g)
 	}
-	if err := m.SetProxyGroupIncludeSelf(ctx, g.ID, true); err != nil {
+	// 子集组：两个开关都关。
+	if _, err := m.AddProxyGroupWithMembersAndIncludeSelf(ctx, "香港子集", "select", "", "", 0, 0, "airport:守候", []string{"HK-01"}, false); err != nil {
+		t.Fatalf("AddProxyGroupWithMembersAndIncludeSelf: %v", err)
+	}
+	if err := m.SetProxyGroupIncludeSelf(ctx, g.ID, false); err != nil {
 		t.Fatalf("SetProxyGroupIncludeSelf: %v", err)
+	}
+	if err := m.SetProxyGroupIncludeAllSources(ctx, g.ID, false); err != nil {
+		t.Fatalf("SetProxyGroupIncludeAllSources: %v", err)
 	}
 	got, err := m.GetProxyGroup(ctx, g.ID)
 	if err != nil {
 		t.Fatalf("GetProxyGroup: %v", err)
 	}
-	if !got.IncludeSelf {
-		t.Fatalf("include_self 未保存: %+v", got)
+	if got.IncludeSelf || got.IncludeAllSources {
+		t.Fatalf("扩展标志未关闭: %+v", got)
 	}
 	if err := m.SetProxyGroupIncludeSelf(ctx, 9999, true); err == nil || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("不存在分组应报错, got %v", err)
+	}
+	if err := m.SetProxyGroupIncludeAllSources(ctx, 9999, true); err == nil || !strings.Contains(err.Error(), "不存在") {
 		t.Fatalf("不存在分组应报错, got %v", err)
 	}
 }

@@ -19,7 +19,7 @@ const groupColumns = [
   { key: 'type', title: '类型' },
   { key: 'regex', title: '匹配正则' },
   { key: 'members_text', title: '成员' },
-  { key: 'include_self_text', title: '含自建' },
+  { key: 'expand_text', title: '成员扩展' },
   { key: 'url', title: '测活地址' },
   { key: 'interval', title: '间隔(秒)' },
   { key: 'sort_order', title: '顺序' },
@@ -32,6 +32,14 @@ function membersText(members?: string[]): string {
   return members.length > 3 ? `${members.length} 个：${preview}…` : preview
 }
 
+// 成员扩展是「全部来源 + 自建」两种开关的组合，表格只显示最终生效范围。
+function expandText(g: ProxyGroup): string {
+  if (g.include_all_sources && g.include_self) return '全部来源'
+  if (g.include_all_sources) return '其他机场'
+  if (g.include_self) return '自建'
+  return '—'
+}
+
 // v2：表单不再有「方案」下拉；新建分组的 source 恒为 ''（自定义），由后端默认。
 const groupFields = [
   { key: 'name', label: '名称', type: 'text', hint: '客户端里显示的策略组名；规则行的目标分组就是按这个名找的', example: '香港' },
@@ -40,11 +48,18 @@ const groupFields = [
   { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
   { key: 'interval', label: '测活间隔（秒）', type: 'number', hint: '仅 url-test 需要；太小会频繁测活', example: '300' },
   {
+    key: 'include_all_sources',
+    label: '包含全部来源节点',
+    type: 'switch',
+    default: false,
+    hint: '开启后，订阅会把方案里所有机场的节点都并入该组。成员覆盖了本机场全部节点的「全部节点」组（如守候网络的「守候网络」）导入时默认开启；子集组默认关闭。',
+  },
+  {
     key: 'include_self',
     label: '包含自建节点',
     type: 'switch',
     default: false,
-    hint: '开启后，订阅会在该分组成员末尾追加方案选中的自建节点。机场分组按成员渲染，自建节点不会自动出现；导入时成员覆盖全部机场节点的组默认开启，子集组默认关闭。',
+    hint: '开启后，订阅会在该分组成员末尾追加方案选中的自建节点。只影响自建；其他机场由「包含全部来源节点」控制。',
   },
   { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
 ]
@@ -55,9 +70,11 @@ const resource: any = {
     const groups = await endpoints.listGroups()
     return groups.map((g) => ({
       ...g,
+      include_self: !!g.include_self,
+      include_all_sources: !!g.include_all_sources,
       source_text: sourceText(g.source),
       members_text: membersText(g.members),
-      include_self_text: g.include_self ? '是' : '否',
+      expand_text: expandText(g),
     }))
   },
   create: endpoints.createGroup,
@@ -74,7 +91,7 @@ const resource: any = {
         <p class="mb-1"><strong>成员怎么来：</strong>填了「匹配正则」的分组，会把<strong>名字匹配该正则</strong>的节点收进来（例如 <code>香港|HK</code> 收所有名字带香港或 HK 的节点）。正则留空的分组不自动收节点。</p>
         <p class="mb-1"><strong>它怎么影响输出（关键）：</strong><strong>规则行里的 <code>rule_config</code> 填的就是这里的分组 id。</strong>分组被删掉或改名，引用它的规则行会退化成 <code>DIRECT</code>（直连）——改分组前先去「规则」页看一眼有没有规则在引用。</p>
         <p class="mb-1"><strong>机场自带分组：</strong>导入机场规则时会保留机场自己的分组与成员，显示在「成员」列；这类分组按成员渲染，编辑「匹配正则」不会覆盖成员。</p>
-        <p class="mb-1"><strong>自建节点：</strong>机场分组只认自己的成员，自建节点不会自动出现。需要时打开「包含自建节点」，订阅会在原成员后追加方案选中的自建节点；导入时成员覆盖全部机场节点的组默认开启，子集组默认关闭。</p>
+        <p class="mb-1"><strong>跨机场与自建：</strong>机场的「全部节点」组（成员覆盖该机场全部节点，例如守候网络的「守候网络」）导入时会自动打开「包含全部来源节点」，订阅会把方案里其他机场的节点也并入；「包含自建节点」控制是否再追加自建节点。子集组（如只有香港节点）保持原成员。</p>
         <p class="mb-0"><strong>顺序：</strong><code>sort_order</code> 越小越靠前，决定客户端里分组的显示顺序。</p>
       </div>
     </v-alert>

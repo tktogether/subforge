@@ -211,6 +211,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     concepts: [
       { term: '分组', explain: '订阅输出中节点的分类单元，可按规则或手动归类。' },
       { term: '分组类型', explain: 'select 手动选择、url-test 自动测活选最快、fallback 故障切换、load-balance 负载均衡；渲染层还支持 relay/direct/pass/reject。' },
+      { term: '成员扩展', explain: '机场的「全部节点」组默认并入方案里所有机场的节点；自建节点由「包含自建节点」单独控制，子集组保持原成员。' },
     ],
     faq: [
       { q: '分组顺序影响什么？', a: '影响订阅输出中分组的排列顺序，靠前的分组在前端展示更醒目。' },

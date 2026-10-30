@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/tktogether/subforge/internal/config"
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/transform"
 )
@@ -384,4 +385,35 @@ func containsWarning(warns []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestExpandGroupExtras 分组「全部来源」补机场节点、「自建」只补文件来源节点。
+func TestExpandGroupExtras(t *testing.T) {
+	nodes := model.NodeList{
+		model.NodeFromRaw(map[string]any{"name": "A-1"}, "airport-A"),
+		model.NodeFromRaw(map[string]any{"name": "B-1"}, "airport-B"),
+		model.NodeFromRaw(map[string]any{"name": "SELF-A"}, "self-1.txt"),
+	}
+	selfSources := map[string]bool{"self-1.txt": true}
+	groups := []render.Group{
+		{Name: "ALL", Proxies: []string{"A-1"}, IncludeSelf: true, IncludeAllSources: true},
+		{Name: "ALL_NO_SELF", Proxies: []string{"A-1"}, IncludeAllSources: true},
+		{Name: "SELF_ONLY", Proxies: []string{"A-1"}, IncludeSelf: true},
+		{Name: "NONE", Proxies: []string{"A-1"}},
+	}
+	out := expandGroupExtras(groups, nodes, selfSources)
+	want := map[string][]string{
+		"ALL":         {"A-1", "B-1", "SELF-A"},
+		"ALL_NO_SELF": {"A-1", "B-1"},
+		"SELF_ONLY":   {"A-1", "SELF-A"},
+		"NONE":        {"A-1"},
+	}
+	for _, g := range out {
+		if strings.Join(g.Proxies, ",") != strings.Join(want[g.Name], ",") {
+			t.Errorf("%s 成员 = %v, want %v", g.Name, g.Proxies, want[g.Name])
+		}
+	}
+	if got := expandGroupExtras(nil, nodes, selfSources); got != nil {
+		t.Fatalf("空分组应返回 nil, got %+v", got)
+	}
 }

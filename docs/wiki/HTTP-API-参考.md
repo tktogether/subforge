@@ -291,8 +291,8 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 | 方法 | 路径 | 请求 | 响应 |
 | --- | --- | --- | --- |
 | GET | `/api/groups` | — | `{"groups":[...]}` |
-| POST | `/api/groups` | `name`、`type`、`regex`、`url`、`interval` | 201 `{"group":{...}}` |
-| GET、PUT、DELETE | `/api/groups/{id}` | PUT 同 POST | `{"group":{...}}` 或 `{"ok":true}` |
+| POST | `/api/groups` | `name`、`type`、`regex`、`url`、`interval`，可选 `include_self`、`include_all_sources` | 201 `{"group":{...}}` |
+| GET、PUT、DELETE | `/api/groups/{id}` | PUT 同 POST；`include_self` / `include_all_sources` 省略时保持原值 | `{"group":{...}}` 或 `{"ok":true}` |
 
 `type` 常用取值为 `select`、`url-test`、`fallback`、`load-balance`；`regex` 是成员节点名正则，`url` 是测活地址，`interval` 是测活间隔秒数（`internal/api/subscription.go:170-186`）。需要特别注意：mihomo 只接受上述四种分组类型，`relay` 已被上游移除，其他类型会直接报错（`internal/render/clashmeta/clashmeta.go:293-312`）。
 

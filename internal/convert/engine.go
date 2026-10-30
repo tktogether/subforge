@@ -131,10 +131,11 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 
 	var (
-		list      model.NodeList
-		failures  []string
-		cached    []bool
-		providers []model.Provider
+		list        model.NodeList
+		failures    []string
+		cached      []bool
+		providers   []model.Provider
+		fileSources = map[string]bool{}
 	)
 	// provider 按名去重：多个来源可能带同名 provider，首次出现的定义优先。
 	seenProvider := map[string]bool{}
@@ -178,7 +179,9 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 			failures = append(failures, fmt.Sprintf("%s: %v", f, err))
 			continue
 		}
-		list = append(list, model.NewNodeList(dec.Nodes, filepath.Base(f))...)
+		base := filepath.Base(f)
+		fileSources[base] = true
+		list = append(list, model.NewNodeList(dec.Nodes, base)...)
 		collectProviders(dec.Providers)
 	}
 
@@ -208,7 +211,8 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	if profile.Version != "" && profile.GeneratedAt == "" {
 		profile.GeneratedAt = nowUTC(e.Now)
 	}
-	groups := ResolveGroups(eff.Groups, nodes.Names())
+	groups := expandGroupExtras(eff.Groups, nodes, fileSources)
+	groups = ResolveGroups(groups, nodes.Names())
 	body, err := renderer.Render(render.Request{
 		Nodes:         nodes,
 		Groups:        groups,

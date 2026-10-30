@@ -295,6 +295,8 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			SortOrder   int    `json:"sort_order"`
 			Source      string `json:"source"`
 			IncludeSelf bool   `json:"include_self"`
+			// IncludeAllSources 把方案里所有机场的节点并入该组。
+			IncludeAllSources bool `json:"include_all_sources"`
 			// v2 起分组是全局库，只按来源分层；profile_id 已下线，出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
@@ -310,7 +312,7 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		g, err := m.AddProxyGroupWithMembersAndIncludeSelf(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder, strings.TrimSpace(req.Source), nil, req.IncludeSelf)
+		g, err := m.AddProxyGroupWithMembersAndFlags(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder, strings.TrimSpace(req.Source), nil, req.IncludeSelf, req.IncludeAllSources)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -347,6 +349,8 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			Interval    int    `json:"interval"`
 			SortOrder   int    `json:"sort_order"`
 			IncludeSelf *bool  `json:"include_self"`
+			// IncludeAllSources 省略时保持原值。
+			IncludeAllSources *bool `json:"include_all_sources"`
 			// v2 起分组不再归属方案，profile_id 出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
@@ -374,6 +378,12 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.IncludeSelf != nil {
 			if err := m.SetProxyGroupIncludeSelf(r.Context(), id, *req.IncludeSelf); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if req.IncludeAllSources != nil {
+			if err := m.SetProxyGroupIncludeAllSources(r.Context(), id, *req.IncludeAllSources); err != nil {
 				s.writeAPIError(w, r, http.StatusInternalServerError, err)
 				return
 			}
@@ -1020,7 +1030,6 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 自建节点：每个启用的节点链接写入临时文件，作为 File 来源传给引擎。
 	var selfNodeFiles []string
-	selfNodeNames := []string{}
 	selfNodes, err := m.ListSelfNodes(r.Context())
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -1046,9 +1055,6 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			selfNodeFiles = append(selfNodeFiles, fp)
-			if name := strings.TrimSpace(n.Name); name != "" {
-				selfNodeNames = append(selfNodeNames, name)
-			}
 		}
 	}
 
@@ -1071,10 +1077,12 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		groupName[g.ID] = g.Name
 		rg := render.Group{
-			Name:    g.Name,
-			Type:    g.Type,
-			Test:    g.URL,
-			Options: render.UrlTestOptions{Interval: g.Interval},
+			Name:              g.Name,
+			Type:              g.Type,
+			Test:              g.URL,
+			Options:           render.UrlTestOptions{Interval: g.Interval},
+			IncludeSelf:       g.IncludeSelf,
+			IncludeAllSources: g.IncludeAllSources,
 		}
 		// 机场自带分组按成员原样渲染；成员可能是节点名，也可能是子组名，
 		// ResolveGroups 会保留已知组名、展开正则/节点名。手工分组仍走 Regex。
@@ -1082,9 +1090,6 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			rg.Proxies = append([]string{}, g.Members...)
 		} else if re := strings.TrimSpace(g.Regex); re != "" {
 			rg.Proxies = []string{re}
-		}
-		if g.IncludeSelf {
-			rg.Proxies = appendMissingNames(rg.Proxies, selfNodeNames)
 		}
 		renderGroups = append(renderGroups, rg)
 	}
@@ -1277,25 +1282,6 @@ func vmessWithName(link, name string) (string, bool) {
 		return "", false
 	}
 	return "vmess://" + base64.StdEncoding.EncodeToString(b), true
-}
-
-// appendMissingNames 把 extra 里尚未出现的名字追加到 base 末尾，保持顺序并去重。
-func appendMissingNames(base, extra []string) []string {
-	if len(extra) == 0 {
-		return base
-	}
-	seen := make(map[string]bool, len(base)+len(extra))
-	for _, v := range base {
-		seen[v] = true
-	}
-	for _, v := range extra {
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		base = append(base, v)
-	}
-	return base
 }
 
 // idFilter 把方案里的来源 id 数组转成查找表。

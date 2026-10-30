@@ -1693,3 +1693,48 @@ func TestProxyGroupIncludeSelfRoundTrip(t *testing.T) {
 		t.Fatalf("手工分组 include_self 默认应为 false: %+v", plain)
 	}
 }
+
+// TestProxyGroupIncludeAllSourcesRoundTrip 分组「包含全部来源」开关与导入刷新。
+func TestProxyGroupIncludeAllSourcesRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	g, err := d.AddProxyGroupWithMembersAndFlags(ctx, "守候网络", "select", "", "", 0, 0, "airport:fx", []string{"HK-1"}, true, true)
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembersAndFlags: %v", err)
+	}
+	if !g.IncludeAllSources || !g.IncludeSelf {
+		t.Fatalf("扩展标志未落库: %+v", g)
+	}
+	got, err := d.GetProxyGroup(ctx, g.ID)
+	if err != nil || !got.IncludeAllSources {
+		t.Fatalf("GetProxyGroup include_all_sources 不符: %+v err=%v", got, err)
+	}
+	list, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
+	if err != nil || len(list) != 1 || !list[0].IncludeAllSources {
+		t.Fatalf("列表 include_all_sources 不符: %+v err=%v", list, err)
+	}
+	if err := d.SetProxyGroupIncludeAllSources(ctx, g.ID, false); err != nil {
+		t.Fatalf("SetProxyGroupIncludeAllSources: %v", err)
+	}
+	got, _ = d.GetProxyGroup(ctx, g.ID)
+	if got.IncludeAllSources {
+		t.Fatalf("include_all_sources 应为 false: %+v", got)
+	}
+	if err := d.SetProxyGroupIncludeAllSources(ctx, 99999, true); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+
+	// 导入刷新只改成员与扩展标志，保留用户改过的类型。
+	if err := d.UpdateProxyGroup(ctx, g.ID, "守候网络", "url-test", "", "https://test", 300, 0); err != nil {
+		t.Fatalf("UpdateProxyGroup: %v", err)
+	}
+	if err := d.UpdateImportedGroupMembersFlags(ctx, g.ID, []string{"HK-1", "JP-1"}, true, true); err != nil {
+		t.Fatalf("UpdateImportedGroupMembersFlags: %v", err)
+	}
+	got, _ = d.GetProxyGroup(ctx, g.ID)
+	if got.Type != "url-test" || len(got.Members) != 2 || !got.IncludeAllSources || !got.IncludeSelf {
+		t.Fatalf("刷新结果不符: %+v", got)
+	}
+	if err := d.UpdateImportedGroupMembersFlags(ctx, 99999, nil, false, false); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+}
