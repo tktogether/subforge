@@ -907,10 +907,19 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
 	}
+	// 方案可限制来源：nil = 全部启用来源；空数组 = 该类来源一个都不用。
+	airportFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.AirportIDs })
+	selfFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.SelfNodeIDs })
+
 	var urls []string
+	usedAirports := make([]subforge.Airport, 0, len(airports))
 	for _, a := range airports {
+		if airportFilter != nil && !airportFilter[a.ID] {
+			continue
+		}
 		if a.Enabled && strings.TrimSpace(a.SubscriptionURL) != "" {
 			urls = append(urls, a.SubscriptionURL)
+			usedAirports = append(usedAirports, a)
 		}
 	}
 
@@ -929,6 +938,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 		defer os.RemoveAll(tmpDir)
 		for _, n := range selfNodes {
+			if selfFilter != nil && !selfFilter[n.ID] {
+				continue
+			}
 			if !n.Enabled || strings.TrimSpace(n.Link) == "" {
 				continue
 			}
@@ -1050,10 +1062,10 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// 从未采集成功的机场流量是零值，混进来会把 min/max/avg 拉偏。
 	// 读策略失败（DB 故障）时静默跳过——订阅本身仍然要能生成。
 	if strat, err := m.GetTrafficStrategy(r.Context()); err == nil {
-		usages := make([]traffic.Usage, 0, len(airports))
-		nodeCounts := make([]int, 0, len(airports))
-		for _, a := range airports {
-			if !a.Enabled || strings.TrimSpace(a.SubscriptionURL) == "" || a.TrafficAt <= 0 {
+		usages := make([]traffic.Usage, 0, len(usedAirports))
+		nodeCounts := make([]int, 0, len(usedAirports))
+		for _, a := range usedAirports {
+			if a.TrafficAt <= 0 {
 				continue
 			}
 			usages = append(usages, traffic.Usage{
@@ -1069,6 +1081,23 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
+}
+
+// idFilter 把方案里的来源 id 数组转成查找表。
+// nil = 未限制（返回 nil，调用方按“全部启用来源”处理）；空数组 = 明确不使用。
+func idFilter(p *subforge.Profile, pick func(*subforge.Profile) []int64) map[int64]bool {
+	if p == nil {
+		return nil
+	}
+	ids := pick(p)
+	if ids == nil {
+		return nil
+	}
+	out := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
 }
 
 // subscribeLayers 返回订阅组装要用的分组层与规则层顺序：

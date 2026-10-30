@@ -707,6 +707,8 @@ func migrate(db *sql.DB) error {
 			pipeline    TEXT NOT NULL DEFAULT '',
 			enabled     INTEGER NOT NULL DEFAULT 1,
 			sort_order  INTEGER NOT NULL DEFAULT 0,
+			airport_ids TEXT NOT NULL DEFAULT '',
+			self_node_ids TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -719,6 +721,15 @@ func migrate(db *sql.DB) error {
 	// 老脚本迁移后 kind 为空串，不改变历史数据语义）。
 	if err := addColumnIfMissing(db, "scripts", "kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("迁移 scripts.kind: %w", err)
+	}
+	// profiles 来源列：老库幂等补齐。空串 = 未限制（全部启用来源）。
+	for _, c := range []struct{ col, decl string }{
+		{"airport_ids", "TEXT NOT NULL DEFAULT ''"},
+		{"self_node_ids", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := addColumnIfMissing(db, "profiles", c.col, c.decl); err != nil {
+			return fmt.Errorf("迁移 profiles.%s: %w", c.col, err)
+		}
 	}
 	// rules 溯源列：老库用 ALTER 幂等补齐。
 	for _, c := range []struct{ col, decl string }{

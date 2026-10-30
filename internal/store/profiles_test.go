@@ -29,6 +29,51 @@ func TestListProfilesEmpty(t *testing.T) {
 	}
 }
 
+// TestProfileSourceIDsRoundTrip 覆盖来源列：nil=未限制、空数组=明确不使用。
+func TestProfileSourceIDsRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	p, err := d.AddProfile(ctx, "来源", "", "", "", true, 0)
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if p.AirportIDs != nil || p.SelfNodeIDs != nil {
+		t.Fatalf("新方案来源应为 nil，实际 %+v/%+v", p.AirportIDs, p.SelfNodeIDs)
+	}
+	airports := []int64{2, 1}
+	selfNodes := []int64{7}
+	if err := d.SetProfileSources(ctx, p.ID, &airports, &selfNodes); err != nil {
+		t.Fatalf("SetProfileSources: %v", err)
+	}
+	got, err := d.GetProfile(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if got.AirportIDs == nil || len(got.AirportIDs) != 2 || got.AirportIDs[0] != 2 || got.AirportIDs[1] != 1 {
+		t.Fatalf("airport_ids 往返不符：%+v", got.AirportIDs)
+	}
+	if got.SelfNodeIDs == nil || len(got.SelfNodeIDs) != 1 || got.SelfNodeIDs[0] != 7 {
+		t.Fatalf("self_node_ids 往返不符：%+v", got.SelfNodeIDs)
+	}
+
+	empty := []int64{}
+	if err := d.SetProfileSources(ctx, p.ID, &empty, nil); err != nil {
+		t.Fatalf("SetProfileSources(empty): %v", err)
+	}
+	got, err = d.GetProfile(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if got.AirportIDs == nil || len(got.AirportIDs) != 0 {
+		t.Fatalf("空数组应保持非 nil 空切片，实际 %+v", got.AirportIDs)
+	}
+	if len(got.SelfNodeIDs) != 1 {
+		t.Fatalf("只传机场时不应改自建节点：%+v", got.SelfNodeIDs)
+	}
+	if err := d.SetProfileSources(ctx, 9999, &empty, nil); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在方案应返回 sql.ErrNoRows，实际 %v", err)
+	}
+}
+
 // TestProfileCRUD 覆盖 Add/Get/Update/Delete 往返、全量覆盖、sql.ErrNoRows 与重名冲突。
 func TestProfileCRUD(t *testing.T) {
 	d, ctx := newTestDB(t)

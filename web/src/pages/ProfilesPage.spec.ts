@@ -15,6 +15,8 @@ vi.mock('../api/endpoints', () => ({
     updateProfile: vi.fn(),
     deleteProfile: vi.fn(),
     listRuleSources: vi.fn(),
+    listAirports: vi.fn(),
+    listSelfNodes: vi.fn(),
   },
 }))
 
@@ -28,6 +30,9 @@ interface Draft {
   enabled: boolean
   sort_order: number
   rule_sources: string[]
+  limit_sources: boolean
+  airport_ids: number[]
+  self_node_ids: number[]
 }
 
 interface ProfilesPageVm {
@@ -54,6 +59,8 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
     sort_order: 3,
     rule_layers: [...DEFAULT_LAYERS],
     rule_sources: [] as string[],
+    airport_ids: null,
+    self_node_ids: null,
     group_layers: [...DEFAULT_LAYERS],
     rule_count: 2,
     group_count: 1,
@@ -99,6 +106,12 @@ describe('ProfilesPage', () => {
     const listSources = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
     listSources.mockReset()
     listSources.mockResolvedValue({})
+    ;(endpoints.listAirports as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 11, name: '机场A', enabled: true },
+    ])
+    ;(endpoints.listSelfNodes as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 22, name: '节点A', enabled: true },
+    ])
   })
 
   it('渲染方案表格：模板/管线空值显示默认、模板超长截断、启用停用、顺序>1e12 显示未设置、层列顺序', async () => {
@@ -183,8 +196,7 @@ describe('ProfilesPage', () => {
     await w.find('[data-testid="profile-description"]').find('input').setValue('新说明')
     await w.find('[data-testid="profile-config"]').find('input').setValue('cfg')
     await w.find('[data-testid="profile-pipeline"]').find('input').setValue('pipe')
-    const sw = w.findAllComponents({ name: 'VSwitch' })
-    await sw[0].setValue(false)
+    await w.find('[data-testid="profile-enabled"] input').setValue(false)
     await w.find('[data-testid="profile-sort"]').find('input').setValue('9')
 
     // 新建弹窗里层编辑器默认全开（自定义→机场导入→模板）。
@@ -218,6 +230,7 @@ describe('ProfilesPage', () => {
       rule_layers: ['custom', 'airport', 'template'],
       rule_sources: [],
       group_layers: ['custom', 'airport', 'template'],
+      all_sources: true,
     })
     expect(notifyState.kind).toBe('ok')
     expect(notifyState.text).toBe('已保存')
@@ -385,6 +398,79 @@ describe('ProfilesPage', () => {
       rule_layers: ['custom', 'template'],
       group_layers: ['custom', 'airport', 'template'],
     }))
+  })
+
+  it('新建方案：限制来源后提交所选机场/自建节点', async () => {
+    ;(endpoints.createProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile({ id: 8 }))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as any
+    vm.draft.name = '限源方案'
+    await w.find('[data-testid="profile-limit-sources"] input').setValue(true)
+    await flushPromises()
+    const selects = w.findAllComponents({ name: 'VSelect' })
+    const airportSel = selects.find((s) => s.attributes('data-testid') === 'profile-airports')
+    const selfSel = selects.find((s) => s.attributes('data-testid') === 'profile-self-nodes')
+    expect(airportSel).toBeTruthy()
+    expect(selfSel).toBeTruthy()
+    airportSel!.vm.$emit('update:modelValue', [11])
+    selfSel!.vm.$emit('update:modelValue', [22])
+    await flushPromises()
+    expect(vm.draft.airport_ids).toEqual([11])
+    expect(vm.draft.self_node_ids).toEqual([22])
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.createProfile).toHaveBeenCalledWith(expect.objectContaining({
+      all_sources: false,
+      airport_ids: [11],
+      self_node_ids: [22],
+    }))
+  })
+
+  it('编辑受限方案：回填来源，切回全部来源后提交 all_sources=true', async () => {
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeProfile({ airport_ids: [11], self_node_ids: [] }),
+    ])
+    ;(endpoints.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile())
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-edit"]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as any
+    expect(vm.draft.limit_sources).toBe(true)
+    expect(vm.draft.airport_ids).toEqual([11])
+    expect(vm.draft.self_node_ids).toEqual([])
+
+    await w.find('[data-testid="profile-limit-sources"] input').setValue(false)
+    await flushPromises()
+    expect(w.find('[data-testid="profile-airports"]').classes().join(' ')).toContain('v-input--disabled')
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.updateProfile).toHaveBeenCalledWith(1, expect.objectContaining({
+      all_sources: true,
+    }))
+    const payload = (endpoints.updateProfile as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(payload).not.toHaveProperty('airport_ids')
+    expect(payload).not.toHaveProperty('self_node_ids')
+  })
+
+  it('来源选项加载失败时降级为空选项，不影响保存', async () => {
+    ;(endpoints.listAirports as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('airports down'))
+    ;(endpoints.listSelfNodes as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('nodes down'))
+    ;(endpoints.createProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile({ id: 9 }))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    const vm = w.vm as any
+    expect(vm.airportOptions).toEqual([])
+    expect(vm.selfNodeOptions).toEqual([])
+    vm.draft.name = '降级方案'
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.createProfile).toHaveBeenCalled()
   })
 
   it('取消按钮关闭新建弹窗', async () => {

@@ -50,6 +50,8 @@ const EMPTY_PROFILE: Profile = {
   sort_order: 0,
   rule_layers: [...LAYER_KEYS],
   rule_sources: [],
+  airport_ids: null,
+  self_node_ids: null,
   group_layers: [...LAYER_KEYS],
   rule_count: 0,
   group_count: 0,
@@ -61,6 +63,20 @@ const error = ref('')
 
 // 规则源选项（D-33）：方案可绑定规则源；选项来自 GET /api/rule-sources 的 sources[].name。
 const ruleSourceOptions = ref<string[]>([])
+
+// 节点来源选项：机场/自建节点。加载失败只降级为空选项，不阻断方案编辑。
+const airportOptions = ref<{ title: string; value: number }[]>([])
+const selfNodeOptions = ref<{ title: string; value: number }[]>([])
+
+async function loadSourceOptions(): Promise<void> {
+  const [airports, selfNodes] = await Promise.allSettled([endpoints.listAirports(), endpoints.listSelfNodes()])
+  airportOptions.value = airports.status === 'fulfilled'
+    ? airports.value.map((a) => ({ title: a.name + (a.enabled ? '' : '（已停用）'), value: a.id }))
+    : []
+  selfNodeOptions.value = selfNodes.status === 'fulfilled'
+    ? selfNodes.value.map((n) => ({ title: n.name + (n.enabled ? '' : '（已停用）'), value: n.id }))
+    : []
+}
 
 // editingId === 0 表示「新建」，否则为被编辑方案的 id。
 const editingId = ref(0)
@@ -74,6 +90,10 @@ const draft = ref({
   sort_order: 0,
   // 规则源（D-33）：方案绑定的规则源名列表；空 = 未绑定。
   rule_sources: [] as string[],
+  // 未限制来源 = 使用全部启用机场/自建节点；打开后才按下面的 id 多选限制。
+  limit_sources: false,
+  airport_ids: [] as number[],
+  self_node_ids: [] as number[],
 })
 
 // 两个层编辑器的行状态（顺序即优先级）。
@@ -237,11 +257,15 @@ function openCreate(): void {
     enabled: true,
     sort_order: 0,
     rule_sources: [],
+    limit_sources: false,
+    airport_ids: [],
+    self_node_ids: [],
   }
   ruleLayers.value = defaultLayers()
   groupLayers.value = defaultLayers()
-  // 打开弹窗时重新拉一次规则源清单：清单可能已被规则源页改动。
+  // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
+  void loadSourceOptions()
   dialog.value = true
 }
 
@@ -255,11 +279,15 @@ function openEdit(row: Profile): void {
     enabled: row.enabled,
     sort_order: row.sort_order,
     rule_sources: [...(row.rule_sources ?? [])],
+    limit_sources: row.airport_ids !== null || row.self_node_ids !== null,
+    airport_ids: [...(row.airport_ids ?? [])],
+    self_node_ids: [...(row.self_node_ids ?? [])],
   }
   ruleLayers.value = ruleRowsFrom(row.rule_layers)
   groupLayers.value = layersToRows(row.group_layers)
-  // 打开弹窗时重新拉一次规则源清单：清单可能已被规则源页改动。
+  // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
+  void loadSourceOptions()
   dialog.value = true
 }
 
@@ -280,6 +308,10 @@ async function save(): Promise<void> {
     rule_layers,
     rule_sources: [...draft.value.rule_sources],
     group_layers,
+    all_sources: !draft.value.limit_sources,
+    ...(draft.value.limit_sources
+      ? { airport_ids: [...draft.value.airport_ids], self_node_ids: [...draft.value.self_node_ids] }
+      : {}),
   }
   try {
     if (editingId.value === 0) {
@@ -411,7 +443,7 @@ loadRuleSourceOptions()
     <v-dialog v-model="dialog" max-width="560">
       <v-card>
         <v-card-title>{{ editingId === 0 ? '新建方案' : '编辑方案' }}</v-card-title>
-        <v-card-text>
+        <v-card-text class="profile-dialog__body">
           <v-text-field
             v-model="draft.name"
             label="名称"
@@ -456,6 +488,45 @@ loadRuleSourceOptions()
             hint="可多选；按顺序拼接。规则源页执行更新生成产物后才会生效；产物里的 FINAL/MATCH 会被忽略。"
             persistent-hint
             class="mb-3"
+          />
+          <v-divider class="mb-3" />
+          <div class="text-subtitle-2 mb-1">节点来源</div>
+          <v-switch
+            v-model="draft.limit_sources"
+            label="限制机场/自建节点来源"
+            color="primary"
+            density="compact"
+            hide-details
+            data-testid="profile-limit-sources"
+          />
+          <div class="text-caption text-medium-emphasis mb-3">
+            关闭 = 使用所有启用的来源；打开 = 只使用下面勾选的来源，全不选表示不使用该类来源。
+          </div>
+          <v-select
+            v-model="draft.airport_ids"
+            :items="airportOptions"
+            :disabled="!draft.limit_sources"
+            label="机场来源"
+            multiple
+            chips
+            closable-chips
+            variant="outlined"
+            density="comfortable"
+            data-testid="profile-airports"
+            class="mb-2"
+          />
+          <v-select
+            v-model="draft.self_node_ids"
+            :items="selfNodeOptions"
+            :disabled="!draft.limit_sources"
+            label="自建节点来源"
+            multiple
+            chips
+            closable-chips
+            variant="outlined"
+            density="comfortable"
+            data-testid="profile-self-nodes"
+            class="mb-2"
           />
           <v-switch
             v-model="draft.enabled"
@@ -539,6 +610,12 @@ loadRuleSourceOptions()
 </template>
 
 <style scoped>
+/* 方案弹窗字段变多（来源/层顺序）后需要内部滚动，避免小屏溢出。 */
+.profile-dialog__body {
+  max-height: 68vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
 .profiles-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);

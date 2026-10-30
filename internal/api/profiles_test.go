@@ -44,6 +44,8 @@ type profileJSON struct {
 	RuleLayers  []string `json:"rule_layers"`
 	GroupLayers []string `json:"group_layers"`
 	RuleSources []string `json:"rule_sources"`
+	AirportIDs  *[]int64 `json:"airport_ids"`
+	SelfNodeIDs *[]int64 `json:"self_node_ids"`
 	RuleCount   int      `json:"rule_count"`
 	GroupCount  int      `json:"group_count"`
 }
@@ -272,6 +274,94 @@ func subscribe(t *testing.T, ts *httptest.Server, token string) (int, string) {
 	t.Helper()
 	st, _, body := doGet(t, ts.URL+"/subscribe?token="+token, "", "")
 	return st, body
+}
+
+// TestAPIProfiles_SourceSelection 覆盖方案选择机场/自建节点：
+// 空数组=明确不用该类来源，nil/未给=全部启用来源；订阅只输出选中的节点。
+func TestAPIProfiles_SourceSelection(t *testing.T) {
+	ts, _, mgr := profileServer(t)
+	ctx := t.Context()
+
+	sa, err := mgr.AddSelfNode(ctx, "trojan://pass@127.0.0.1:30001?allowInsecure=1#SELF-A", "SELF-A", true, 1)
+	if err != nil {
+		t.Fatalf("AddSelfNode A: %v", err)
+	}
+	if _, err := mgr.AddSelfNode(ctx, "trojan://pass@127.0.0.1:30002?allowInsecure=1#SELF-B", "SELF-B", true, 2); err != nil {
+		t.Fatalf("AddSelfNode B: %v", err)
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("proxies:\n  - {name: AIR-ONLY, type: ss, server: 127.0.0.1, port: 30003, cipher: aes-256-gcm, password: pass}\n"))
+	}))
+	t.Cleanup(up.Close)
+	ap, err := mgr.AddAirport(ctx, "fx-air", up.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+
+	// 只选自建节点 A：机场空数组 = 不用机场。
+	p1 := mustProfilePayload(t, ts, map[string]any{
+		"name": "仅自建A", "airport_ids": []int64{}, "self_node_ids": []int64{sa.ID},
+	})
+	if p1.AirportIDs == nil || len(*p1.AirportIDs) != 0 {
+		t.Fatalf("airport_ids 应显式空数组，实际 %+v", p1.AirportIDs)
+	}
+	if p1.SelfNodeIDs == nil || len(*p1.SelfNodeIDs) != 1 || (*p1.SelfNodeIDs)[0] != sa.ID {
+		t.Fatalf("self_node_ids 不符：%+v", p1.SelfNodeIDs)
+	}
+	mustToken(t, ts, "t-self", p1.ID)
+	st, body := subscribe(t, ts, "t-self")
+	if st != http.StatusOK {
+		t.Fatalf("订阅状态=%d body=%s", st, body)
+	}
+	if !strings.Contains(body, "SELF-A") || strings.Contains(body, "SELF-B") || strings.Contains(body, "AIR-ONLY") {
+		t.Fatalf("只应输出 SELF-A；body=%s", body)
+	}
+
+	// 只选机场：自建节点空数组 = 不用自建。
+	p2 := mustProfilePayload(t, ts, map[string]any{
+		"name": "仅机场", "airport_ids": []int64{ap.ID}, "self_node_ids": []int64{},
+	})
+	mustToken(t, ts, "t-air", p2.ID)
+	st, body = subscribe(t, ts, "t-air")
+	if st != http.StatusOK {
+		t.Fatalf("订阅状态=%d body=%s", st, body)
+	}
+	if !strings.Contains(body, "AIR-ONLY") || strings.Contains(body, "SELF-A") {
+		t.Fatalf("只应输出机场节点；body=%s", body)
+	}
+
+	// PUT all_sources=true 把限制恢复成“全部启用来源”（nil）。
+	st, body = doJSON(t, ts, http.MethodPut, fmt.Sprintf("/api/profiles/%d", p2.ID), map[string]any{
+		"name": "仅机场恢复全部", "all_sources": true,
+	})
+	if st != http.StatusOK {
+		t.Fatalf("恢复全部来源状态=%d body=%s", st, body)
+	}
+	var reset struct {
+		Profile profileJSON `json:"profile"`
+	}
+	mustDecode(t, body, &reset)
+	if reset.Profile.AirportIDs != nil || reset.Profile.SelfNodeIDs != nil {
+		t.Fatalf("all_sources=true 后来源应回到 nil，实际 %+v/%+v", reset.Profile.AirportIDs, reset.Profile.SelfNodeIDs)
+	}
+
+	// 未给来源字段 = 全部启用来源（兼容旧方案）。
+	p3 := mustProfilePayload(t, ts, map[string]any{"name": "全部来源"})
+	if p3.AirportIDs != nil || p3.SelfNodeIDs != nil {
+		t.Fatalf("未给来源时应为 nil，实际 %+v/%+v", p3.AirportIDs, p3.SelfNodeIDs)
+	}
+	mustToken(t, ts, "t-all", p3.ID)
+	st, body = subscribe(t, ts, "t-all")
+	if st != http.StatusOK || !strings.Contains(body, "AIR-ONLY") || !strings.Contains(body, "SELF-A") || !strings.Contains(body, "SELF-B") {
+		t.Fatalf("全部来源应包含所有节点；status=%d body=%s", st, body)
+	}
+
+	// 不存在的来源 id → 400。
+	if st, body := postAPIJSON(t, ts, "/api/profiles", map[string]any{
+		"name": "坏来源", "airport_ids": []int64{999999},
+	}); st != http.StatusBadRequest || !strings.Contains(body, "机场 999999 不存在") {
+		t.Fatalf("不存在的机场应 400，实际 status=%d body=%s", st, body)
+	}
 }
 
 // --- 方案 CRUD 与层校验 ---

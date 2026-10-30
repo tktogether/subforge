@@ -891,8 +891,8 @@ describe('SubscriptionsPage', () => {
   it('方案：页面加载拉取 profiles，弹窗下拉给出「未分配 + 各方案」', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     vi.mocked(endpoints.listProfiles).mockResolvedValue([
-      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], group_layers: ['custom', 'airport', 'template'] },
-      { id: 2, name: 'B-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 2, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], group_layers: ['custom', 'airport', 'template'] },
+      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], airport_ids: null, self_node_ids: null, group_layers: ['custom', 'airport', 'template'] },
+      { id: 2, name: 'B-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 2, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], airport_ids: null, self_node_ids: null, group_layers: ['custom', 'airport', 'template'] },
     ])
     const w = mountSubsPage()
     await flushPromises()
@@ -937,7 +937,7 @@ describe('SubscriptionsPage', () => {
   it('方案：新建令牌可绑定方案，body 带 profile_id 与全部定制字段', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     vi.mocked(endpoints.listProfiles).mockResolvedValue([
-      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], group_layers: ['custom', 'airport', 'template'] },
+      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], airport_ids: null, self_node_ids: null, group_layers: ['custom', 'airport', 'template'] },
     ])
     vi.mocked(endpoints.createToken).mockResolvedValue({ token: 'newtok', name: 'newname' })
     const w = mountSubsPage()

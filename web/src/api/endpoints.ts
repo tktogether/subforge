@@ -369,6 +369,9 @@ export interface Profile {
   rule_layers: string[]
   // 规则源（D-33）：方案绑定的规则源名；未绑定 = []（后端返回空数组，不是 null）。
   rule_sources: string[]
+  // 节点来源：null = 未限制（全部启用来源）；[] = 明确不使用该类来源。
+  airport_ids: number[] | null
+  self_node_ids: number[] | null
   group_layers: string[]
   rule_count: number
   group_count: number
@@ -386,6 +389,10 @@ export interface ProfileInput {
   rule_layers?: string[]
   // 规则源（D-33）：绑定到方案的规则源名；缺省 = 不改（PUT），[] = 清空。
   rule_sources?: string[]
+  // 节点来源：all_sources=true 恢复“全部启用来源”；否则按 airport_ids/self_node_ids 限制。
+  all_sources?: boolean
+  airport_ids?: number[]
+  self_node_ids?: number[]
   group_layers?: string[]
 }
 

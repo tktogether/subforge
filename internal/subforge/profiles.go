@@ -53,6 +53,15 @@ func (m *Manager) UpdateProfile(ctx context.Context, id int64, name, description
 	return m.db.UpdateProfile(ctx, id, name, description, configName, pipeline, enabled, sortOrder)
 }
 
+// SetProfileSources 保存方案使用的机场/自建节点来源；nil = 不修改该列。
+func (m *Manager) SetProfileSources(ctx context.Context, id int64, airportIDs, selfNodeIDs *[]int64) error {
+	err := m.db.SetProfileSources(ctx, id, airportIDs, selfNodeIDs)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("订阅方案 %d 不存在", id)
+	}
+	return err
+}
+
 // DeleteProfile 删除订阅方案；目标不存在时返回 sql.ErrNoRows。
 func (m *Manager) DeleteProfile(ctx context.Context, id int64) error {
 	return m.db.DeleteProfile(ctx, id)
