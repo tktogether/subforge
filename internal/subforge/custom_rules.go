@@ -71,7 +71,7 @@ func (m *Manager) ImportRulesToCustom(ctx context.Context, sourceName string, ru
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		parts := strings.Split(line, ",")
+		parts := splitRuleFields(line)
 		for j := range parts {
 			parts[j] = strings.TrimSpace(parts[j])
 		}

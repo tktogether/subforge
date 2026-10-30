@@ -180,6 +180,38 @@ func NameOf(mapping map[string]any) string {
 	return fmt.Sprint(mapping["name"])
 }
 
+// UsableNodeNames 返回可实际连接的节点名。
+// 机场常用 127.0.0.1 上的假节点展示剩余流量/到期时间，这类占位节点
+// 不应参与「分组是否覆盖全部节点」的判断。
+func UsableNodeNames(nodes []map[string]any) []string {
+	all := make([]string, 0, len(nodes))
+	usable := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		name := NameOf(n)
+		all = append(all, name)
+		if usableNode(n) {
+			usable = append(usable, name)
+		}
+	}
+	// 全是占位节点时没有可用的分母，按原样返回，避免把分组误判成空集。
+	if len(usable) == 0 {
+		return all
+	}
+	return usable
+}
+
+func usableNode(n map[string]any) bool {
+	server, ok := n["server"].(string)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(server)) {
+	case "", "127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0":
+		return false
+	}
+	return true
+}
+
 func tryBase64Blob(b []byte) ([]byte, bool) {
 	s := strings.TrimSpace(string(b))
 	// 单块 Base64（订阅常见形态）；多行 blob 不识别，避免把链接列表误判为编码内容。

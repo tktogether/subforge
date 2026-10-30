@@ -50,10 +50,7 @@ func (s *Server) importRulesToLibrary(ctx context.Context, m *subforge.Manager, 
 	}
 	if opts.CreateGroups {
 		opts.UpstreamGroups = dec.ProxyGroups
-		opts.UpstreamNodeNames = make([]string, 0, len(dec.Nodes))
-		for _, n := range dec.Nodes {
-			opts.UpstreamNodeNames = append(opts.UpstreamNodeNames, parse.NameOf(n))
-		}
+		opts.UpstreamNodeNames = parse.UsableNodeNames(dec.Nodes)
 	}
 	// 机场规则不再写 rules 表；解析规则只为按目标名补建分组。
 	opts.SkipRules = true

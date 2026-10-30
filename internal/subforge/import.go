@@ -49,6 +49,32 @@ type ImportResult struct {
 	Warnings          []string `json:"warnings"`
 }
 
+// splitRuleFields 按顶层逗号拆分规则行。
+// AND/OR/NOT 等逻辑规则的参数内部也含逗号（如 ((DST-PORT,443),(NETWORK,UDP))），
+// 直接 strings.Split 会把参数片段误当成目标分组。
+func splitRuleFields(line string) []string {
+	out := make([]string, 0, 4)
+	depth := 0
+	start := 0
+	for i, r := range line {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				out = append(out, strings.TrimSpace(line[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, strings.TrimSpace(line[start:]))
+	return out
+}
+
 // coversAllNodes 判断分组成员是否覆盖全部给定节点名。
 // 只认成员里逐字出现的节点名；成员里的子组名（如 PROXY）不展开。
 // 没有可识别节点名时返回 false，避免把只有子组引用的分组误判成节点组。
@@ -177,8 +203,14 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 			if existing, exists := existingByName[name]; exists {
 				// 同一机场刷新时更新派生的成员与「全部来源」标志；保留用户改过的
 				// 类型/测活/排序，也保留用户关掉的「包含自建」。
+				// 例外：分组从「子集」升级为「全节点」时，默认恢复完整扩展（含自建），
+				// 避免旧版本漏判留下的 all=true/self=false 半开状态。
 				if existing.Source == source {
-					if err := m.db.UpdateImportedGroupMembersFlags(ctx, existing.ID, ug.Members, existing.IncludeSelf, includeAll); err != nil {
+					includeSelf := existing.IncludeSelf
+					if includeAll && !existing.IncludeAllSources {
+						includeSelf = true
+					}
+					if err := m.db.UpdateImportedGroupMembersFlags(ctx, existing.ID, ug.Members, includeSelf, includeAll); err != nil {
 						return result, err
 					}
 				}
@@ -213,7 +245,7 @@ func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source st
 		}
 
 		originKey := NormalizeRuleOriginKey(line)
-		parts := strings.Split(line, ",")
+		parts := splitRuleFields(line)
 		for j := range parts {
 			parts[j] = strings.TrimSpace(parts[j])
 		}
