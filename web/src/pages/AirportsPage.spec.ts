@@ -58,9 +58,10 @@ function makeAirport(overrides: Record<string, unknown> = {}) {
 
 function makeCheckResult(overrides: Record<string, unknown> = {}) {
   return {
+    name: '示例机场',
     url: 'https://x.com/sub',
     ok: true,
-    latency: 123,
+    latency_ms: 123,
     bytes: 0,
     status_code: 200,
     err: '',
@@ -413,6 +414,8 @@ describe('AirportsPage', () => {
     expect(w.findAll('[data-testid="check-result-row"]').length).toBe(2)
     expect(w.text()).toContain('可用')
     expect(w.text()).toContain('不可用')
+    expect(w.text()).toContain('示例机场')
+    expect(w.text()).toContain('123 ms')
     expect(w.text()).toContain('timeout')
     w.unmount()
   })
@@ -874,7 +877,7 @@ describe('AirportsPage', () => {
     checkMock.mockResolvedValueOnce({
       results: [
         makeCheckResult({ ok: true }),
-        makeCheckResult({ url: 'https://y.com/sub', ok: false, err: 'timeout', latency: 0 }),
+        makeCheckResult({ url: 'https://y.com/sub', ok: false, err: 'timeout', latency_ms: 0 }),
       ],
     })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
@@ -892,7 +895,7 @@ describe('AirportsPage', () => {
 
   it('D-24 单机场测活同样显示汇总', async () => {
     checkMock.mockResolvedValueOnce({
-      results: [makeCheckResult({ ok: false, err: 'boom', latency: 0 })],
+      results: [makeCheckResult({ ok: false, err: 'boom', latency_ms: 0 })],
     })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()

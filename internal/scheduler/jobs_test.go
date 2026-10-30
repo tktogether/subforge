@@ -113,7 +113,10 @@ func TestSubscheckJobNameSpec(t *testing.T) {
 	if job.Spec() != DefaultSubscheckCron {
 		t.Fatalf("Spec() = %q", job.Spec())
 	}
-	job2 := NewSubscheckJob(m, nil, nil).WithSpec("*/10 * * * *")
+	job2 := NewSubscheckJob(m, nil, nil).WithSpec("*/10 * * * *").WithClient(http.DefaultClient)
+	if job2.client == nil {
+		t.Fatal("WithClient 未保存客户端")
+	}
 	if job2.Spec() != "*/10 * * * *" {
 		t.Fatalf("WithSpec Spec() = %q", job2.Spec())
 	}

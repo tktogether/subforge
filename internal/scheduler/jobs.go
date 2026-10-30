@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/tktogether/subforge/internal/fetch"
@@ -131,6 +132,7 @@ type SubscheckJob struct {
 	// 未暴露 client/config 访问器），所以该字段暂不参与探测；保留注入点是为了
 	// 将来把 fetcher 的 transport 接进来时不用改构造签名。
 	fetcher *fetch.Fetcher
+	client  *http.Client
 }
 
 // NewSubscheckJob 创建订阅测活任务，cron 默认 DefaultSubscheckCron。
@@ -144,6 +146,12 @@ func NewSubscheckJob(mgr *subforge.Manager, fetcher *fetch.Fetcher, logger *log.
 // WithSpec 覆盖 cron 表达式（链式调用）。
 func (j *SubscheckJob) WithSpec(spec string) *SubscheckJob {
 	j.spec = spec
+	return j
+}
+
+// WithClient 注入与转换链路相同的出站客户端（含 SSRF 限制）。
+func (j *SubscheckJob) WithClient(client *http.Client) *SubscheckJob {
+	j.client = client
 	return j
 }
 
@@ -172,7 +180,7 @@ func (j *SubscheckJob) Run(ctx context.Context) error {
 		j.logger.Printf("[scheduler] subscheck: 没有启用且已配置订阅地址的机场，跳过本次测活")
 		return nil
 	}
-	results := subscheck.Check(ctx, urls, subscheck.Options{})
+	results := subscheck.Check(ctx, urls, subscheck.Options{Client: j.client})
 	ok, fail := subscheck.Summary(results)
 	for _, r := range results {
 		if !r.OK {

@@ -241,7 +241,7 @@ func cmdServe(args []string) error {
 			subSpec = scheduler.DefaultSubscheckCron
 		}
 		if subSpec != "" {
-			job := scheduler.NewSubscheckJob(mgr, fetcher, log.Default()).WithSpec(subSpec)
+			job := scheduler.NewSubscheckJob(mgr, fetcher, log.Default()).WithSpec(subSpec).WithClient(safeClient)
 			if err := sch.AddJob(job); err != nil {
 				log.Printf("[serve] 注册 subscheck 任务失败: %v", err)
 			}

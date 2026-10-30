@@ -369,7 +369,7 @@ export interface ImportRulesResult {
   rule_source_name?: string; rule_source_version?: string; rule_source_rules?: number
 }
 export interface SubscheckResult {
-  url: string; ok: boolean; status_code: number; latency: number; bytes: number; err: string
+  name?: string; url: string; ok: boolean; status_code: number; latency_ms: number; bytes: number; err: string
 }
 export interface AlertChannel {
   kind: string; enabled: boolean

@@ -434,10 +434,10 @@ async function restoreLastCheck(): Promise<void> {
       </div>
       <div v-if="checkResults.length > 0" data-testid="check-results" class="airports-page__checks">
         <div v-for="res in checkResults" :key="res.url" data-testid="check-result-row" class="airports-page__check">
-          <span>{{ res.url }}</span>
+          <span :title="res.url">{{ res.name || res.url }}</span>
           <span v-if="res.ok" class="text-success">可用</span>
           <span v-else class="text-error">不可用</span>
-          <span v-if="res.ok">{{ formatDuration(res.latency) }}</span>
+          <span v-if="res.ok">{{ formatDuration(res.latency_ms ?? 0) }}</span>
           <span v-if="!res.ok && res.err !== ''" class="text-error">{{ res.err }}</span>
         </div>
       </div>
