@@ -2,10 +2,12 @@ package subforge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/store"
 )
 
@@ -22,8 +24,21 @@ type CustomImportResult struct {
 // 冲突按 (source="", origin_key) 判断：已存在时 overwrite=true 覆盖目标/参数，
 // 否则跳过。规则集引用（RULE-SET）依赖 provider 定义，当前自定义层不保存
 // provider，先拒绝并给出可见提示，避免复制出一条加载不了的规则。
-func (m *Manager) ImportRulesToCustom(ctx context.Context, rules []string, overwrite bool) (CustomImportResult, error) {
+func (m *Manager) ImportRulesToCustom(ctx context.Context, sourceName string, rules []string, overwrite bool) (CustomImportResult, error) {
 	out := CustomImportResult{Warnings: []string{}}
+	sourceProviders, _ := m.RuleSourceRuleProviders(ctx, []string{sourceName})
+	providerByName := make(map[string]model.RuleProvider, len(sourceProviders))
+	for _, p := range sourceProviders {
+		providerByName[p.Name] = p
+	}
+	customProviders := map[string]store.RuleProvider{}
+	if all, perr := m.DB().ListRuleProviders(ctx); perr == nil {
+		for _, p := range all {
+			if p.Source == "" {
+				customProviders[p.Name] = p
+			}
+		}
+	}
 	groups, err := m.ListProxyGroups(ctx)
 	if err != nil {
 		return out, err
@@ -71,9 +86,26 @@ func (m *Manager) ImportRulesToCustom(ctx context.Context, rules []string, overw
 			policy = parts[2]
 		}
 		if strings.EqualFold(typ, "RULE-SET") {
-			out.Skipped++
-			out.Warnings = append(out.Warnings, fmt.Sprintf("规则 %q 依赖规则集 provider，暂不支持复制到自定义层", line))
-			continue
+			provider, ok := providerByName[strings.TrimSpace(param)]
+			if !ok {
+				out.Skipped++
+				out.Warnings = append(out.Warnings, fmt.Sprintf("规则 %q 引用的规则集 %q 不在该源产物里，已跳过", line, param))
+				continue
+			}
+			rawJSON, merr := json.Marshal(provider.Raw)
+			if merr != nil {
+				return out, merr
+			}
+			if existing, found := customProviders[provider.Name]; found && existing.RawJSON != string(rawJSON) && !overwrite {
+				out.Skipped++
+				out.Warnings = append(out.Warnings, fmt.Sprintf("自定义层已有同名规则集 %q 且定义不同，规则 %q 已跳过；可切换覆盖或改名", provider.Name, line))
+				continue
+			}
+			if err := m.DB().UpsertRuleProvider(ctx, store.RuleProvider{
+				Name: provider.Name, RawJSON: string(rawJSON), Source: "", Enabled: true,
+			}); err != nil {
+				return out, err
+			}
 		}
 		matchKey := ruleMatchKey(typ, param)
 		if batchKeys[matchKey] {

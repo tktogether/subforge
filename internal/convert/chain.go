@@ -2,6 +2,7 @@ package convert
 
 import (
 	"github.com/tktogether/subforge/internal/config"
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/render"
 )
 
@@ -37,6 +38,8 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	// 模板层开关是调用方（API/CLI）直接赋值的结构化字段，同样不在 Raw 里。
 	p.DisableTemplateRules = base.DisableTemplateRules
 	p.DisableTemplateGroups = base.DisableTemplateGroups
+	// 规则源提供的 rule-providers 是结构化定义，原样带到渲染请求。
+	p.RuleProviders = append([]model.RuleProvider{}, base.RuleProviders...)
 	// 规则流不合并到 Rules：模板里声明的远程规则集要由 Engine 拉取后按原位置展开，
 	// 拆成行再接上来会让展开出的规则落到模板的 MATCH 之后、变成永远命中不到的死规则。
 	// 展开完成前 TemplateRules 保留，expandRemoteRulesets 会就地替换。

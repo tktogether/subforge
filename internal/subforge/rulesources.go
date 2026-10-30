@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/tktogether/subforge/internal/manifest"
+	"github.com/tktogether/subforge/internal/model"
 )
 
 // ErrRuleManifestMissing 表示规则源清单文件不存在（区别于读取/解析失败）。
@@ -638,6 +640,72 @@ func (m *Manager) RollbackRuleSource(ctx context.Context, name string) (string, 
 		return "", fmt.Errorf("回滚规则源 %s: %w", name, err)
 	}
 	return filepath.Join(dir, prev), nil
+}
+
+// RuleSourceRuleProviders 读取给定规则源当前产物里的 rule-providers 定义。
+// 规则源产物可能是原始 Clash YAML（带 rule-providers），也可能是展开后的
+// rules-only 产物（没有 provider）。同名 provider 先出现的源优先。
+func (m *Manager) RuleSourceRuleProviders(ctx context.Context, names []string) ([]model.RuleProvider, []string) {
+	ordered := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		ordered = append(ordered, n)
+	}
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	sources, err := m.ListRuleSources(ctx)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("读取规则源清单失败：%v", err)}
+	}
+	byName := make(map[string]RuleSourceStatus, len(sources))
+	for _, st := range sources {
+		byName[st.Name] = st
+	}
+	var out []model.RuleProvider
+	var warnings []string
+	seenProvider := map[string]bool{}
+	for _, name := range ordered {
+		status, ok := byName[name]
+		if !ok || strings.TrimSpace(status.Latest) == "" {
+			continue
+		}
+		versionPath := filepath.Join(status.Dir, status.Latest)
+		b, rerr := os.ReadFile(versionPath)
+		if rerr != nil {
+			warnings = append(warnings, fmt.Sprintf("读取规则源 %s 的 provider 失败：%v", name, rerr))
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(status.Latest))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		var doc struct {
+			RuleProviders map[string]map[string]any `yaml:"rule-providers"`
+		}
+		if yerr := yaml.Unmarshal(b, &doc); yerr != nil {
+			continue
+		}
+		keys := make([]string, 0, len(doc.RuleProviders))
+		for k := range doc.RuleProviders {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			key = strings.TrimSpace(key)
+			if key == "" || seenProvider[key] {
+				continue
+			}
+			seenProvider[key] = true
+			out = append(out, model.RuleProvider{Name: key, Raw: doc.RuleProviders[key]})
+		}
+	}
+	return out, warnings
 }
 
 // AirportIDFromRuleSourceName 从 airport-<id>-<label> 里取机场 id。

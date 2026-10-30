@@ -22,7 +22,7 @@ func TestRuleSourceRulesSearchAndImport(t *testing.T) {
 		"DOMAIN-SUFFIX,example.com,PROXY",
 		"IP-CIDR,1.1.1.1/32,DIRECT,no-resolve",
 		"RULE-SET,ads,REJECT",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("SaveAirportRuleSource: %v", err)
 	}

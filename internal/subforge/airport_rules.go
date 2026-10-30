@@ -10,15 +10,17 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/tktogether/subforge/internal/manifest"
+	"github.com/tktogether/subforge/internal/model"
 )
 
 // AirportRuleSourceResult 是一次机场规则源写入的结果。
 type AirportRuleSourceResult struct {
-	Name    string `json:"name"`
-	Label   string `json:"label"`
-	Version string `json:"version"`
-	Rules   int    `json:"rules"`
-	Path    string `json:"path"`
+	Name      string `json:"name"`
+	Label     string `json:"label"`
+	Version   string `json:"version"`
+	Rules     int    `json:"rules"`
+	Providers int    `json:"providers"`
+	Path      string `json:"path"`
 }
 
 // SaveAirportRuleSource 把机场订阅里的规则写成一个版本化规则源产品。
@@ -26,7 +28,7 @@ type AirportRuleSourceResult struct {
 // 机场规则不再进入 rules 表：它们和远程规则源一样有版本、当前指针和保留策略，
 // 由方案显式绑定后在订阅里内联。规则条目的目标仍是原分组名，分组由机场导入路径
 // 单独维护。
-func (m *Manager) SaveAirportRuleSource(ctx context.Context, airportName string, airportID int64, url string, rules []string) (AirportRuleSourceResult, error) {
+func (m *Manager) SaveAirportRuleSource(ctx context.Context, airportName string, airportID int64, url string, rules []string, providers []model.RuleProvider) (AirportRuleSourceResult, error) {
 	name := AirportRuleSourceName(airportName, airportID)
 	if err := m.upsertManifestSource(ctx, manifest.Source{
 		Name: name, URL: url, Type: "clash", InputFormat: "clash",
@@ -42,13 +44,21 @@ func (m *Manager) SaveAirportRuleSource(ctx context.Context, airportName string,
 		return AirportRuleSourceResult{}, err
 	}
 	ext := extForRuleSourceFormat(mf.Output.Format)
+	providerMap := make(map[string]any, len(providers))
+	for _, p := range providers {
+		providerMap[p.Name] = p.Raw
+	}
 	var content []byte
 	if ext == "txt" {
+		if len(providerMap) > 0 {
+			return AirportRuleSourceResult{}, fmt.Errorf("规则源输出格式为 text，无法保存 rule-providers；请把输出格式改为 yaml")
+		}
 		content = []byte(strings.Join(rules, "\n") + "\n")
 	} else {
 		content, err = yaml.Marshal(struct {
-			Rules []string `yaml:"rules"`
-		}{Rules: rules})
+			Rules         []string       `yaml:"rules"`
+			RuleProviders map[string]any `yaml:"rule-providers,omitempty"`
+		}{Rules: rules, RuleProviders: providerMap})
 		if err != nil {
 			return AirportRuleSourceResult{}, fmt.Errorf("序列化机场规则源 %s: %w", name, err)
 		}
@@ -61,11 +71,12 @@ func (m *Manager) SaveAirportRuleSource(ctx context.Context, airportName string,
 		return AirportRuleSourceResult{}, fmt.Errorf("记录规则源 %s 的当前版本: %w", name, err)
 	}
 	return AirportRuleSourceResult{
-		Name:    name,
-		Label:   AirportRuleSourceLabel(name),
-		Version: res.Version,
-		Rules:   len(rules),
-		Path:    res.Path,
+		Name:      name,
+		Label:     AirportRuleSourceLabel(name),
+		Version:   res.Version,
+		Rules:     len(rules),
+		Providers: len(providers),
+		Path:      res.Path,
 	}, nil
 }
 

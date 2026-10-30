@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tktogether/subforge/internal/config"
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/transform"
 )
@@ -38,6 +39,8 @@ type Params struct {
 	Groups []render.Group
 	// Rules 规则行（原样透传，如 "GEOIP,CN,DIRECT"）。
 	Rules []string
+	// RuleProviders 规则源产品里的 rule-provider 定义，随订阅一起渲染。
+	RuleProviders []model.RuleProvider
 	// List 仅输出分享链接列表。
 	List bool
 	// UDP 节点启用 udp 转发。

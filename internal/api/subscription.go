@@ -21,6 +21,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/parse"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/store"
@@ -1058,17 +1059,47 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 规则源产物里的 rule-providers：绑定源 + 已启用的自定义 provider 一起渲染，
+	// 否则 RULE-SET 规则找不到规则集。同名 provider 先出现的源优先。
+	var ruleProviders []model.RuleProvider
+	if profile != nil && len(profile.RuleSources) > 0 {
+		rp, rpWarns := m.RuleSourceRuleProviders(r.Context(), profile.RuleSources)
+		ruleProviders = append(ruleProviders, rp...)
+		sourceWarns = append(sourceWarns, rpWarns...)
+	}
+	if all, perr := m.DB().ListRuleProviders(r.Context()); perr == nil {
+		for _, p := range all {
+			if !p.Enabled || p.Source != "" {
+				continue
+			}
+			var raw map[string]any
+			if json.Unmarshal([]byte(p.RawJSON), &raw) == nil && len(raw) > 0 {
+				ruleProviders = append(ruleProviders, model.RuleProvider{Name: p.Name, Raw: raw})
+			}
+		}
+	}
+	uniqueProviders := make([]model.RuleProvider, 0, len(ruleProviders))
+	seenProvider := map[string]bool{}
+	for _, p := range ruleProviders {
+		if p.Name == "" || seenProvider[p.Name] {
+			continue
+		}
+		seenProvider[p.Name] = true
+		uniqueProviders = append(uniqueProviders, p)
+	}
+
 	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
 	params := convert.Params{
-		Target:   target,
-		URLs:     urls,
-		Files:    selfNodeFiles,
-		Groups:   renderGroups,
-		Rules:    renderRules,
-		Pipeline: pipeline,
-		Config:   configName,
-		Include:  includeList,
-		Exclude:  excludeList,
+		Target:        target,
+		URLs:          urls,
+		Files:         selfNodeFiles,
+		Groups:        renderGroups,
+		Rules:         renderRules,
+		RuleProviders: uniqueProviders,
+		Pipeline:      pipeline,
+		Config:        configName,
+		Include:       includeList,
+		Exclude:       excludeList,
 		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
 		// 规则源产物注入后模板规则必须整层停用，否则产物规则排在模板 MATCH 之后全成死规则。
 		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,

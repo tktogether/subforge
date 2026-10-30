@@ -210,11 +210,12 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 	groups := ResolveGroups(eff.Groups, nodes.Names())
 	body, err := renderer.Render(render.Request{
-		Nodes:     nodes,
-		Groups:    groups,
-		Rules:     eff.Rules,
-		Providers: providers,
-		Profile:   profile,
+		Nodes:         nodes,
+		Groups:        groups,
+		Rules:         eff.Rules,
+		Providers:     providers,
+		RuleProviders: p.RuleProviders,
+		Profile:       profile,
 	})
 	if err != nil {
 		return Result{}, err

@@ -62,7 +62,7 @@ func (s *Server) importRulesToLibrary(ctx context.Context, m *subforge.Manager, 
 		return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusInternalServerError, fmt.Errorf("导入失败: %w", err)}
 	}
 	if len(dec.Rules) > 0 {
-		src, serr := m.SaveAirportRuleSource(ctx, a.Name, a.ID, a.SubscriptionURL, dec.Rules)
+		src, serr := m.SaveAirportRuleSource(ctx, a.Name, a.ID, a.SubscriptionURL, dec.Rules, dec.RuleProviders)
 		if serr != nil {
 			return subforge.ImportResult{Warnings: []string{}}, []string{}, &importHTTPError{http.StatusInternalServerError, fmt.Errorf("保存机场规则源失败: %w", serr)}
 		}

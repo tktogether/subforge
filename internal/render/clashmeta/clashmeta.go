@@ -185,6 +185,13 @@ func (r *Renderer) Render(req render.Request) ([]byte, error) {
 		}
 		add("proxy-providers", providers)
 	}
+	if len(req.RuleProviders) > 0 {
+		providers, err := r.ruleProvidersNode(req.RuleProviders)
+		if err != nil {
+			return nil, err
+		}
+		add("rule-providers", providers)
+	}
 	groupsNode, err := r.groupsNode(groups)
 	if err != nil {
 		return nil, err
@@ -263,6 +270,19 @@ func (r *Renderer) proxiesNode(raws []map[string]any) (yaml.Node, error) {
 // providersNode 把透传的 provider 定义渲染成映射（provider 名 -> 配置）。
 // provider 名按字典序输出，配置内的键同样排序，保证产物确定性。
 func (r *Renderer) providersNode(providers []model.Provider) (yaml.Node, error) {
+	entries := make([]any, 0, len(providers)*2)
+	for _, p := range providers {
+		cfg, err := rawMappingNode(p.Raw)
+		if err != nil {
+			return yaml.Node{}, err
+		}
+		entries = append(entries, p.Name, cfg)
+	}
+	return render.MappingNode(entries...)
+}
+
+// ruleProvidersNode 把规则源产物里的 rule-provider 定义渲染成映射。
+func (r *Renderer) ruleProvidersNode(providers []model.RuleProvider) (yaml.Node, error) {
 	entries := make([]any, 0, len(providers)*2)
 	for _, p := range providers {
 		cfg, err := rawMappingNode(p.Raw)

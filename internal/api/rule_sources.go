@@ -189,7 +189,7 @@ func (s *Server) handleAPIRuleSourceImport(w http.ResponseWriter, r *http.Reques
 		s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("规则源 %q 不存在", req.Name))
 		return
 	}
-	res, err := m.ImportRulesToCustom(r.Context(), req.Rules, strings.EqualFold(strings.TrimSpace(req.Conflict), "overwrite"))
+	res, err := m.ImportRulesToCustom(r.Context(), req.Name, req.Rules, strings.EqualFold(strings.TrimSpace(req.Conflict), "overwrite"))
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
