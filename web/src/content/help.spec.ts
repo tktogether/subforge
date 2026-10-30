@@ -140,7 +140,7 @@ describe('FAILURE_HELP / ON_ERROR_HELP', () => {
 })
 
 describe('文案与现实行为一致（W7M）', () => {
-  it('规则源不承诺 INI 模板，并说明落盘扩展名由清单 output.format 决定', () => {
+  it('规则源支持 INI 输入，并说明落盘扩展名由清单 output.format 决定', () => {
     const h = PAGE_HELP['rule-sources']
     const text = [
       h.oneLiner,
@@ -150,8 +150,8 @@ describe('文案与现实行为一致（W7M）', () => {
       ...(h.concepts ?? []).map((c) => c.term + c.explain),
     ].join('\n')
     expect(text).toContain('output.format')
-    expect(text).toContain('不含 INI 模板')
-    expect(text).not.toContain('支持 INI')
+    expect(text).toContain('input_format=ini')
+    expect(text).not.toContain('不含 INI 模板')
   })
   it('订阅页 faq 讲清令牌用途与可复用性', () => {
     const faq = PAGE_HELP.subscriptions.faq ?? []

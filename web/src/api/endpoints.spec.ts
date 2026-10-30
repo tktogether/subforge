@@ -589,20 +589,6 @@ it('listScripts 解包 .scripts', async () => {
     expect(JSON.parse(call[1].body as string)).toEqual({ index: 0 })
   })
 
-  it('initRuleManifest() POST /api/rule-sources/init', async () => {
-    fetchMock.mockResolvedValue(respond({ path: '/m', created: true }))
-    const r = await endpoints.initRuleManifest()
-    expect(r.created).toBe(true)
-    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/init', expect.objectContaining({ method: 'POST' }))
-  })
-
-  it('initRuleManifest(true) POST /api/rule-sources/init?force=1', async () => {
-    fetchMock.mockResolvedValue(respond({ path: '/m', created: false }))
-    await endpoints.initRuleManifest(true)
-    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/init?force=1', expect.objectContaining({ method: 'POST' }))
-  })
-
-
   it('createPipeline(body) → POST /api/pipelines 解出 pipeline', async () => {
     const body = { name: 'p', description: 'd', steps: [{ op: 'op.sort' }], enabled: true }
     fetchMock.mockResolvedValue(respond({ pipeline: { id: 1, name: 'p', description: 'd', steps_json: '[]', enabled: true, sort_order: 0, source: 'ui', read_only: false } }))

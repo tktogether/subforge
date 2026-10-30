@@ -19,10 +19,6 @@ const defaultManifestPath = ref('')
 const outputDir = ref('')
 const exists = ref(false)
 const hint = ref('')
-const manifestTemplate = ref('')
-
-const initDialog = ref(false)
-const initForce = ref(false)
 
 const rollbackDialog = ref(false)
 const rollbackName = ref('')
@@ -63,43 +59,12 @@ async function load(): Promise<void> {
     outputDir.value = r.output_dir ?? ''
     exists.value = r.exists ?? false
     hint.value = r.hint ?? ''
-    manifestTemplate.value = r.manifest_template ?? ''
     sources.value = r.sources ?? []
   } catch (err) {
     error.value = errorMessage(err)
   } finally {
     loading.value = false
   }
-}
-
-function openInit(): void {
-  if (exists.value) {
-    initForce.value = true
-    initDialog.value = true
-  } else {
-    void doInit(false)
-  }
-}
-
-async function doInit(force: boolean): Promise<void> {
-  try {
-    const r = await endpoints.initRuleManifest(force)
-    notify('已生成: ' + r.path + (r.created ? '（新建）' : '（覆盖）'), 'ok')
-    initDialog.value = false
-    initForce.value = false
-    await load()
-  } catch (err) {
-    notify(errorMessage(err), 'error')
-  }
-}
-
-async function confirmInit(): Promise<void> {
-  await doInit(true)
-}
-
-function cancelInit(): void {
-  initDialog.value = false
-  initForce.value = false
 }
 
 async function updateAll(): Promise<void> {
@@ -265,11 +230,8 @@ onMounted(() => {
 <template>
   <PageHeader title="规则源" :subtitle="help.oneLiner" help-key="rule-sources">
     <template #actions>
-      <v-btn data-testid="init-manifest" :color="exists ? undefined : 'primary'" variant="tonal" @click="openInit">
-        生成默认清单
-      </v-btn>
       <v-btn data-testid="update-all" variant="tonal" :loading="updatingAll" :disabled="updating" @click="updateAll">全部更新</v-btn>
-      <v-btn data-testid="source-add" variant="tonal" @click="openAdd">新增规则源</v-btn>
+      <v-btn data-testid="source-add" color="primary" variant="tonal" @click="openAdd">新增规则源</v-btn>
     </template>
   </PageHeader>
 
@@ -357,21 +319,6 @@ onMounted(() => {
       </v-card>
     </div>
   </AsyncSection>
-
-  <!-- Init confirm dialog -->
-  <v-dialog v-model="initDialog" max-width="480">
-    <v-card>
-      <v-card-title>覆盖现有清单？</v-card-title>
-      <v-card-text>
-        会覆盖现有 manifest.yaml，旧文件备份为 {{ manifestPath }}.bak
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="cancelInit">取消</v-btn>
-        <v-btn color="primary" @click="confirmInit">确认覆盖</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
 
   <!-- Rollback confirm dialog -->
   <v-dialog v-model="rollbackDialog" max-width="480">

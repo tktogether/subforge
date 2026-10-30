@@ -11,20 +11,31 @@ import (
 
 // AddRuleSource 追加一个规则源并写回 manifest，返回 (清单路径, 是否新建, 错误)。
 // name 为空时从 URL 推导；重名返回错误（消息含「已存在」）。
+//
+// 清单不存在时自动创建一份只含本次来源的最小清单，不再要求用户先点“生成默认清单”。
 func (m *Manager) AddRuleSource(ctx context.Context, src manifest.Source) (string, bool, error) {
 	path, err := m.ResolveRuleManifestPath(ctx)
 	if err != nil {
 		return "", false, err
 	}
-	if _, statErr := os.Stat(path); statErr != nil {
-		return "", false, fmt.Errorf("规则源清单不存在，请先生成默认清单: %s", path)
-	}
 	if strings.TrimSpace(src.URL) == "" {
 		return "", false, fmt.Errorf("url 不能为空")
 	}
-	mf, err := manifest.LoadManifestRaw(path)
-	if err != nil {
-		return "", false, fmt.Errorf("读取规则源清单 %s: %w", path, err)
+	mf := &manifest.Manifest{
+		Output: manifest.Output{Format: "clash-meta", Path: "./rules"},
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		loaded, lerr := manifest.LoadManifestRaw(path)
+		if lerr != nil {
+			return "", false, fmt.Errorf("读取规则源清单 %s: %w", path, lerr)
+		}
+		mf = loaded
+	}
+	if strings.TrimSpace(mf.Output.Format) == "" {
+		mf.Output.Format = "clash-meta"
+	}
+	if strings.TrimSpace(mf.Output.Path) == "" {
+		mf.Output.Path = "./rules"
 	}
 	name := strings.TrimSpace(src.Name)
 	if name == "" {

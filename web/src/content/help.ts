@@ -175,27 +175,28 @@ export const PAGE_HELP: Record<string, PageHelp> = {
   'rule-sources': {
     page: 'rule-sources',
     title: '规则源',
-    oneLiner: '把社区维护的分流规则集拉到本地、定时更新、可回滚；先「生成默认清单」再「全部更新」即可用。',
-    whenToUse: '想用 ACL4SSR、blackmatrix7 等社区规则文件、不想手写规则时；规则源只认规则文件，不含 INI 模板。',
+    oneLiner: '把社区维护的分流规则集拉到本地、定时更新、可回滚；点「新增规则源」即可开始，首次会自动创建清单。',
+    whenToUse: '想用 ACL4SSR、blackmatrix7 等社区规则文件、不想手写规则时；规则源支持规则文件与 INI ruleset（input_format=ini）。',
     steps: [
-      { title: '生成默认清单', detail: '首次使用点「生成默认清单」，会创建包含推荐规则源的清单文件。' },
+      { title: '新增规则源', detail: '点「新增规则源」填 URL；首次新增会自动创建 manifest 并写入路径，不需要先生成默认清单。' },
       { title: '全部更新', detail: '把每个规则源的最新版本拉到本地，每个源保留最近 5 个版本，可随时回滚。' },
-      { title: '去规则页引用', detail: '规则集落盘后，在「规则」页把它们挂进分组；「生成 MRS」按钮可为 mihomo 产出二进制规则集。' },
+      { title: '去方案绑定', detail: '在「方案」页绑定规则源；产物会内联进订阅。规则页只负责查看/启用规则，不是规则源的引用入口。' },
     ],
     faq: [
       { q: '上游挂了规则集会变空吗？', a: '不会。单个规则源更新失败时该源保留上一版本，产物不受影响；每个源保留最近 5 个版本，失败原因会逐行显示。' },
-      { q: '规则源里为什么没有 INI 模板？', a: '规则源只负责拉取规则文件，不做 INI 解析；落盘扩展名由清单里的 output.format 决定：clash-meta → .yaml，clash-json / sing-box → .json，mrs → .mrs，text → .txt。INI 是转换配置模板，在「设置」页管理。' },
+      { q: '规则源支持 INI 吗？', a: '支持。input_format=ini 或 auto 命中 INI 时，会先展开 ruleset 再按 output.format 落盘；落盘扩展名：clash-meta → .yaml，clash-json / sing-box → .json，mrs → .mrs，text → .txt。' },
+      { q: 'INI 转换模板在哪里管理？', a: 'INI 转换模板（不是规则源）通过启动参数 -config / 配置文件维护；控制台暂不提供模板编辑器。' },
     ],
     concepts: [
       { term: '规则源', explain: '外部规则文件的 URL（如 ACL4SSR、blackmatrix7），SubForge 定期拉取并按清单里的 output.format 落盘。' },
-      { term: '落盘格式', explain: '规则源文件按清单 output.format 落盘：clash-meta → .yaml，clash-json / sing-box → .json，mrs → .mrs，text → .txt；SubForge 不解析 INI 模板。' },
-      { term: '规则源与规则的关系', explain: '规则源页只负责「下载与版本管理」；真正决定流量走向的是「规则」页里引用这些文件的那几行。' },
+      { term: '落盘格式', explain: '规则源文件按清单 output.format 落盘：clash-meta → .yaml，clash-json / sing-box → .json，mrs → .mrs，text → .txt；INI 输入会先展开 ruleset。' },
+      { term: '规则源与规则的关系', explain: '规则源页只负责「下载与版本管理」；在「方案」页绑定后，产物规则会内联进订阅。' },
       { term: 'MRS', explain: 'Meta Rule Set，mihomo（Clash.Meta）的二进制规则集格式，体积小、加载快；sing-box 用的是另一种 .srs 格式。' },
     ],
-    emptyState: { title: '还没有规则源清单', detail: '点击「生成默认清单」在本机创建模板，或在设置页修改路径。', action: { label: '生成默认清单', to: '/rule-sources' } },
+    emptyState: { title: '还没有规则源', detail: '点右上角「新增规则源」即可；首次新增会自动创建清单并写入路径。' },
     links: [
       { label: '设置', to: '/settings', note: '修改清单路径' },
-      { label: '规则', to: '/rules', note: '把规则集挂进分流' },
+      { label: '方案', to: '/profiles', note: '把规则源绑定到订阅方案' },
     ],
   },
   groups: {

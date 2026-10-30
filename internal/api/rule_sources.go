@@ -52,7 +52,7 @@ func (s *Server) handleAPIRuleSources(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, statErr := os.Stat(manifestPath); statErr != nil {
 		resp["exists"] = false
-		resp["hint"] = "未找到规则源清单文件，可点击「生成默认清单」在本机创建一份模板，或在上方设置里改路径。"
+		resp["hint"] = "未找到规则源清单文件。首次新增规则源时会自动创建；也可以在上方设置里改路径。"
 	} else {
 		resp["exists"] = true
 	}

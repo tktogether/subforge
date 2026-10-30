@@ -10,7 +10,6 @@ import { PAGE_HELP } from '../content/help'
 vi.mock('../api/endpoints', () => ({
   endpoints: {
     listRuleSources: vi.fn(),
-    initRuleManifest: vi.fn(),
     updateRuleSources: vi.fn(),
     rollbackRuleSource: vi.fn(),
     generateMRS: vi.fn(),
@@ -24,7 +23,6 @@ vi.mock('../api/endpoints', () => ({
 const vuetify = createVuetify({ components, directives })
 
 const listMock = endpoints.listRuleSources as unknown as ReturnType<typeof vi.fn>
-const initMock = endpoints.initRuleManifest as unknown as ReturnType<typeof vi.fn>
 const updateMock = endpoints.updateRuleSources as unknown as ReturnType<typeof vi.fn>
 const rollbackMock = endpoints.rollbackRuleSource as unknown as ReturnType<typeof vi.fn>
 const mrsMock = endpoints.generateMRS as unknown as ReturnType<typeof vi.fn>
@@ -57,7 +55,6 @@ describe('RuleSourcesPage', () => {
     vi.clearAllMocks()
     Object.defineProperty(window, 'visualViewport', { value: { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() }, writable: true, configurable: true })
     listMock.mockResolvedValue(makeManifest())
-    initMock.mockResolvedValue({ path: '/m/manifest.yaml', created: true })
     updateMock.mockResolvedValue({ results: [] })
     rollbackMock.mockResolvedValue({ path: '/rb/v1' })
     mrsMock.mockResolvedValue({ path: '/d/v2.mrs', bytes: 1024 })
@@ -93,7 +90,7 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
-  it('未配置清单：200 渲染、空列表、hint 可见、生成按钮为主按钮', async () => {
+  it('未配置清单：不显示生成按钮，新增规则源是主入口', async () => {
     listMock.mockResolvedValue(makeManifest({ exists: false, sources: [], hint: '未配置清单', manifest_path: '' }))
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
@@ -101,7 +98,12 @@ describe('RuleSourcesPage', () => {
     expect(w.find('[data-testid="manifest-hint"]').text()).toContain('未配置清单')
     expect(w.find('[data-testid="manifest-exists"]').exists()).toBe(false)
     expect(w.find('[data-testid="empty-state"]').exists()).toBe(true)
-    expect(w.find('[data-testid="init-manifest"]').classes().join(' ')).toContain('primary')
+    expect(w.find('[data-testid="init-manifest"]').exists()).toBe(false)
+    const add = w.find('[data-testid="source-add"]')
+    expect(add.exists()).toBe(true)
+    expect(add.classes().join(' ')).toContain('primary')
+    await add.trigger('click')
+    expect((w.vm as any).addDialog).toBe(true)
     w.unmount()
   })
 
@@ -113,51 +115,6 @@ describe('RuleSourcesPage', () => {
     const headers = w.findAll('th').map((th) => th.text())
     expect(headers).toContain('当前版本')
     expect(headers).not.toContain('最新版本')
-    w.unmount()
-  })
-
-  it('点击生成默认清单（未存在）直接调用 init', async () => {
-    listMock.mockResolvedValue(makeManifest({ exists: false, sources: [], hint: 'h' }))
-    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    await w.find('[data-testid="init-manifest"]').trigger('click')
-    await flushPromises()
-    expect(initMock).toHaveBeenCalledWith(false)
-    expect(listMock).toHaveBeenCalledTimes(2)
-    w.unmount()
-  })
-
-  it('已存在时点击生成打开确认对话框，确认后 force=true', async () => {
-    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    await w.find('[data-testid="init-manifest"]').trigger('click')
-    await flushPromises()
-    expect((w.vm as any).initDialog).toBe(true)
-    ;(w.vm as any).initForce = true
-    await (w.vm as any).confirmInit()
-    await flushPromises()
-    expect(initMock).toHaveBeenCalledWith(true)
-    w.unmount()
-  })
-
-  it('取消初始化对话框', async () => {
-    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    ;(w.vm as any).initDialog = true
-    await (w.vm as any).cancelInit()
-    await flushPromises()
-    expect((w.vm as any).initDialog).toBe(false)
-    w.unmount()
-  })
-
-  it('初始化失败 notify', async () => {
-    listMock.mockResolvedValue(makeManifest({ exists: false, sources: [], hint: 'h' }))
-    initMock.mockRejectedValueOnce(new Error('initerr'))
-    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    await w.find('[data-testid="init-manifest"]').trigger('click')
-    await flushPromises()
-    expect(initMock).toHaveBeenCalled()
     w.unmount()
   })
 
@@ -501,16 +458,6 @@ describe('RuleSourcesPage', () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     expect(w.text()).toContain('/m/manifest.yaml')
-    w.unmount()
-  })
-
-  it('coverage: init created=false branch', async () => {
-    initMock.mockResolvedValueOnce({ path: '/m/manifest.yaml', created: false })
-    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const btn = w.find('[data-testid="init-manifest"]')
-    await btn.trigger('click')
-    await flushPromises()
     w.unmount()
   })
 

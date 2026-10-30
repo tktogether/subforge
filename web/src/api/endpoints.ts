@@ -511,9 +511,6 @@ export const endpoints = {
   createProfile: (body: ProfileInput): Promise<Profile> => api.post<{ profile: Profile }>('/api/profiles', body).then((r) => r.profile),
   updateProfile: (id: number, body: ProfileInput): Promise<Profile> => api.put<{ profile: Profile }>('/api/profiles/' + id, body).then((r) => r.profile),
   deleteProfile: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/profiles/' + id),
-
-  initRuleManifest: (force = false): Promise<{ path: string; created: boolean }> =>
-    api.post<{ path: string; created: boolean }>('/api/rule-sources/init', {}, force ? { query: { force: 1 } } : undefined),
 }
 
 export function subscribeUrl(origin: string, token: string): string {
