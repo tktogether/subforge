@@ -571,10 +571,10 @@ export const endpoints = {
     api.post<{ result: TrafficRefreshResult }>('/api/airports/' + id + '/refresh', {}),
   importAirportRules: (id: number | string, body?: { create_groups?: boolean }): Promise<ImportRulesResult> =>
     api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', body ?? {}),
-  checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[] }> =>
-    api.post<{ results: SubscheckResult[] }>('/api/airports/check', ids === undefined ? {} : { ids }),
-  lastAirportCheck: (): Promise<{ results: SubscheckResult[]; at?: number }> =>
-    api.get<{ results: SubscheckResult[]; at?: number }>('/api/airports/check/last'),
+  checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[]; at?: string }> =>
+    api.post<{ results: SubscheckResult[]; at?: string }>('/api/airports/check', ids === undefined ? {} : { ids }),
+  lastAirportCheck: (): Promise<{ results: SubscheckResult[]; at?: string }> =>
+    api.get<{ results: SubscheckResult[]; at?: string }>('/api/airports/check/last'),
 
   getTrafficStrategy: (): Promise<{ strategy: TrafficStrategy }> =>
     api.get<{ strategy: TrafficStrategy }>('/api/traffic/strategy'),

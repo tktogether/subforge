@@ -873,8 +873,9 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('D-24 检测全部后显示「检测完成」汇总', async () => {
+  it('D-24 检测全部后显示结果摘要', async () => {
     checkMock.mockResolvedValueOnce({
+      at: '2026-10-30T13:00:00Z',
       results: [
         makeCheckResult({ ok: true }),
         makeCheckResult({ url: 'https://y.com/sub', ok: false, err: 'timeout', latency_ms: 0 }),
@@ -886,10 +887,10 @@ describe('AirportsPage', () => {
     await flushPromises()
     const el = w.find('[data-testid="check-summary"]')
     expect(el.exists()).toBe(true)
-    expect(el.text()).toContain('检测完成')
-    expect(el.text()).toContain('1 个可用')
-    expect(el.text()).toContain('1 个失败')
-    expect(el.text()).toContain('共 2 个')
+    expect(el.text()).toContain('可用 1')
+    expect(el.text()).toContain('不可用 1')
+    expect(el.text()).toContain('共 2')
+    expect(w.text()).toContain('检测时间')
     w.unmount()
   })
 
@@ -901,12 +902,13 @@ describe('AirportsPage', () => {
     await flushPromises()
     await w.find('[data-testid="check-one"]').trigger('click')
     await flushPromises()
-    expect(w.find('[data-testid="check-summary"]').text()).toContain('检测完成：0 个可用 / 1 个失败（共 1 个）')
+    expect(w.find('[data-testid="check-summary"]').text()).toContain('不可用 1')
     w.unmount()
   })
 
   it('D-24 测活请求失败时只显示错误，不显示汇总', async () => {
     checkMock.mockRejectedValueOnce(new Error('check boom'))
+    lastCheckMock.mockResolvedValueOnce({ results: [] })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     await w.find('[data-testid="check-all"]').trigger('click')
@@ -982,4 +984,14 @@ describe('AirportsPage 覆盖率补齐（导入弹窗）', () => {
     expect(importMock).not.toHaveBeenCalled()
     w.unmount()
   })
+
+
+  it('检测时间非法时原样显示', async () => {
+    lastCheckMock.mockResolvedValueOnce({ results: [] })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect((w.vm as any).formatCheckAt('bad-time')).toBe('bad-time')
+    w.unmount()
+  })
+
 })

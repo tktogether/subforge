@@ -119,7 +119,12 @@ const refreshResults = ref<import('../api/endpoints').TrafficRefreshResult[]>([]
 const checking = ref(false)
 const checkResults = ref<SubscheckResult[]>([])
 const checkError = ref('')
-const checkSummary = ref<{ ok: number; fail: number; total: number } | null>(null)
+const checkAt = ref('')
+const checkSummary = computed(() => {
+  const total = checkResults.value.length
+  const ok = checkResults.value.filter((r) => r.ok).length
+  return { ok, fail: total - ok, total }
+})
 
 async function load(): Promise<void> {
   loading.value = true
@@ -248,13 +253,10 @@ async function checkAll(): Promise<void> {
 async function runCheck(ids?: number[]): Promise<void> {
   checking.value = true
   checkError.value = ''
-  checkSummary.value = null
   try {
     const r = await endpoints.checkAirports(ids)
     checkResults.value = r.results
-    // D-24：测活结束后给出结论（全部测活与单机场测活都显示）。
-    const ok = r.results.filter((x) => x.ok).length
-    checkSummary.value = { ok, fail: r.results.length - ok, total: r.results.length }
+    checkAt.value = r.at ?? ''
   } catch (err) {
     checkError.value = errorMessage(err)
   } finally {
@@ -291,6 +293,11 @@ function expireText(row: AirportRow): string {
   return formatExpire(row.expire)
 }
 
+function formatCheckAt(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false })
+}
+
 function relativeTime(ts: number): string {
   const diffMs = Date.now() - ts * 1000
   const minutes = Math.max(0, Math.floor(diffMs / 60000))
@@ -314,6 +321,7 @@ async function restoreLastCheck(): Promise<void> {
   try {
     const r = await endpoints.lastAirportCheck()
     checkResults.value = r.results
+    checkAt.value = r.at ?? ''
   } catch {
     // 恢复失败保持静默
   }
@@ -429,18 +437,39 @@ async function restoreLastCheck(): Promise<void> {
       </div>
 
       <div v-if="checkError !== ''" data-testid="check-error" class="text-error">{{ checkError }}</div>
-      <div v-if="checkSummary !== null" data-testid="check-summary" class="airports-page__summary">
-        检测完成：{{ checkSummary.ok }} 个可用 / {{ checkSummary.fail }} 个失败（共 {{ checkSummary.total }} 个）
-      </div>
-      <div v-if="checkResults.length > 0" data-testid="check-results" class="airports-page__checks">
-        <div v-for="res in checkResults" :key="res.url" data-testid="check-result-row" class="airports-page__check">
-          <span :title="res.url">{{ res.name || res.url }}</span>
-          <span v-if="res.ok" class="text-success">可用</span>
-          <span v-else class="text-error">不可用</span>
-          <span v-if="res.ok">{{ formatDuration(res.latency_ms ?? 0) }}</span>
-          <span v-if="!res.ok && res.err !== ''" class="text-error">{{ res.err }}</span>
+      <section v-if="checkResults.length > 0" data-testid="check-results" class="check-panel" aria-live="polite">
+        <header class="check-panel__head">
+          <div>
+            <div class="check-panel__title">可用性检测结果</div>
+            <div v-if="checkAt !== ''" class="check-panel__time">检测时间：{{ formatCheckAt(checkAt) }}</div>
+          </div>
+          <div data-testid="check-summary" class="check-panel__stats">
+            <span class="check-stat check-stat--ok"><span class="check-stat__dot"></span>可用 {{ checkSummary.ok }}</span>
+            <span class="check-stat check-stat--fail"><span class="check-stat__dot"></span>不可用 {{ checkSummary.fail }}</span>
+            <span class="check-stat">共 {{ checkSummary.total }}</span>
+          </div>
+        </header>
+        <div class="check-list">
+          <div
+            v-for="(res, index) in checkResults"
+            :key="res.url + '-' + index"
+            data-testid="check-result-row"
+            class="check-item"
+            :class="res.ok ? 'check-item--ok' : 'check-item--fail'"
+          >
+            <div class="check-item__line">
+              <span class="check-item__status"><span class="check-stat__dot"></span>{{ res.ok ? '可用' : '不可用' }}</span>
+              <span class="check-item__name" :title="res.url">{{ res.name || res.url }}</span>
+              <span class="check-item__meta">
+                <template v-if="res.ok">HTTP {{ res.status_code }} · {{ formatDuration(res.latency_ms ?? 0) }}</template>
+                <template v-else-if="res.status_code > 0">HTTP {{ res.status_code }}</template>
+                <template v-else>连接失败</template>
+              </span>
+            </div>
+            <div v-if="!res.ok && res.err !== ''" class="check-item__error" :title="res.err">{{ res.err }}</div>
+          </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <v-dialog v-model="dialog" max-width="520">
@@ -496,6 +525,128 @@ async function restoreLastCheck(): Promise<void> {
 
 
 <style scoped>
+/* 可用性检测结果：摘要 + 条目列表，避免裸文本堆叠 */
+.check-panel {
+  margin-top: 16px;
+  border: 1px solid var(--sf-border);
+  border-radius: 10px;
+  background: var(--sf-surface);
+  box-shadow: var(--sf-shadow);
+  overflow: hidden;
+}
+.check-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--sf-border);
+  background: var(--sf-surface-raised);
+}
+.check-panel__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sf-text);
+}
+.check-panel__time {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+.check-panel__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.check-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--sf-border);
+  border-radius: 999px;
+  background: var(--sf-surface);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.check-stat--ok {
+  color: var(--sf-ok);
+}
+.check-stat--fail {
+  color: var(--sf-danger);
+}
+.check-stat__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.check-list {
+  display: flex;
+  flex-direction: column;
+}
+.check-item {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sf-border);
+}
+.check-item:last-child {
+  border-bottom: 0;
+}
+.check-item--ok {
+  border-left: 3px solid var(--sf-ok);
+}
+.check-item--fail {
+  border-left: 3px solid var(--sf-danger);
+}
+.check-item__line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.check-item__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 54px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.check-item--ok .check-item__status {
+  color: var(--sf-ok);
+}
+.check-item--fail .check-item__status {
+  color: var(--sf-danger);
+}
+.check-item__name {
+  flex: 1 1 180px;
+  min-width: 0;
+  color: var(--sf-text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.check-item__meta {
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.check-item__error {
+  display: -webkit-box;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--sf-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .airports-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
