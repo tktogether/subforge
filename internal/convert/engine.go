@@ -133,9 +133,11 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	var (
 		list        model.NodeList
 		failures    []string
+		sourceWarns []string
 		cached      []bool
 		providers   []model.Provider
 		fileSources = map[string]bool{}
+		rawNodes    int
 	)
 	// provider 按名去重：多个来源可能带同名 provider，首次出现的定义优先。
 	seenProvider := map[string]bool{}
@@ -148,41 +150,74 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 			providers = append(providers, p)
 		}
 	}
-	for _, raw := range p.URLs {
-		u := strings.TrimSpace(raw)
-		if u == "" {
+
+	// 来源级处理：每个来源先各自拉取/解析并跑自己的管线，再按顺序合并。
+	// 这样机场 A 的改名、机场 B 的过滤不会互相污染；最终 plan 再对合并结果处理一次。
+	for _, unit := range p.sourceUnits() {
+		label := sourceUnitLabel(unit)
+		var unitList model.NodeList
+		for _, raw := range unit.URLs {
+			u := strings.TrimSpace(raw)
+			if u == "" {
+				continue
+			}
+			name := sourceName(u)
+			res := e.Fetcher.FetchFrom(ctx, fetch.Source{Name: name, URL: u, Auth: p.Headers})
+			if res.Err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", label, res.Err))
+				continue
+			}
+			dec, err := parse.DecodeSource(res.Content)
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+				continue
+			}
+			unitList = append(unitList, model.NewNodeList(dec.Nodes, name)...)
+			collectProviders(dec.Providers)
+			cached = append(cached, res.FromCache)
+		}
+		for _, f := range unit.Files {
+			buf, err := os.ReadFile(f)
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+				continue
+			}
+			dec, err := parse.DecodeSource(buf)
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+				continue
+			}
+			base := filepath.Base(f)
+			fileSources[base] = true
+			unitList = append(unitList, model.NewNodeList(dec.Nodes, base)...)
+			collectProviders(dec.Providers)
+		}
+
+		if unitList.IsEmpty() {
 			continue
 		}
-		name := sourceName(u)
-		res := e.Fetcher.FetchFrom(ctx, fetch.Source{Name: name, URL: u, Auth: p.Headers})
-		if res.Err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", u, res.Err))
-			continue
+		rawNodes += unitList.Len()
+
+		if pipeline := strings.TrimSpace(unit.Pipeline); pipeline != "" {
+			sourcePlan, perr := BuildPlanWithResolver(Params{Pipeline: pipeline, Pipelines: eff.Pipelines}, e.ScriptResolver)
+			if perr != nil {
+				failures = append(failures, fmt.Sprintf("%s: 处理管线 %q 无法使用: %v", label, pipeline, perr))
+				continue
+			}
+			pres, rerr := sourcePlan.Run(unitList)
+			if rerr != nil {
+				failures = append(failures, fmt.Sprintf("%s: 处理失败: %v", label, rerr))
+				continue
+			}
+			sourceWarns = append(sourceWarns, pres.Warnings...)
+			unitList = pres.Nodes
+			if unitList.IsEmpty() {
+				sourceWarns = append(sourceWarns, fmt.Sprintf("来源 %s 处理后没有节点", label))
+				continue
+			}
 		}
-		dec, err := parse.DecodeSource(res.Content)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", u, err))
-			continue
-		}
-		list = append(list, model.NewNodeList(dec.Nodes, name)...)
-		collectProviders(dec.Providers)
-		cached = append(cached, res.FromCache)
-	}
-	for _, f := range p.Files {
-		buf, err := os.ReadFile(f)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", f, err))
-			continue
-		}
-		dec, err := parse.DecodeSource(buf)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", f, err))
-			continue
-		}
-		base := filepath.Base(f)
-		fileSources[base] = true
-		list = append(list, model.NewNodeList(dec.Nodes, base)...)
-		collectProviders(dec.Providers)
+
+		list = append(list, unitList...)
 	}
 
 	if list.IsEmpty() {
@@ -193,7 +228,6 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		return Result{}, ErrNoNodes
 	}
 
-	rawNodes := list.Len()
 	// 节点级覆盖（server/port）在这里落到原始节点上，早于管线：去重按指纹、
 	// 排序键也可能用 server，都该看到覆盖后的值。匹配不到节点的覆盖记入告警——
 	// 写错名字的覆盖应当被看见，而不是静默失效。
@@ -238,15 +272,48 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	if wr, ok := renderer.(render.WarningReporter); ok {
 		result.Warnings = wr.Warnings()
 	}
-	if len(eff.TemplateWarnings) > 0 || len(planRes.Warnings) > 0 || len(overrideWarns) > 0 {
-		// 模板提示与管线告警排在渲染阶段提示前面：模板层面的漏配比单个节点降级更致命。
-		head := make([]string, 0, len(eff.TemplateWarnings)+len(planRes.Warnings)+len(overrideWarns))
+	if len(sourceWarns) > 0 || len(eff.TemplateWarnings) > 0 || len(planRes.Warnings) > 0 || len(overrideWarns) > 0 {
+		// 来源处理告警、模板提示与管线告警排在渲染阶段提示前面。
+		head := make([]string, 0, len(sourceWarns)+len(eff.TemplateWarnings)+len(planRes.Warnings)+len(overrideWarns))
+		head = append(head, sourceWarns...)
 		head = append(head, eff.TemplateWarnings...)
 		head = append(head, planRes.Warnings...)
 		head = append(head, overrideWarns...)
 		result.Warnings = append(head, result.Warnings...)
 	}
 	return result, nil
+}
+
+// sourceUnits 把旧式 URLs/Files 转成来源单元；显式 Sources 非空时以它为准。
+func (p Params) sourceUnits() []Source {
+	if len(p.Sources) > 0 {
+		return p.Sources
+	}
+	units := make([]Source, 0, len(p.URLs)+len(p.Files))
+	for _, u := range p.URLs {
+		if strings.TrimSpace(u) != "" {
+			units = append(units, Source{URLs: []string{u}})
+		}
+	}
+	for _, f := range p.Files {
+		if strings.TrimSpace(f) != "" {
+			units = append(units, Source{Files: []string{f}})
+		}
+	}
+	return units
+}
+
+func sourceUnitLabel(s Source) string {
+	if strings.TrimSpace(s.Name) != "" {
+		return strings.TrimSpace(s.Name)
+	}
+	if len(s.URLs) > 0 {
+		return s.URLs[0]
+	}
+	if len(s.Files) > 0 {
+		return s.Files[0]
+	}
+	return "来源"
 }
 
 // applyProxyOverrides 把节点级覆盖（server/port）落到原始节点上。

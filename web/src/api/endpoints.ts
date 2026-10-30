@@ -7,6 +7,7 @@ export interface Airport {
   remarks: string
   enabled: boolean
   sort_order: number
+  pipeline?: string
   // 流量字段（可选，后端 internal/store/store.go Airport 返回）
   upload?: number // 字节
   download?: number // 字节
@@ -225,6 +226,7 @@ export interface AirportInput {
   subscription_url: string
   remarks: string
   enabled: boolean
+  pipeline?: string
 }
 
 export interface GroupInput {
@@ -546,6 +548,9 @@ export const endpoints = {
   createSelfNode: (body: SelfNodeInput): Promise<SelfNode> => api.post<{ self_node: SelfNode }>('/api/self-nodes', body).then((r) => r.self_node),
   updateSelfNode: (id: number, body: SelfNodeInput): Promise<OkResponse> => api.put<OkResponse>('/api/self-nodes/' + id, body),
   deleteSelfNode: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/self-nodes/' + id),
+  getSelfSourcePipeline: (): Promise<{ pipeline: string }> => api.get<{ pipeline: string }>('/api/self-nodes/pipeline'),
+  setSelfSourcePipeline: (pipeline: string): Promise<{ pipeline: string }> =>
+    api.put<{ pipeline: string }>('/api/self-nodes/pipeline', { pipeline }),
 
   listScripts: (): Promise<Script[]> => api.get<{ scripts: Script[] }>('/api/scripts').then((r) => r.scripts),
   createScript: (body: ScriptInput): Promise<Script> => api.post<{ script: Script }>('/api/scripts', body).then((r) => r.script),

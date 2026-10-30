@@ -125,7 +125,7 @@ const conflictDialogOpen = ref(false)
 const headers = [
   { key: 'name', title: '名称' },
   { key: 'config', title: '模板' },
-  { key: 'pipeline', title: '管线' },
+  { key: 'pipeline', title: '最终处理' },
   { key: 'rule_layers', title: '规则层' },
   { key: 'group_layers', title: '分组层' },
   { key: 'rule_sources', title: '规则源', sortable: false },
@@ -609,11 +609,11 @@ loadRuleSourceOptions()
             />
             <v-text-field
               v-model="draft.pipeline"
-              label="管线"
-              hint="留空时不使用管线"
+              label="最终处理管线"
+              hint="各来源先按自己的管线处理并合并，这条管线最后执行；留空不处理。"
               variant="outlined"
               density="comfortable"
-              hide-details
+              persistent-hint
               class="mb-3"
               data-testid="profile-pipeline"
             />

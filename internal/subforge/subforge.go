@@ -75,6 +75,7 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
 		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
 			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
+			"COALESCE((SELECT pipeline FROM source_pipelines WHERE source_key = 'airport:' || airports.id), ''), "+
 			"created_at, updated_at FROM airports ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
@@ -84,7 +85,7 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 	for rows.Next() {
 		var a Airport
 		if err := rows.Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
-			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr,
+			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr, &a.Pipeline,
 			&a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -99,9 +100,10 @@ func (m *Manager) GetAirport(ctx context.Context, id int64) (*Airport, error) {
 	err := m.db.Raw().QueryRowContext(ctx,
 		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
 			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
+			"COALESCE((SELECT pipeline FROM source_pipelines WHERE source_key = 'airport:' || airports.id), ''), "+
 			"created_at, updated_at FROM airports WHERE id = ?", id).
 		Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
-			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr,
+			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr, &a.Pipeline,
 			&a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("订阅 %d 不存在", id)
@@ -135,10 +137,30 @@ func (m *Manager) UpdateAirport(ctx context.Context, id int64, name, subscriptio
 	return m.GetAirport(ctx, id)
 }
 
+// AirportSourceKey 是机场在 source_pipelines 里的键。
+func AirportSourceKey(id int64) string { return fmt.Sprintf("airport:%d", id) }
+
+// SetAirportPipeline 设置机场的来源级处理管线；空串表示不处理。
+func (m *Manager) SetAirportPipeline(ctx context.Context, id int64, pipeline string) error {
+	return m.db.SetSourcePipeline(ctx, AirportSourceKey(id), pipeline)
+}
+
+// GetSelfSourcePipeline 读取自建节点集合的处理管线。
+func (m *Manager) GetSelfSourcePipeline(ctx context.Context) (string, error) {
+	return m.db.GetSourcePipeline(ctx, "self")
+}
+
+// SetSelfSourcePipeline 设置自建节点集合的处理管线；空串表示不处理。
+func (m *Manager) SetSelfSourcePipeline(ctx context.Context, pipeline string) error {
+	return m.db.SetSourcePipeline(ctx, "self", pipeline)
+}
+
 // DeleteAirport 删除订阅。
 func (m *Manager) DeleteAirport(ctx context.Context, id int64) error {
-	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM airports WHERE id = ?", id)
-	return err
+	if _, err := m.db.Raw().ExecContext(ctx, "DELETE FROM airports WHERE id = ?", id); err != nil {
+		return err
+	}
+	return m.db.SetSourcePipeline(ctx, AirportSourceKey(id), "")
 }
 
 // UpdateAirportTraffic 回写一次流量采集结果。

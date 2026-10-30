@@ -66,6 +66,8 @@ type Airport struct {
 	Remarks         string `json:"remarks"`
 	Enabled         bool   `json:"enabled"`
 	SortOrder       int    `json:"sort_order"`
+	// Pipeline 是该来源的预处理管线名；空串表示不处理。
+	Pipeline string `json:"pipeline"`
 	// —— 流量元数据：来自上游 subscription-userinfo 响应头 ——
 	Upload     int64     `json:"upload"`      // 已用上行字节
 	Download   int64     `json:"download"`    // 已用下行字节
@@ -753,6 +755,12 @@ func migrate(db *sql.DB) error {
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
+		// 来源级处理管线：机场按 airport:<id> 存，自建节点集合按 self 存。
+		`CREATE TABLE IF NOT EXISTS source_pipelines (
+			source_key TEXT PRIMARY KEY,
+			pipeline   TEXT NOT NULL DEFAULT '',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);`,
 		// 通用配置（DNS、mixed-port 等全局设置）
 		`CREATE TABLE IF NOT EXISTS config (
 			key         TEXT PRIMARY KEY,
@@ -1366,4 +1374,32 @@ func (d *DB) SetRuleProviderEnabled(ctx context.Context, id int64, enabled bool)
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// GetSourcePipeline 读取来源级处理管线；没有记录时返回空串。
+func (d *DB) GetSourcePipeline(ctx context.Context, sourceKey string) (string, error) {
+	var pipeline string
+	err := d.db.QueryRowContext(ctx,
+		"SELECT pipeline FROM source_pipelines WHERE source_key = ?", sourceKey).Scan(&pipeline)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return pipeline, nil
+}
+
+// SetSourcePipeline 写入来源级处理管线；空串表示删除该来源的处理配置。
+func (d *DB) SetSourcePipeline(ctx context.Context, sourceKey, pipeline string) error {
+	pipeline = strings.TrimSpace(pipeline)
+	if pipeline == "" {
+		_, err := d.db.ExecContext(ctx, "DELETE FROM source_pipelines WHERE source_key = ?", sourceKey)
+		return err
+	}
+	_, err := d.db.ExecContext(ctx,
+		"INSERT INTO source_pipelines (source_key, pipeline, updated_at) VALUES (?, ?, ?) "+
+			"ON CONFLICT(source_key) DO UPDATE SET pipeline = excluded.pipeline, updated_at = excluded.updated_at",
+		sourceKey, pipeline, time.Now())
+	return err
 }

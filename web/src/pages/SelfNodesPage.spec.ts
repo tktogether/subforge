@@ -17,6 +17,9 @@ vi.mock('../api/endpoints', async () => {
       createSelfNode: vi.fn(),
       updateSelfNode: vi.fn(),
       deleteSelfNode: vi.fn(),
+      getSelfSourcePipeline: vi.fn(),
+      setSelfSourcePipeline: vi.fn(),
+      pipelines: vi.fn(),
     },
   }
 })
@@ -25,12 +28,18 @@ const listMock = endpoints.listSelfNodes as unknown as ReturnType<typeof vi.fn>
 const createMock = endpoints.createSelfNode as unknown as ReturnType<typeof vi.fn>
 const updateMock = endpoints.updateSelfNode as unknown as ReturnType<typeof vi.fn>
 const deleteMock = endpoints.deleteSelfNode as unknown as ReturnType<typeof vi.fn>
+const getSourcePipelineMock = endpoints.getSelfSourcePipeline as unknown as ReturnType<typeof vi.fn>
+const setSourcePipelineMock = endpoints.setSelfSourcePipeline as unknown as ReturnType<typeof vi.fn>
+const pipelinesMock = endpoints.pipelines as unknown as ReturnType<typeof vi.fn>
 const vuetify = createVuetify({ components, directives })
 
 describe('SelfNodesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     listMock.mockResolvedValue([])
+    getSourcePipelineMock.mockResolvedValue({ pipeline: '' })
+    pipelinesMock.mockResolvedValue([])
+    setSourcePipelineMock.mockResolvedValue({ pipeline: '' })
   })
 
   it('把 title/subtitle/columns/fields/resource/help-key 原样传给 ResourcePage', async () => {
@@ -142,6 +151,73 @@ describe('SelfNodesPage', () => {
     if (title.exists()) { await title.trigger('click'); await flushPromises() }
     expect(w.text()).toContain('查看格式示例')
     expect(w.text()).toContain('以上均为示例')
+    w.unmount()
+  })
+})
+
+describe('SelfNodesPage 来源处理', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([])
+    getSourcePipelineMock.mockResolvedValue({ pipeline: 'pre' })
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }, { id: 2, name: 'off', enabled: false }])
+    setSourcePipelineMock.mockResolvedValue({ pipeline: 'pre' })
+  })
+
+  it('加载并显示自建节点处理管线，只列出启用管线', async () => {
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(getSourcePipelineMock).toHaveBeenCalledTimes(1)
+    expect(w.find('[data-testid="self-source-card"]').exists()).toBe(true)
+    const vm = w.vm as any
+    expect(vm.pipeline).toBe('pre')
+    expect(w.text()).toContain('自建节点处理')
+    w.unmount()
+  })
+
+  it('保存自建节点处理管线并提示成功', async () => {
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).pipeline = 'pre'
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'self-source-pipeline')
+    await select!.setValue('pre')
+    await w.find('[data-testid="self-source-save"]').trigger('click')
+    await flushPromises()
+    expect(setSourcePipelineMock).toHaveBeenCalledWith('pre')
+    w.unmount()
+  })
+
+  it('读取失败时不阻塞页面', async () => {
+    getSourcePipelineMock.mockRejectedValueOnce(new Error('source boom'))
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="self-source-card"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('保存失败时提示错误', async () => {
+    setSourcePipelineMock.mockRejectedValueOnce(new Error('save boom'))
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="self-source-save"]').trigger('click')
+    await flushPromises()
+    expect(setSourcePipelineMock).toHaveBeenCalled()
+    w.unmount()
+  })
+})
+
+describe('SelfNodesPage 来源处理当前值', () => {
+  it('当前管线不在启用选项中时仍显示为选项', async () => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([])
+    getSourcePipelineMock.mockResolvedValue({ pipeline: 'legacy' })
+    pipelinesMock.mockResolvedValue([])
+    setSourcePipelineMock.mockResolvedValue({ pipeline: 'legacy' })
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'self-source-pipeline')
+    expect(select).toBeTruthy()
+    expect((select!.props('items') as { value: string }[]).some((i) => i.value === 'legacy')).toBe(true)
     w.unmount()
   })
 })

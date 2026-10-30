@@ -31,6 +31,22 @@ describe('endpoints', () => {
     expect(result).toEqual(data)
   })
 
+  it('getSelfSourcePipeline → GET /api/self-nodes/pipeline', async () => {
+    const data = { pipeline: 'pre' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.getSelfSourcePipeline()
+    expect(fetchMock).toHaveBeenCalledWith('/api/self-nodes/pipeline', expect.objectContaining({ method: 'GET' }))
+    expect(result).toEqual(data)
+  })
+
+  it('setSelfSourcePipeline → PUT /api/self-nodes/pipeline', async () => {
+    const data = { pipeline: 'pre' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.setSelfSourcePipeline('pre')
+    expect(fetchMock).toHaveBeenCalledWith('/api/self-nodes/pipeline', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ pipeline: 'pre' }) }))
+    expect(result).toEqual(data)
+  })
+
   it('stats → GET /api/stats', async () => {
     const data = { history: { total: 1, cachedHits: 0, urlTotal: 1, cacheHitRate: 0 }, logs: 2, last: null }
     fetchMock.mockResolvedValue(respond(data))

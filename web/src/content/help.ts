@@ -118,6 +118,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     whenToUse: '新增或维护节点来源，查看流量与可用性。',
     steps: [
       { title: '新增机场', detail: '点击新增，填写名称与订阅地址。' },
+      { title: '设置来源处理', detail: '编辑机场时选择处理管线；该机场的节点会先单独处理，再与其他来源合并。' },
       { title: '刷新机场', detail: '读取上游的节点、流量与到期信息，并同时更新该机场的规则源。' },
       { title: '可用性检测', detail: '检测订阅地址是否可以正常访问。' },
     ],
@@ -127,6 +128,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     concepts: [
       { term: '机场', explain: '提供订阅地址的服务商，SubForge 从该地址获取节点。' },
       { term: '流量信息', explain: '上游响应头中的已用流量、总流量与到期时间，用于订阅中的余额显示。' },
+      { term: '来源处理', explain: '每个机场先按自己绑定的管线处理节点，再与其他来源合并；留空表示不处理。' },
     ],
     emptyState: { title: '暂无机场', detail: '点击新增，添加第一个机场订阅地址。', action: { label: '新增机场', to: '/airports' } },
     links: [
@@ -141,9 +143,11 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     steps: [
       { title: '新增节点', detail: '填写名称与标准分享链接（ss://、vmess://、vless://、trojan://、hysteria2:// 等）。' },
       { title: '启用或停用', detail: '通过开关控制节点是否参与输出。' },
+      { title: '设置来源处理', detail: '在页面顶部为自建节点集合选择处理管线；这些节点会先单独处理，再与机场来源合并。' },
     ],
     concepts: [
       { term: '自建节点', explain: '不来自机场、由用户手动维护的节点，与机场节点合并后输出。' },
+      { term: '自建节点处理', explain: '所有选中的自建节点作为一个来源，先经过同一管线处理，再与机场来源合并。' },
       { term: '分享链接', explain: '客户端中复制的节点链接；保存前服务端会校验格式与必要字段。' },
     ],
     faq: [
@@ -235,6 +239,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     whenToUse: '需要为不同设备或用途生成不同订阅内容时使用。',
     steps: [
       { title: '新建方案', detail: '填写名称，选择节点来源与输出选项。' },
+      { title: '设置最终处理', detail: '各来源先按自己的管线处理并合并，方案的最终处理管线最后执行。' },
       { title: '绑定规则源', detail: '按优先级添加规则源；订阅生成时会按顺序内联规则。' },
       { title: '绑定令牌', detail: '在订阅页创建令牌并选择该方案。' },
     ],

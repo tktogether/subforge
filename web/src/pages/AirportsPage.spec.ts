@@ -18,12 +18,14 @@ vi.mock('../api/endpoints', () => ({
     refreshAllAirports: vi.fn(),
     checkAirports: vi.fn(),
     lastAirportCheck: vi.fn(),
+    pipelines: vi.fn(),
   },
 }))
 
 const vuetify = createVuetify({ components, directives })
 
 const listMock = endpoints.listAirports as unknown as ReturnType<typeof vi.fn>
+const pipelinesMock = endpoints.pipelines as unknown as ReturnType<typeof vi.fn>
 const createMock = endpoints.createAirport as unknown as ReturnType<typeof vi.fn>
 const updateMock = endpoints.updateAirport as unknown as ReturnType<typeof vi.fn>
 const deleteMock = endpoints.deleteAirport as unknown as ReturnType<typeof vi.fn>
@@ -77,6 +79,7 @@ beforeEach(() => {
   refreshAllMock.mockResolvedValue({ ok: 1, fail: 0, imports: [{ airport_id: 1, name: 'HK', rules_added: 1, rules_skipped: 0, providers_added: 1, warnings: [], err: '' }] })
   checkMock.mockResolvedValue({ results: [makeCheckResult()] })
   lastCheckMock.mockResolvedValue({ results: [makeCheckResult()] })
+  pipelinesMock.mockResolvedValue([])
 })
 
 describe('AirportsPage', () => {
@@ -933,4 +936,78 @@ describe('AirportsPage 覆盖率补齐（导入弹窗）', () => {
     w.unmount()
   })
 
+})
+
+describe('AirportsPage 来源处理', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport({ pipeline: '' })])
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }])
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+  })
+
+  it('机场列表显示处理管线状态', async () => {
+    listMock.mockResolvedValue([makeAirport({ pipeline: 'pre' })])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="airport-pipeline-text"]').text()).toContain('pre')
+    w.unmount()
+  })
+
+  it('编辑机场可保存处理管线', async () => {
+    updateMock.mockResolvedValue(makeAirport({ pipeline: 'pre' }))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).draft.pipeline = 'pre'
+    await (w.vm as any).submit()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(1, expect.objectContaining({ pipeline: 'pre' }))
+    w.unmount()
+  })
+})
+
+describe('AirportsPage 处理管线控件', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport({ pipeline: 'legacy' })])
+    pipelinesMock.mockResolvedValue([])
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+  })
+
+  it('当前管线不在可选项里时仍作为选项显示', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'airport-pipeline')
+    expect(select).toBeTruthy()
+    expect((select!.props('items') as { value: string }[]).some((i) => i.value === 'legacy')).toBe(true)
+    w.unmount()
+  })
+
+  it('通过下拉控件选择处理管线', async () => {
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'airport-pipeline')
+    await select!.setValue('pre')
+    expect((w.vm as any).draft.pipeline).toBe('pre')
+    w.unmount()
+  })
+
+  it('管线清单加载失败时仍可打开机场弹窗', async () => {
+    pipelinesMock.mockRejectedValueOnce(new Error('pipelines boom'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).openCreate()
+    await flushPromises()
+    expect((w.vm as any).pipelineOptions).toEqual([])
+    w.unmount()
+  })
 })

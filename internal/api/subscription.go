@@ -190,6 +190,7 @@ func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
 			SubscriptionURL string `json:"subscription_url"`
 			Remarks         string `json:"remarks"`
 			Enabled         bool   `json:"enabled"`
+			Pipeline        string `json:"pipeline"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -200,6 +201,14 @@ func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
 		}
 		a, err := m.AddAirport(r.Context(), req.Name, req.SubscriptionURL, req.Remarks, req.Enabled)
 		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := m.SetAirportPipeline(r.Context(), a.ID, req.Pipeline); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if a, err = m.GetAirport(r.Context(), a.ID); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -232,6 +241,7 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 			SubscriptionURL string `json:"subscription_url"`
 			Remarks         string `json:"remarks"`
 			Enabled         bool   `json:"enabled"`
+			Pipeline        string `json:"pipeline"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -242,6 +252,14 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 		}
 		a, err := m.UpdateAirport(r.Context(), id, req.Name, req.SubscriptionURL, req.Remarks, req.Enabled)
 		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := m.SetAirportPipeline(r.Context(), id, req.Pipeline); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if a, err = m.GetAirport(r.Context(), id); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -830,6 +848,37 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 // 服务端令牌比对，永远 401。
 // --- /api/self-nodes ---
 
+// handleAPISelfSourcePipeline 读取/设置自建节点集合的来源级处理管线。
+func (s *Server) handleAPISelfSourcePipeline(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		pipeline, err := m.GetSelfSourcePipeline(r.Context())
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"pipeline": pipeline})
+	case http.MethodPut:
+		var req struct {
+			Pipeline string `json:"pipeline"`
+		}
+		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if err := m.SetSelfSourcePipeline(r.Context(), req.Pipeline); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"pipeline": req.Pipeline})
+	default:
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/PUT"))
+	}
+}
+
 func (s *Server) handleAPISelfNodes(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
 	if !ok {
@@ -1016,14 +1065,14 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	airportFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.AirportIDs })
 	selfFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.SelfNodeIDs })
 
-	var urls []string
+	var sources []convert.Source
 	usedAirports := make([]subforge.Airport, 0, len(airports))
 	for _, a := range airports {
 		if airportFilter != nil && !airportFilter[a.ID] {
 			continue
 		}
 		if a.Enabled && strings.TrimSpace(a.SubscriptionURL) != "" {
-			urls = append(urls, a.SubscriptionURL)
+			sources = append(sources, convert.Source{Name: a.Name, URLs: []string{a.SubscriptionURL}, Pipeline: a.Pipeline})
 			usedAirports = append(usedAirports, a)
 		}
 	}
@@ -1058,7 +1107,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(urls) == 0 && len(selfNodeFiles) == 0 {
+	if len(selfNodeFiles) > 0 {
+		selfPipeline, perr := m.GetSelfSourcePipeline(r.Context())
+		if perr != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, perr)
+			return
+		}
+		sources = append(sources, convert.Source{Name: "自建节点", Files: selfNodeFiles, Pipeline: selfPipeline})
+	}
+	if len(sources) == 0 {
 		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有启用的订阅或自建节点"))
 		return
 	}
@@ -1171,8 +1228,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
 	params := convert.Params{
 		Target:        target,
-		URLs:          urls,
-		Files:         selfNodeFiles,
+		Sources:       sources,
 		Groups:        renderGroups,
 		Rules:         renderRules,
 		RuleProviders: uniqueProviders,

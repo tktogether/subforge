@@ -231,6 +231,8 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/self-nodes", func(r chi.Router) {
 		r.Get("/", s.handleAPISelfNodes)
 		r.Post("/", s.handleAPISelfNodes)
+		r.Get("/pipeline", s.handleAPISelfSourcePipeline)
+		r.Put("/pipeline", s.handleAPISelfSourcePipeline)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPISelfNode)
 			r.Put("/", s.handleAPISelfNode)

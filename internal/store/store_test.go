@@ -29,7 +29,7 @@ func newTestDB(t *testing.T) (*DB, context.Context) {
 
 // 期望的 7 张表（migrate 建表，全部 CREATE TABLE IF NOT EXISTS）。
 var wantTables = []string{
-	"airports", "config", "pipelines", "proxy_groups", "rule_providers", "rules", "scripts", "self_nodes", "sub_tokens",
+	"airports", "config", "pipelines", "proxy_groups", "rule_providers", "rules", "scripts", "self_nodes", "source_pipelines", "sub_tokens",
 }
 
 // TestOpenCloseRaw 覆盖 Open / Close / Raw 与 migrate 建表。
@@ -1736,5 +1736,25 @@ func TestProxyGroupIncludeAllSourcesRoundTrip(t *testing.T) {
 	}
 	if err := d.UpdateImportedGroupMembersFlags(ctx, 99999, nil, false, false); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+}
+
+// TestSourcePipelineCRUD 覆盖来源级处理管线的写入、读取与清空。
+func TestSourcePipelineCRUD(t *testing.T) {
+	d, ctx := newTestDB(t)
+	if v, err := d.GetSourcePipeline(ctx, "airport:1"); err != nil || v != "" {
+		t.Fatalf("空记录应返回空串, got %q err=%v", v, err)
+	}
+	if err := d.SetSourcePipeline(ctx, "airport:1", "p1"); err != nil {
+		t.Fatalf("SetSourcePipeline: %v", err)
+	}
+	if v, err := d.GetSourcePipeline(ctx, "airport:1"); err != nil || v != "p1" {
+		t.Fatalf("GetSourcePipeline = %q err=%v", v, err)
+	}
+	if err := d.SetSourcePipeline(ctx, "airport:1", "  "); err != nil {
+		t.Fatalf("清空来源管线: %v", err)
+	}
+	if v, err := d.GetSourcePipeline(ctx, "airport:1"); err != nil || v != "" {
+		t.Fatalf("清空后应返回空串, got %q err=%v", v, err)
 	}
 }

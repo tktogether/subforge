@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/fetch"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/render/clashmeta"
@@ -145,5 +146,65 @@ func TestEngine_AllFail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), bad.URL) {
 		t.Errorf("错误信息应带上失败来源: %v", err)
+	}
+}
+
+// TestEngine_PerSourcePipelinesRunBeforeMerge 每个来源先跑自己的管线，再合并，
+// 最后才执行方案级最终管线；一个来源的改名不能污染另一个来源。
+func TestEngine_PerSourcePipelinesRunBeforeMerge(t *testing.T) {
+	srvA := subServer(t, ssLink("10.0.0.1", 8388, "A-01"))
+	srvB := subServer(t, ssLink("10.0.1.1", 8388, "B-01"))
+
+	e := newEngine(t)
+	e.ExtraPipelines = func(context.Context) (map[string]config.PipelineSpec, error) {
+		return map[string]config.PipelineSpec{
+			"prefixA": {Name: "prefixA", Steps: []config.PipelineStep{{Kind: "op.rename", Args: map[string]string{"pattern": "^", "repl": "A-"}}}},
+			"prefixB": {Name: "prefixB", Steps: []config.PipelineStep{{Kind: "op.rename", Args: map[string]string{"pattern": "^", "repl": "B-"}}}},
+			"final":   {Name: "final", Steps: []config.PipelineStep{{Kind: "op.rename", Args: map[string]string{"pattern": "^", "repl": "X-"}}}},
+		}, nil
+	}
+	res, err := e.Run(context.Background(), Params{
+		Target: "clash.meta",
+		Sources: []Source{
+			{Name: "机场A", URLs: []string{srvA.URL}, Pipeline: "prefixA"},
+			{Name: "机场B", URLs: []string{srvB.URL}, Pipeline: "prefixB"},
+		},
+		Pipeline: "final",
+		Raw:      map[string][]string{},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	body := string(res.Body)
+	if !strings.Contains(body, "X-A-A-01") || !strings.Contains(body, "X-B-B-01") {
+		t.Fatalf("来源管线应由内到外依次生效，body 未包含预期名称:\n%s", body)
+	}
+	if res.RawNodes != 2 || res.Nodes != 2 {
+		t.Fatalf("节点计数 raw=%d nodes=%d，应为 2/2", res.RawNodes, res.Nodes)
+	}
+}
+
+// TestEngine_SourcePipelineFailureIsIsolated 单个来源的管线缺失只让该来源失败，
+// 其他来源仍正常合并。
+func TestEngine_SourcePipelineFailureIsIsolated(t *testing.T) {
+	srvA := subServer(t, ssLink("10.0.0.1", 8388, "A-01"))
+	srvB := subServer(t, ssLink("10.0.1.1", 8388, "B-01"))
+	e := newEngine(t)
+	res, err := e.Run(context.Background(), Params{
+		Target: "clash.meta",
+		Sources: []Source{
+			{Name: "坏来源", URLs: []string{srvA.URL}, Pipeline: "missing"},
+			{Name: "好来源", URLs: []string{srvB.URL}},
+		},
+		Raw: map[string][]string{},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Failures) != 1 || !strings.Contains(res.Failures[0], "坏来源") {
+		t.Fatalf("应只记录坏来源失败: %+v", res.Failures)
+	}
+	if !strings.Contains(string(res.Body), "B-01") {
+		t.Fatalf("好来源节点应保留:\n%s", res.Body)
 	}
 }

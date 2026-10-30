@@ -40,7 +40,7 @@ const emptyState = computed(() => help.emptyState)
 // align:'end' 让数字列（节点数 / 流量 / 到期时间 / 操作）右对齐，并吃到 tabular-nums。
 // 操作列额外挂 sf-table__actions，供覆写层做「单行不折 + 紧凑按钮」。
 const headers = [
-  { key: 'name', title: '名称', minWidth: 88 },
+  { key: 'name', title: '名称', minWidth: 150 },
   { key: 'subscription_url', title: '订阅地址' },
   { key: 'enabled', title: '启用', minWidth: 64 },
   { key: 'node_count', title: '节点数', align: 'end' as const, minWidth: 72 },
@@ -59,7 +59,26 @@ const headers = [
 
 const dialog = ref(false)
 const editing = ref<AirportRow | null>(null)
-const draft = ref<AirportInput>({ name: '', subscription_url: '', remarks: '', enabled: true })
+const draft = ref<AirportInput>({ name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '' })
+
+const pipelineOptions = ref<{ title: string; value: string }[]>([])
+const pipelineItems = computed(() => {
+  const items = [...pipelineOptions.value]
+  const current = draft.value.pipeline ?? ''
+  if (current !== '' && !items.some((i) => i.value === current)) {
+    items.unshift({ title: current, value: current })
+  }
+  return items
+})
+
+async function loadPipelineOptions(): Promise<void> {
+  try {
+    const list = await endpoints.pipelines('')
+    pipelineOptions.value = list.filter((p) => p.enabled).map((p) => ({ title: p.name, value: p.name }))
+  } catch {
+    pipelineOptions.value = []
+  }
+}
 
 const confirmOpen = ref(false)
 const pendingDelete = ref<AirportRow | null>(null)
@@ -125,18 +144,26 @@ async function load(): Promise<void> {
 }
 
 function blank(): AirportInput {
-  return { name: '', subscription_url: '', remarks: '', enabled: true }
+  return { name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '' }
 }
 
 function openCreate(): void {
   draft.value = blank()
   editing.value = null
+  void loadPipelineOptions()
   dialog.value = true
 }
 
 function openEdit(row: AirportRow): void {
-  draft.value = { name: row.name, subscription_url: row.subscription_url, remarks: row.remarks, enabled: row.enabled }
+  draft.value = {
+    name: row.name,
+    subscription_url: row.subscription_url,
+    remarks: row.remarks,
+    enabled: row.enabled,
+    pipeline: row.pipeline ?? '',
+  }
   editing.value = row
+  void loadPipelineOptions()
   dialog.value = true
 }
 
@@ -302,6 +329,7 @@ function relativeTime(ts: number): string {
 
 onMounted(() => {
   void load()
+  void loadPipelineOptions()
   void restoreLastCheck()
 })
 
@@ -365,6 +393,10 @@ async function restoreLastCheck(): Promise<void> {
           data-testid="table"
           class="airports-table"
         >
+          <template #item.name="{ item }">
+            <div class="airport-name">{{ item.name }}</div>
+            <div class="airport-pipeline" data-testid="airport-pipeline-text">处理：{{ item.pipeline || '不处理' }}</div>
+          </template>
           <template #item.subscription_url="{ value }">
             <span class="airport-mono airport-truncate" :title="value">{{ value }}</span>
           </template>
@@ -481,12 +513,22 @@ async function restoreLastCheck(): Promise<void> {
           <v-text-field v-model="draft.name" data-testid="airport-name" label="名称" :hint="nameHelp?.hint" :placeholder="nameHelp?.example" persistent-hint></v-text-field>
           <v-text-field v-model="draft.subscription_url" data-testid="airport-url" label="订阅地址" :hint="urlHelp?.hint" :placeholder="urlHelp?.example" persistent-hint></v-text-field>
           <v-text-field v-model="draft.remarks" data-testid="airport-remarks" label="备注" :hint="remarksHelp?.hint" :placeholder="remarksHelp?.example" persistent-hint></v-text-field>
+          <v-select
+            v-model="draft.pipeline"
+            :items="pipelineItems"
+            label="处理管线"
+            hint="机场节点先经过这条管线，再与其他来源合并；留空表示不处理。"
+            persistent-hint
+            clearable
+            data-testid="airport-pipeline"
+            class="mb-3"
+          />
           <v-switch v-model="draft.enabled" data-testid="airport-enabled-new" label="启用"></v-switch>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
           <v-btn variant="text" @click="dialog = false">取消</v-btn>
-          <v-btn color="primary" @click="submit">保存</v-btn>
+          <v-btn color="primary" data-testid="airport-save" @click="submit">保存</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -672,6 +714,16 @@ async function restoreLastCheck(): Promise<void> {
   font-weight: 600;
   position: sticky;
   top: 0;
+}
+.airport-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.airport-pipeline {
+  margin-top: 2px;
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .airport-mono {
   font-family: var(--sf-font-mono);
