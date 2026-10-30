@@ -271,9 +271,9 @@ func (c *Config) Clone() *Config {
 }
 
 // Parse 解析一段 INI 文本。origin 是来源标识，用于错误信息与 Value.Source；
-// 文本里出现 !include 时需要 baseDir 才能解析相对路径。
+// 没有本地基准目录，因此文本里出现 !include 会直接被拒绝——远程模板不能借此读取本机文件。
 func Parse(data []byte, origin string) (*Config, error) {
-	return parseBytes(data, origin, "", nil)
+	return parseBytes(data, origin, "", "", nil)
 }
 
 // ParseString 是 Parse 的字符串版本。
@@ -282,28 +282,33 @@ func ParseString(s, origin string) (*Config, error) {
 }
 
 // ParseFile 解析文件并展开其中的 !include / !!import。
+//
+// 所有 include 都限定在根模板所在目录内：既不能指向绝对路径，也不能用 ../ 越界，
+// 防止一份共享/下载来的模板把任意本地文件读进解析结果或错误信息。
 func ParseFile(path string) (*Config, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseFileRecursive(abs, []string{abs})
+	abs = filepath.Clean(abs)
+	return parseFileRecursive(abs, filepath.Dir(abs), []string{abs})
 }
 
-// parseFileRecursive 读取一个绝对路径文件并解析，栈用于循环引用检测。
-func parseFileRecursive(abs string, stack []string) (*Config, error) {
+// parseFileRecursive 读取一个绝对路径文件并解析，root 是 include 允许的根目录，
+// 栈用于循环引用检测。
+func parseFileRecursive(abs, root string, stack []string) (*Config, error) {
 	buf, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, fmt.Errorf("读取配置 %s: %w", abs, err)
 	}
-	return parseBytes(buf, filepath.Base(abs), filepath.Dir(abs), stack)
+	return parseBytes(buf, filepath.Base(abs), filepath.Dir(abs), root, stack)
 }
 
 // parseBytes 是解析主体。
 //
 // label 用于错误信息；baseDir 是 !include 相对路径的解析基准（解析纯文本时为空）；
-// stack 是当前文件链（含自身），用于循环引用检测。
-func parseBytes(data []byte, label, baseDir string, stack []string) (*Config, error) {
+// root 是允许 include 的根目录；stack 是当前文件链（含自身），用于循环引用检测。
+func parseBytes(data []byte, label, baseDir, root string, stack []string) (*Config, error) {
 	cfg := &Config{sections: map[string]*Section{}}
 	var cur *Section
 
@@ -324,14 +329,14 @@ func parseBytes(data []byte, label, baseDir string, stack []string) (*Config, er
 		}
 
 		if target, ok := splitInclude(line, cur == nil); ok {
-			abs, err := resolveInclude(baseDir, target)
+			abs, err := resolveInclude(baseDir, root, target)
 			if err != nil {
 				return nil, fmt.Errorf("%s:%d !include: %w", label, lineNo, err)
 			}
 			if inStack(stack, abs) {
 				return nil, fmt.Errorf("%s:%d !include: 循环引用 %s", label, lineNo, abs)
 			}
-			other, err := parseFileRecursive(abs, append(append([]string{}, stack...), abs))
+			other, err := parseFileRecursive(abs, root, append(append([]string{}, stack...), abs))
 			if err != nil {
 				return nil, err
 			}
@@ -444,17 +449,17 @@ func splitKV(line string) (string, string, bool) {
 	return "", "", false
 }
 
-// resolveInclude 把 !include 的目标解析成存在的绝对路径。
-func resolveInclude(baseDir, target string) (string, error) {
+// resolveInclude 把 !include 的目标解析成存在的绝对路径，并确保它没有逃出 root。
+func resolveInclude(baseDir, root, target string) (string, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return "", fmt.Errorf("缺少文件路径")
 	}
+	if baseDir == "" || root == "" {
+		return "", fmt.Errorf("没有本地模板目录，不允许引用本地文件")
+	}
 	p := target
 	if !filepath.IsAbs(p) {
-		if baseDir == "" {
-			return "", fmt.Errorf("相对路径 %q 无法解析：没有基准目录", target)
-		}
 		p = filepath.Join(baseDir, target)
 	}
 	abs, err := filepath.Abs(p)
@@ -462,12 +467,36 @@ func resolveInclude(baseDir, target string) (string, error) {
 		return "", err
 	}
 	abs = filepath.Clean(abs)
+	if !withinDir(root, abs) {
+		return "", fmt.Errorf("%s 不在模板目录 %s 内", abs, root)
+	}
 	if st, err := os.Stat(abs); err != nil {
 		return "", fmt.Errorf("找不到 %s: %w", abs, err)
 	} else if st.IsDir() {
 		return "", fmt.Errorf("%s 是目录不是文件", abs)
 	}
+	// 符号链接指向的真实文件可能落在目录外，按真实路径再校验一次。
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("解析 %s 的真实路径: %w", abs, err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("解析模板目录 %s 的真实路径: %w", root, err)
+	}
+	if !withinDir(realRoot, real) {
+		return "", fmt.Errorf("%s 的真实路径不在模板目录 %s 内", abs, root)
+	}
 	return abs, nil
+}
+
+// withinDir 判断 p 是否位于 root 之下（两者都应是绝对路径）。
+func withinDir(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func inStack(stack []string, abs string) bool {

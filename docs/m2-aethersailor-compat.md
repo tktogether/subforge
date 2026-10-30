@@ -122,6 +122,7 @@ internal\render\registry\registry.go:157:2: undefined: sort
 | `!include <路径>` | **仅顶层**（任何段落之前） | 段落内不认——`[common]` 里的 `!include`/`!exclude` 是节点名过滤的合法键名 |
 
 - 路径相对**当前文件所在目录**解析；递归展开并做**循环引用检测**（`inStack`）。
+- include 只能引用**根模板目录内**的文件：绝对路径、`../` 越界与指向目录外的符号链接均被拒绝；远程模板没有本地基准目录，其中的 include 一律拒绝。
 - **顶层** include：整份配置 `Overlay` 合并。
 - **段内** include：只把被引文件里**同名段落**的条目 `Set` 进当前段（覆盖语义）。
 - 展开后条目的 `Source`/`Line` 指向**实际定义处**（可追溯性）。

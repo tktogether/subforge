@@ -105,6 +105,7 @@ sequenceDiagram
 
 - `/debug/pprof/*` 只在启动时显式开启（`serve -pprof` 或 `SUBFORGE_PPROF=1`）后响应；默认返回 `404`，即使请求带 `?debug=1` 也不开放。生产环境不要开启。
 - 服务端出站拉取默认只允许 http/https 公网地址；回环、私网、链路本地与云元数据地址会被拒绝，远程模板、规则集、机场/规则源订阅与告警 webhook 同策略。确实需要本机/LAN 来源时显式加 `-allow-private-network`（或 `SUBFORGE_ALLOW_PRIVATE_NETWORK=1`），不要默认打开。
+- 模板的 `!include` / `!!import` 只能引用**根模板所在目录内**的文件：绝对路径、`../` 越界与指向目录外的符号链接都会被拒绝；通过 `config=<URL>` 拉取的远程模板没有本地基准目录，任何 include 一律拒绝，避免远程内容读取本机文件。
 - 即使处于调试模式，pprof 与管理 API 仍受全局令牌保护，但不应作为唯一防线：请通过反向代理限制来源，不要直接暴露 `/api/*` 与 `/debug/pprof/*`。
 - 默认监听地址为 `127.0.0.1:25500`，只在本机可达（`cmd/subforge/serve.go:108`）。需要远程访问时，建议保持本机监听并由反向代理提供 HTTPS；`deploy/subforge.service:30-35` 的单元文件即按此方式配置。容器镜像把默认值改成了 `0.0.0.0:25500`，此时反向代理之外还应有网络层隔离。
 

@@ -312,6 +312,56 @@ func TestInclude_AllowEmptyTargetRejected(t *testing.T) {
 	}
 }
 
+// TestInclude_AbsoluteOutsideRootRejected 绝对路径即使存在，也不能越过根模板目录。
+func TestInclude_AbsoluteOutsideRootRejected(t *testing.T) {
+	dir := t.TempDir()
+	secret := write(t, t.TempDir(), "secret.ini", "[common]\nleak = yes\n")
+	root := write(t, dir, "root.ini", "!include "+secret+"\n")
+	_, err := ParseFile(root)
+	if err == nil {
+		t.Fatal("模板目录外的绝对路径应被拒绝")
+	}
+	if !strings.Contains(err.Error(), "不在模板目录") {
+		t.Errorf("错误信息应说明越界: %v", err)
+	}
+}
+
+// TestInclude_ParentEscapeRejected 相对路径不能借 ../ 跳出根模板目录。
+func TestInclude_ParentEscapeRejected(t *testing.T) {
+	outer := t.TempDir()
+	dir := filepath.Join(outer, "tpl")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, outer, "secret.ini", "[common]\nleak = yes\n")
+	root := write(t, dir, "root.ini", "!include ../secret.ini\n")
+	if _, err := ParseFile(root); err == nil {
+		t.Fatal("../ 越界应被拒绝")
+	}
+}
+
+// TestInclude_RemoteBodyRejected 远程/内存模板没有可信目录，任何 include 一律拒绝。
+func TestInclude_RemoteBodyRejected(t *testing.T) {
+	secret := write(t, t.TempDir(), "secret.ini", "[common]\nleak = yes\n")
+	if _, err := ParseString("!include "+secret+"\n", "https://example.com/tpl.ini"); err == nil {
+		t.Fatal("远程模板引用本地文件应被拒绝")
+	}
+}
+
+// TestInclude_SymlinkOutsideRootRejected 链接本身在目录内、真实文件在目录外时同样拒绝。
+func TestInclude_SymlinkOutsideRootRejected(t *testing.T) {
+	dir := t.TempDir()
+	secret := write(t, t.TempDir(), "secret.ini", "[common]\nleak = yes\n")
+	link := filepath.Join(dir, "linked.ini")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("当前环境无法创建符号链接: %v", err)
+	}
+	root := write(t, dir, "root.ini", "!include linked.ini\n")
+	if _, err := ParseFile(root); err == nil {
+		t.Fatal("指向目录外的符号链接应被拒绝")
+	}
+}
+
 // --- Overlay / 覆盖链 ---
 
 func TestOverlay_LowerPriorityFirst(t *testing.T) {
