@@ -175,7 +175,7 @@ describe('ProfilesPage', () => {
     expect(help.text()).toContain('未分配')
     expect(help.text()).toContain('profile_id = 0')
     expect(help.text()).toContain('绑定方案后')
-    expect(help.text()).toContain('删除方案前要先把规则/分组移走或删除')
+    expect(help.text()).toContain('只有仍有令牌绑定时才会拒绝')
     expect(help.text()).toContain('模板留空')
     expect(help.text()).toContain('规则层 = 按顺序拼接，先出现者优先')
     expect(help.text()).toContain('分组层 = 同名分组先出现者胜出')

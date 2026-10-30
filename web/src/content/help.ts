@@ -146,7 +146,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
       { term: '合并输出', explain: '自建节点与机场节点合并后一起进入订阅输出，不再单独区分来源。' },
     ],
     faq: [
-      { q: '自建节点和机场节点会冲突吗？', a: '不会，二者合并后一起输出；同名时自建节点靠前。' },
+      { q: '自建节点和机场节点会冲突吗？', a: '不会，二者合并后一起输出；同名时先出现的机场节点保留，自建节点在后。' },
     ],
     emptyState: { title: '还没有自建节点', detail: '点击「新增」添加第一条自建节点。', action: { label: '新增节点', to: '/self-nodes' } },
     links: [
@@ -290,11 +290,11 @@ export const PAGE_HELP: Record<string, PageHelp> = {
   logs: {
     page: 'logs',
     title: '日志',
-    oneLiner: '查看运行日志（内存环形缓冲，最多 200 行，3s 自动刷新）。',
+    oneLiner: '查看运行日志（内存环形缓冲，最多 200 行，可手动刷新或打开自动刷新）。',
     whenToUse: '排查故障或追踪近期操作。',
     steps: [
       { title: '看日志', detail: '本页不区分级别：所有日志按时间倒序显示，error/warn 只是前端关键词高亮，没有单独的级别过滤。' },
-      { title: '自动刷新', detail: '页面每 3 秒自动拉取一次；最多显示最近 200 行，日志行不可点击。' },
+      { title: '自动刷新', detail: '打开「自动刷新」后每 3 秒拉取一次（默认关闭）；最多显示最近 200 行，日志行不可点击。' },
     ],
     concepts: [
       { term: '高亮', explain: '前端对包含 error/warn 等关键词的行做颜色高亮，仅用于扫读，不代表日志级别。' },

@@ -462,7 +462,7 @@ async function restoreLastCheck(): Promise<void> {
       <v-card>
         <v-card-title>确认删除</v-card-title>
         <v-card-text>
-          删除机场会同时删除其导入的规则关联，确定删除 {{ pendingDelete === null ? '' : pendingDelete.name }} 吗？
+          删除机场不会删除已导入的规则/分组；需要清理时请到「规则/分组」页按来源处理。确定删除 {{ pendingDelete === null ? '' : pendingDelete.name }} 吗？
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>

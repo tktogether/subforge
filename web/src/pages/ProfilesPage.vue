@@ -381,7 +381,7 @@ loadRuleSourceOptions()
 
 <template>
   <div class="profiles-page">
-    <PageHeader title="订阅方案" subtitle="一个方案 = 一套模板 + 规则 + 分组；令牌绑定方案后彼此隔离">
+    <PageHeader title="订阅方案" subtitle="一个方案 = 节点来源 + 模板/输出定制 + 层顺序 + 规则源；令牌绑定后彼此隔离">
       <template #actions>
         <v-btn color="primary" prepend-icon="mdi-plus" data-testid="profile-new" @click="openCreate">
           新增
@@ -394,9 +394,10 @@ loadRuleSourceOptions()
 
     <v-alert type="info" variant="tonal" class="mb-4" data-testid="profiles-help">
       <div class="text-body-2">
-        <p class="mb-1"><strong>方案是什么：</strong>一个订阅方案 = 一套模板（INI config）+ 一套规则 + 一套分组；令牌绑定方案后，订阅只输出该方案的规则与分组。</p>
-        <p class="mb-1"><strong>未分配：</strong>profile_id = 0 的规则与分组就是旧全局池，没绑定方案的令牌行为与改动前完全一致。</p>
-        <p class="mb-1"><strong>删除方案：</strong>删除方案前要先把规则/分组移走或删除，否则后端会拒绝（方案下还有内容）。</p>
+        <p class="mb-1"><strong>方案是什么：</strong>一个订阅方案 = 节点来源（机场/自建节点）+ 模板/管线/目标格式/包含排除 + 规则层与分组层的顺序 + 规则源绑定；令牌绑定方案后，订阅按该方案的来源、层顺序与规则源生成。</p>
+        <p class="mb-1"><strong>规则与分组：</strong>它们是全局库，用来源（自定义 / airport:机场名）区分；方案只选择启用哪些层以及层的顺序，不拥有规则/分组。</p>
+        <p class="mb-1"><strong>未分配：</strong>profile_id = 0 的令牌不绑定方案，使用全部启用来源和默认三层顺序，与旧行为一致。</p>
+        <p class="mb-1"><strong>删除方案：</strong>只有仍有令牌绑定时才会拒绝；规则/分组是全局库，不会随方案删除。</p>
         <p class="mb-1"><strong>模板留空：</strong>模板留空 = 用默认配置；管线留空 = 用全局回落。</p>
         <p class="mb-0"><strong>层顺序：</strong>规则层 = 按顺序拼接，先出现者优先；分组层 = 同名分组先出现者胜出；模板层 = INI 模板里的规则/分组。</p>
       </div>
