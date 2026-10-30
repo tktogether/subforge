@@ -393,6 +393,7 @@ async function restoreLastCheck(): Promise<void> {
           <span>新增 {{ imp.rules_added }}</span>
           <span>跳过 {{ imp.rules_skipped }}</span>
           <span>提供者 {{ imp.providers_added }}</span>
+          <span v-if="(imp.groups_created ?? 0) > 0">新建分组 {{ imp.groups_created }}</span>
           <span v-if="imp.err !== ''" class="text-error">{{ imp.err }}</span>
         </div>
       </div>

@@ -501,6 +501,7 @@ type refreshImportItem struct {
 	RulesAdded     int      `json:"rules_added"`
 	RulesSkipped   int      `json:"rules_skipped"`
 	ProvidersAdded int      `json:"providers_added"`
+	GroupsCreated  int      `json:"groups_created"`
 	Warnings       []string `json:"warnings"`
 	Err            string   `json:"err"`
 }
@@ -546,6 +547,63 @@ func TestAPIAirportsRefreshWithRulesImports(t *testing.T) {
 	}
 	if item.Name != "机场R" {
 		t.Fatalf("name = %q，应为 机场R", item.Name)
+	}
+}
+
+// TestAPIAirportsRefreshWithRulesCreatesGroups 自动导入必须和手动导入一样补建目标分组，
+// 否则规则目标找不到分组，订阅只能退化成 DIRECT/兜底。
+func TestAPIAirportsRefreshWithRulesCreatesGroups(t *testing.T) {
+	ts, mgr, _ := newTrafficTestServer(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("proxies:\n" +
+			"  - name: p1\n" +
+			"    type: ss\n" +
+			"    server: s.example.com\n" +
+			"    port: 8388\n" +
+			"    cipher: aes-256-gcm\n" +
+			"    password: pw\n" +
+			"rules:\n" +
+			"  - DOMAIN-SUFFIX,auto-group.test,自动建组\n"))
+	}))
+	t.Cleanup(up.Close)
+
+	a, err := mgr.AddAirport(t.Context(), "机场G", up.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	if a == nil {
+		t.Fatal("AddAirport 返回 nil")
+	}
+
+	status, _, body := uiPostJSON(t, ts, "/api/airports/refresh?with_rules=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var got refreshWithImports
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if len(got.Imports) != 1 {
+		t.Fatalf("imports 长度 = %d；body=%s", len(got.Imports), body)
+	}
+	if got.Imports[0].GroupsCreated != 1 {
+		t.Fatalf("groups_created = %d，应为 1；body=%s", got.Imports[0].GroupsCreated, body)
+	}
+	groups, err := mgr.ListProxyGroups(t.Context())
+	if err != nil {
+		t.Fatalf("ListProxyGroups: %v", err)
+	}
+	found := false
+	for _, g := range groups {
+		if g.Name == "自动建组" && g.Source == "airport:机场G" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("自动导入未创建目标分组，groups=%+v", groups)
 	}
 }
 

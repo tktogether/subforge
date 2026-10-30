@@ -299,6 +299,7 @@ export interface TrafficRefreshResult {
 export interface ImportRulesOutcome {
   airport_id: number; name: string
   rules_added: number; rules_skipped: number; providers_added: number
+  groups_created?: number
   warnings: string[]; err: string
 }
 export interface TrafficRefreshResponse {
