@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="SubForge">
   <title>SubForge</title>
-  <rect width="128" height="128" rx="28" fill="#0f172a"/>
-  <text x="64" y="64" text-anchor="middle" dominant-baseline="central"
+  <rect width="128" height="128" rx="28" fill="#0F172A"/>
+  <text x="64" y="66" text-anchor="middle" dominant-baseline="central"
         font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-        font-size="56" font-weight="700" letter-spacing="1" fill="#38bdf8">SF</text>
+        font-size="64" font-weight="800" letter-spacing="1" fill="#8BB8FF">SF</text>
 </svg>

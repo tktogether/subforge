@@ -75,6 +75,7 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 	rows, err := m.db.Raw().QueryContext(ctx,
 		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
 			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
+			"COALESCE((SELECT pipeline FROM source_pipelines WHERE source_key = 'airport:' || airports.id), ''), "+
 			"created_at, updated_at FROM airports ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
@@ -84,7 +85,7 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 	for rows.Next() {
 		var a Airport
 		if err := rows.Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
-			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr,
+			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr, &a.Pipeline,
 			&a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -99,9 +100,10 @@ func (m *Manager) GetAirport(ctx context.Context, id int64) (*Airport, error) {
 	err := m.db.Raw().QueryRowContext(ctx,
 		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
 			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
+			"COALESCE((SELECT pipeline FROM source_pipelines WHERE source_key = 'airport:' || airports.id), ''), "+
 			"created_at, updated_at FROM airports WHERE id = ?", id).
 		Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
-			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr,
+			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr, &a.Pipeline,
 			&a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("订阅 %d 不存在", id)
@@ -135,10 +137,30 @@ func (m *Manager) UpdateAirport(ctx context.Context, id int64, name, subscriptio
 	return m.GetAirport(ctx, id)
 }
 
+// AirportSourceKey 是机场在 source_pipelines 里的键。
+func AirportSourceKey(id int64) string { return fmt.Sprintf("airport:%d", id) }
+
+// SetAirportPipeline 设置机场的来源级处理管线；空串表示不处理。
+func (m *Manager) SetAirportPipeline(ctx context.Context, id int64, pipeline string) error {
+	return m.db.SetSourcePipeline(ctx, AirportSourceKey(id), pipeline)
+}
+
+// GetSelfSourcePipeline 读取自建节点集合的处理管线。
+func (m *Manager) GetSelfSourcePipeline(ctx context.Context) (string, error) {
+	return m.db.GetSourcePipeline(ctx, "self")
+}
+
+// SetSelfSourcePipeline 设置自建节点集合的处理管线；空串表示不处理。
+func (m *Manager) SetSelfSourcePipeline(ctx context.Context, pipeline string) error {
+	return m.db.SetSourcePipeline(ctx, "self", pipeline)
+}
+
 // DeleteAirport 删除订阅。
 func (m *Manager) DeleteAirport(ctx context.Context, id int64) error {
-	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM airports WHERE id = ?", id)
-	return err
+	if _, err := m.db.Raw().ExecContext(ctx, "DELETE FROM airports WHERE id = ?", id); err != nil {
+		return err
+	}
+	return m.db.SetSourcePipeline(ctx, AirportSourceKey(id), "")
 }
 
 // UpdateAirportTraffic 回写一次流量采集结果。
@@ -213,26 +235,52 @@ type ProxyGroup = store.ProxyGroup
 // ListProxyGroups 返回所有代理分组（全量读，不区分来源；按来源过滤请用 ListProxyGroupsFiltered）。
 // regex / url / interval / source 列可为 NULL，用 COALESCE 兜底。
 func (m *Manager) ListProxyGroups(ctx context.Context) ([]ProxyGroup, error) {
-	rows, err := m.db.Raw().QueryContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), created_at, updated_at FROM proxy_groups ORDER BY sort_order, id")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []ProxyGroup{}
-	for rows.Next() {
-		var g ProxyGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, rows.Err()
+	return m.db.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
 }
 
 // AddProxyGroup 新增代理分组。sortOrder>0 用用户值，<=0 表示"未指定"（由 store 回退时间戳）。
 func (m *Manager) AddProxyGroup(ctx context.Context, name, typ, regex, url string, interval, sortOrder int) (*ProxyGroup, error) {
 	return m.db.AddProxyGroup(ctx, name, typ, regex, url, interval, sortOrder)
+}
+
+// AddProxyGroupWithMembersAndIncludeSelf 新增分组并指定是否在订阅里追加自建节点。
+func (m *Manager) AddProxyGroupWithMembersAndIncludeSelf(ctx context.Context, name, typ, regex, url string, interval, sortOrder int, source string, members []string, includeSelf bool) (*ProxyGroup, error) {
+	g, err := m.db.AddProxyGroupWithMembersAndIncludeSelf(ctx, name, typ, regex, url, interval, sortOrder, source, members, includeSelf)
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+// AddProxyGroupWithMembersAndFlags 新增分组并指定自建/全部来源扩展。
+func (m *Manager) AddProxyGroupWithMembersAndFlags(ctx context.Context, name, typ, regex, url string, interval, sortOrder int, source string, members []string, includeSelf, includeAllSources bool) (*ProxyGroup, error) {
+	g, err := m.db.AddProxyGroupWithMembersAndFlags(ctx, name, typ, regex, url, interval, sortOrder, source, members, includeSelf, includeAllSources)
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+// SetProxyGroupIncludeSelf 保存分组是否在订阅里追加自建节点。
+func (m *Manager) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf bool) error {
+	if err := m.db.SetProxyGroupIncludeSelf(ctx, id, includeSelf); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("代理分组 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
+}
+
+// SetProxyGroupIncludeAllSources 保存分组是否把方案里所有机场的节点并入。
+func (m *Manager) SetProxyGroupIncludeAllSources(ctx context.Context, id int64, includeAll bool) error {
+	if err := m.db.SetProxyGroupIncludeAllSources(ctx, id, includeAll); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("代理分组 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
 }
 
 // DeleteProxyGroup 删除代理分组。
@@ -352,6 +400,17 @@ func (m *Manager) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, err
 		return nil, err
 	}
 	return g, nil
+}
+
+// UpdateRuleFromSource 用规则源的新行覆盖自定义规则（含 raw/origin_key）。
+func (m *Manager) UpdateRuleFromSource(ctx context.Context, id int64, ruleType, ruleParam string, ruleConfig int64, resolveDNS bool, raw, originKey string) error {
+	if err := m.db.UpdateRuleFromSource(ctx, id, ruleType, ruleParam, ruleConfig, resolveDNS, raw, originKey); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("规则 %d 不存在或不是自定义规则", id)
+		}
+		return err
+	}
+	return nil
 }
 
 // UpdateProxyGroup 更新代理分组。sortOrder>0 覆盖，<=0 保持原值。

@@ -17,11 +17,16 @@ const DefaultConcurrency = 8
 // DefaultTimeout 是单个 URL 的探测超时。
 const DefaultTimeout = 15 * time.Second
 
+// DefaultUserAgent 是探测请求的默认 User-Agent。
+// 部分机场会拒绝 Go 默认的 Go-http-client，使用常见客户端标识避免误判。
+const DefaultUserAgent = "clash.meta/1.18.0"
+
 // Options 探测参数。
 type Options struct {
 	Concurrency int           // 并发上限，<=0 取 DefaultConcurrency
 	Timeout     time.Duration // 单 URL 超时，<=0 取 DefaultTimeout
 	Method      string        // HTTP 方法，空则 GET
+	UserAgent   string        // 请求 User-Agent，空则 DefaultUserAgent
 	Client      *http.Client  // 自定义 client，nil 则新建
 }
 
@@ -37,6 +42,9 @@ func (o Options) normalize() Options {
 	}
 	if o.Method == "" {
 		o.Method = http.MethodGet
+	}
+	if o.UserAgent == "" {
+		o.UserAgent = DefaultUserAgent
 	}
 	if o.Client == nil {
 		o.Client = &http.Client{Timeout: o.Timeout}
@@ -84,6 +92,7 @@ func probe(ctx context.Context, url string, opts Options) Result {
 		r.Latency = time.Since(start)
 		return r
 	}
+	req.Header.Set("User-Agent", opts.UserAgent)
 	resp, err := opts.Client.Do(req)
 	r.Latency = time.Since(start)
 	if err != nil {

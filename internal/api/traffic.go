@@ -58,6 +58,9 @@ func isTruthyQuery(v string) bool {
 }
 
 // importRulesAfterRefresh 对所有刷新成功的机场导入规则与规则集；单个机场失败只记 err，不影响整体。
+//
+// 与手动导入保持同一语义：createGroups=true，缺失的目标分组会被补建。否则自动导入
+// 的规则目标找不到分组，用户只能拿到一组指向 DIRECT/兜底的规则。
 func (s *Server) importRulesAfterRefresh(ctx context.Context, m *subforge.Manager, results []subforge.TrafficRefreshResult) []map[string]any {
 	out := make([]map[string]any, 0, len(results))
 	for _, res := range results {
@@ -70,6 +73,7 @@ func (s *Server) importRulesAfterRefresh(ctx context.Context, m *subforge.Manage
 			"rules_added":     0,
 			"rules_skipped":   0,
 			"providers_added": 0,
+			"groups_created":  0,
 			"warnings":        []string{},
 			"err":             "",
 		}
@@ -89,15 +93,23 @@ func (s *Server) importRulesAfterRefresh(ctx context.Context, m *subforge.Manage
 			out = append(out, item)
 			continue
 		}
-		ir, warnings, err := s.importRulesFromAirport(ctx, m, a)
+		ir, warnings, err := s.importRulesToLibrary(ctx, m, a, subforge.ImportOptions{
+			CreateGroups: true,
+			EnableRules:  true,
+		})
 		if err != nil {
 			item["err"] = err.Error()
 			out = append(out, item)
 			continue
 		}
-		item["rules_added"] = ir.RulesAdded
-		item["rules_skipped"] = ir.RulesSkipped
+		item["rules_added"] = 0
+		item["rules_skipped"] = 0
+		item["rules_enabled"] = 0
 		item["providers_added"] = ir.ProvidersAdded
+		item["groups_created"] = ir.GroupsCreated
+		item["rule_source_name"] = ir.RuleSourceName
+		item["rule_source_version"] = ir.RuleSourceVersion
+		item["rule_source_rules"] = ir.RuleSourceRules
 		item["warnings"] = warnings
 		out = append(out, item)
 	}
@@ -147,6 +159,7 @@ func (s *Server) handleAPITrafficRefresh(w http.ResponseWriter, r *http.Request)
 }
 
 // handleAPIAirportRefreshOne 刷新单个机场流量：POST /api/airports/{id}/refresh
+// 可选 ?with_rules=1 时同时更新该机场的规则源，并在响应里带 "import"。
 // → 200 {"result":{...}}；机场不存在 → 404；未启用引擎 → 503；非 POST → 405「仅支持 POST」
 func (s *Server) handleAPIAirportRefreshOne(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
@@ -170,7 +183,13 @@ func (s *Server) handleAPIAirportRefreshOne(w http.ResponseWriter, r *http.Reque
 		s.writeAPIError(w, r, http.StatusNotFound, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"result": res})
+	resp := map[string]any{"result": res}
+	if isTruthyQuery(r.URL.Query().Get("with_rules")) {
+		if imports := s.importRulesAfterRefresh(r.Context(), m, []subforge.TrafficRefreshResult{res}); len(imports) > 0 {
+			resp["import"] = imports[0]
+		}
+	}
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleAPITrafficPreview 试算聚合：GET /api/traffic/preview?strategy=<json>

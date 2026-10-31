@@ -17,14 +17,99 @@ import (
 // 否则无法做同来源去重与层拼接。API 层可把它映射成 400。
 var ErrEmptyImportSource = errors.New("导入来源不能为空")
 
+// ImportOptions 控制一次导入的落库语义。
+// 默认（零值）与旧行为一致：只进候选、不建组；调用方需要"导入即生效"时显式打开。
+type ImportOptions struct {
+	// CreateGroups 目标分组不存在时自动补建 select 分组。
+	CreateGroups bool
+	// EnableRules 新导入的规则直接 enabled=true。
+	EnableRules bool
+	// UpstreamGroups 是机场订阅自带的 proxy-groups；CreateGroups=true 时落库。
+	UpstreamGroups []model.UpstreamGroup
+	// UpstreamNodeNames 是同一份机场订阅解析出的节点名，用来判断某个上游分组
+	// 是否覆盖全部机场节点：覆盖的组（通常是主节点组/漏网之鱼）默认在订阅里
+	// 追加方案选中的自建节点，子集组保持原样。
+	UpstreamNodeNames []string
+	// SkipRules 只建分组/写 providers，不把规则写进 rules 表。
+	// 机场规则改由版本化规则源产品承载；这里保留规则解析是为了按目标名补建分组。
+	SkipRules bool
+}
+
 // ImportResult 汇总一次订阅规则导入的结果。
 type ImportResult struct {
 	RulesAdded     int `json:"rules_added"`
 	RulesSkipped   int `json:"rules_skipped"`
 	ProvidersAdded int `json:"providers_added"`
 	// GroupsCreated 是本次导入自动新建的目标分组个数（仅 createGroups=true 时可能非 0）。
-	GroupsCreated int      `json:"groups_created"`
-	Warnings      []string `json:"warnings"`
+	GroupsCreated int `json:"groups_created"`
+	// 机场规则源的写入结果（仅有机场订阅的导入路径会填）。
+	RuleSourceName    string   `json:"rule_source_name,omitempty"`
+	RuleSourceVersion string   `json:"rule_source_version,omitempty"`
+	RuleSourceRules   int      `json:"rule_source_rules,omitempty"`
+	Warnings          []string `json:"warnings"`
+}
+
+// splitRuleFields 按顶层逗号拆分规则行。
+// AND/OR/NOT 等逻辑规则的参数内部也含逗号（如 ((DST-PORT,443),(NETWORK,UDP))），
+// 直接 strings.Split 会把参数片段误当成目标分组。
+func splitRuleFields(line string) []string {
+	out := make([]string, 0, 4)
+	depth := 0
+	start := 0
+	for i, r := range line {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				out = append(out, strings.TrimSpace(line[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, strings.TrimSpace(line[start:]))
+	return out
+}
+
+// coversAllNodes 判断分组成员是否覆盖全部给定节点名。
+// 只认成员里逐字出现的节点名；成员里的子组名（如 PROXY）不展开。
+// 没有可识别节点名时返回 false，避免把只有子组引用的分组误判成节点组。
+func coversAllNodes(members, nodeNames []string) bool {
+	if len(nodeNames) == 0 {
+		return false
+	}
+	memberSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		if v := strings.TrimSpace(m); v != "" {
+			memberSet[v] = true
+		}
+	}
+	seen := 0
+	for _, n := range nodeNames {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		seen++
+		if !memberSet[n] {
+			return false
+		}
+	}
+	return seen > 0
+}
+
+// normalizeUpstreamGroupType 把机场分组类型收敛到渲染器支持的范围；未知类型退化为 select。
+func normalizeUpstreamGroupType(typ string) string {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "select", "url-test", "fallback", "load-balance":
+		return strings.ToLower(strings.TrimSpace(typ))
+	default:
+		return "select"
+	}
 }
 
 // NormalizeRuleOriginKey 把一行规则规范化为去重键。
@@ -68,6 +153,13 @@ func (m *Manager) ImportRules(ctx context.Context, source string, rules []string
 // 并把 rule_config 指向新组；分组库里已有同名分组时直接复用，不重复建组。
 // providers 不分方案（订阅渲染不使用），仍写全局，来源跟随 source。
 func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules []string, providers []model.RuleProvider, createGroups bool) (ImportResult, error) {
+	return m.ImportRulesToLibraryWithOptions(ctx, source, rules, providers, ImportOptions{CreateGroups: createGroups})
+}
+
+// ImportRulesToLibraryWithOptions 是导入的完整入口；ImportRulesToLibrary 保留旧签名，
+// 等价于只控制 CreateGroups、规则仍进候选。API 的“导入后启用”走这里。
+func (m *Manager) ImportRulesToLibraryWithOptions(ctx context.Context, source string, rules []string, providers []model.RuleProvider, opts ImportOptions) (ImportResult, error) {
+	createGroups := opts.CreateGroups
 	result := ImportResult{
 		Warnings: []string{},
 	}
@@ -85,9 +177,54 @@ func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules
 		return result, err
 	}
 	groupIDByName := make(map[string]int64, len(groups))
+	existingByName := make(map[string]ProxyGroup, len(groups))
 	for _, g := range groups {
 		if _, ok := groupIDByName[g.Name]; !ok {
 			groupIDByName[g.Name] = g.ID
+		}
+		if _, ok := existingByName[g.Name]; !ok {
+			existingByName[g.Name] = g
+		}
+	}
+
+	now := time.Now()
+	missingTargets := map[string]int{}
+	createdGroups := map[string]int{}
+
+	// 机场自带分组先落库：规则目标按名字映射到这些组，避免被当成缺失目标
+	// 再建一个 regex="." 的占位组。已有同名组（用户自建）优先，不覆盖。
+	if createGroups {
+		for _, ug := range opts.UpstreamGroups {
+			name := strings.TrimSpace(ug.Name)
+			if name == "" || len(ug.Members) == 0 {
+				continue
+			}
+			includeAll := coversAllNodes(ug.Members, opts.UpstreamNodeNames)
+			if existing, exists := existingByName[name]; exists {
+				// 同一机场刷新时更新派生的成员与「全部来源」标志；保留用户改过的
+				// 类型/测活/排序，也保留用户关掉的「包含自建」。
+				// 例外：分组从「子集」升级为「全节点」时，默认恢复完整扩展（含自建），
+				// 避免旧版本漏判留下的 all=true/self=false 半开状态。
+				if existing.Source == source {
+					includeSelf := existing.IncludeSelf
+					if includeAll && !existing.IncludeAllSources {
+						includeSelf = true
+					}
+					if err := m.db.UpdateImportedGroupMembersFlags(ctx, existing.ID, ug.Members, includeSelf, includeAll); err != nil {
+						return result, err
+					}
+				}
+				continue
+			}
+			g, gErr := m.AddProxyGroupWithMembersAndFlags(ctx, name, normalizeUpstreamGroupType(ug.Type),
+				"", ug.URL, ug.Interval, 0, source, ug.Members, includeAll, includeAll)
+			if gErr != nil {
+				return result, gErr
+			}
+			groupIDByName[name] = g.ID
+			existingByName[name] = *g
+			result.GroupsCreated++
+			createdGroups[name]++
 		}
 	}
 
@@ -97,9 +234,6 @@ func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules
 		return result, err
 	}
 
-	now := time.Now()
-	missingTargets := map[string]int{}
-	createdGroups := map[string]int{}
 	pending := make([]store.ImportedRuleRow, 0, len(rules))
 	for i, line := range rules {
 		trimmed := strings.TrimSpace(line)
@@ -111,7 +245,7 @@ func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules
 		}
 
 		originKey := NormalizeRuleOriginKey(line)
-		parts := strings.Split(line, ",")
+		parts := splitRuleFields(line)
 		for j := range parts {
 			parts[j] = strings.TrimSpace(parts[j])
 		}
@@ -163,12 +297,15 @@ func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules
 			}
 		}
 
+		if opts.SkipRules {
+			continue
+		}
 		pending = append(pending, store.ImportedRuleRow{
 			RuleType:   ruleType,
 			RuleParam:  ruleParam,
 			RuleConfig: ruleConfig,
 			ResolveDNS: resolveDNS,
-			Enabled:    false,
+			Enabled:    opts.EnableRules,
 			SortOrder:  maxSort + i + 1,
 			Source:     source,
 			Raw:        line,
@@ -214,7 +351,7 @@ func (m *Manager) ImportRulesToLibrary(ctx context.Context, source string, rules
 			names = append(names[:3], "…")
 		}
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
-			"已自动创建 %d 个分组（%s），导入规则的分组目标已指向这些新分组",
+			"已创建 %d 个分组（%s，含机场自带分组），导入规则的分组目标已指向这些新分组",
 			total, strings.Join(names, "、")))
 	}
 

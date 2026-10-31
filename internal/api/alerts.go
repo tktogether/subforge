@@ -86,7 +86,7 @@ func (s *Server) handleAPIAlertChannelTest(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	ch, err := newSchedulerAlertChannel(c)
+	ch, err := newSchedulerAlertChannel(c, s.http)
 	if err != nil {
 		s.writeAPIError(w, r, http.StatusBadRequest, err)
 		return
@@ -132,12 +132,12 @@ func (s *Server) alertChannelForTest(w http.ResponseWriter, m *subforge.Manager,
 }
 
 // newSchedulerAlertChannel 把一条通道配置构造成 scheduler.AlertChannel。
-func newSchedulerAlertChannel(c subforge.AlertChannel) (scheduler.AlertChannel, error) {
+func newSchedulerAlertChannel(c subforge.AlertChannel, client *http.Client) (scheduler.AlertChannel, error) {
 	switch c.Kind {
 	case "telegram":
 		return scheduler.NewTelegramChannel(c.BotToken, c.ChatID), nil
 	case "dingtalk":
-		return scheduler.NewDingTalkChannel(c.Webhook), nil
+		return scheduler.NewDingTalkChannelWithClient(c.Webhook, client), nil
 	case "smtp":
 		return &scheduler.SMTPChannel{
 			Host: c.Host, Port: c.Port, Username: c.Username,

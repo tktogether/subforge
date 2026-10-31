@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -19,8 +20,13 @@ type Profile struct {
 	Description string `json:"description"`
 	Config      string `json:"config"`
 	Pipeline    string `json:"pipeline"`
-	Enabled     bool   `json:"enabled"`
-	SortOrder   int    `json:"sort_order"`
+	// Target/Include/Exclude 是方案的输出定制（原令牌字段迁移而来）。
+	// 令牌字段仍作为旧版兼容保留，但 Web 只在这里维护。
+	Target    string `json:"target"`
+	Include   string `json:"include"`
+	Exclude   string `json:"exclude"`
+	Enabled   bool   `json:"enabled"`
+	SortOrder int    `json:"sort_order"`
 	// RuleLayers / GroupLayers 是层的优先级列表（高到低），库内以 JSON 文本保存；
 	// 空串解析为 nil，由调用方按契约补默认三层。
 	RuleLayers  []string `json:"rule_layers"`
@@ -28,6 +34,10 @@ type Profile struct {
 	// RuleSources 是方案绑定的规则源名列表（规则工厂 manifest 的 source 名），
 	// 库内以 JSON 文本保存（编码同 rule_layers）；空串解析为 nil = 未绑定。
 	RuleSources []string `json:"rule_sources"`
+	// AirportIDs / SelfNodeIDs 是方案使用的节点来源。
+	// nil = 未限制（使用全部启用来源）；空数组 = 明确不使用该类来源。
+	AirportIDs  []int64 `json:"airport_ids"`
+	SelfNodeIDs []int64 `json:"self_node_ids"`
 	// RuleCount / GroupCount 是按「已启用层」实时统计的条数，由查询后填充。
 	RuleCount  int       `json:"rule_count"`
 	GroupCount int       `json:"group_count"`
@@ -38,10 +48,14 @@ type Profile struct {
 // profileSelectCols 是方案列表/详情共用的列。
 // 规则数与分组数不再用 profile_id 子查询（v2 已无该列），
 // 改为读出层配置后由 CountRulesByLayers / CountGroupsByLayers 实时统计。
-const profileSelectCols = `SELECT p.id, p.name, p.description, p.config, p.pipeline, p.enabled, p.sort_order,
+const profileSelectCols = `SELECT p.id, p.name, p.description, p.config, p.pipeline,
+       COALESCE(p.target, ''), COALESCE(p.include, ''), COALESCE(p.exclude, ''),
+       p.enabled, p.sort_order,
        COALESCE(p.rule_layers, ''),
        COALESCE(p.group_layers, ''),
        COALESCE(p.rule_sources, ''),
+       COALESCE(p.airport_ids, ''),
+       COALESCE(p.self_node_ids, ''),
        p.created_at, p.updated_at
 FROM profiles p`
 
@@ -50,15 +64,49 @@ func scanProfile(row interface {
 	Scan(dest ...any) error
 }) (Profile, error) {
 	var p Profile
-	var ruleLayers, groupLayers, ruleSources string
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Config, &p.Pipeline, &p.Enabled, &p.SortOrder,
-		&ruleLayers, &groupLayers, &ruleSources, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	var ruleLayers, groupLayers, ruleSources, airportIDs, selfNodeIDs string
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Config, &p.Pipeline,
+		&p.Target, &p.Include, &p.Exclude,
+		&p.Enabled, &p.SortOrder,
+		&ruleLayers, &groupLayers, &ruleSources, &airportIDs, &selfNodeIDs, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return Profile{}, err
 	}
 	p.RuleLayers = parseLayerList(ruleLayers)
 	p.GroupLayers = parseLayerList(groupLayers)
 	p.RuleSources = parseLayerList(ruleSources)
+	p.AirportIDs = parseIDList(airportIDs)
+	p.SelfNodeIDs = parseIDList(selfNodeIDs)
 	return p, nil
+}
+
+// parseIDList 解析库内的 JSON id 数组。
+// 空串 = 未限制（nil）；"[]" = 明确不使用该类来源（空切片）。
+// 非法 JSON 回退为 nil（未限制），避免旧库/手改数据把订阅整个打空。
+func parseIDList(raw string) []int64 {
+	if raw == "" {
+		return nil
+	}
+	var out []int64
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	if out == nil {
+		out = []int64{}
+	}
+	return out
+}
+
+// marshalIDList 把 id 数组序列化成库内 JSON 文本。
+// nil = 未限制（空串）；空切片 = 明确不使用（"[]"）。
+func marshalIDList(ids []int64) (string, error) {
+	if ids == nil {
+		return "", nil
+	}
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // parseLayerList 解析库内的 JSON 层数组。
@@ -216,17 +264,19 @@ func scanRule(row interface {
 
 // groupColumns 是 proxy_groups 表的读取列（v2 已无 profile_id，新增 source）。
 const groupColumns = "id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), " +
-	"sort_order, COALESCE(source, ''), created_at, updated_at"
+	"sort_order, COALESCE(source, ''), COALESCE(members, ''), COALESCE(include_self, 0), COALESCE(include_all_sources, 0), created_at, updated_at"
 
 // scanProxyGroup 从一行读出 ProxyGroup（列序必须与 groupColumns 对齐）。
 func scanProxyGroup(row interface {
 	Scan(dest ...any) error
 }) (ProxyGroup, error) {
 	var g ProxyGroup
+	var members string
 	if err := row.Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval,
-		&g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		&g.SortOrder, &g.Source, &members, &g.IncludeSelf, &g.IncludeAllSources, &g.CreatedAt, &g.UpdatedAt); err != nil {
 		return ProxyGroup{}, err
 	}
+	g.Members = parseLayerList(members)
 	return g, nil
 }
 
@@ -238,6 +288,78 @@ func (d *DB) CreateSubTokenWithProfile(ctx context.Context, token, name, target,
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		token, name, target, pipeline, configName, include, exclude, profileID)
 	return err
+}
+
+// SetProfileRenderOptions 保存方案的 target/include/exclude；nil = 不修改该列。
+func (d *DB) SetProfileRenderOptions(ctx context.Context, id int64, target, include, exclude *string) error {
+	if target == nil && include == nil && exclude == nil {
+		return nil
+	}
+	sets := make([]string, 0, 4)
+	args := make([]any, 0, 5)
+	for _, f := range []struct {
+		col string
+		val *string
+	}{{"target", target}, {"include", include}, {"exclude", exclude}} {
+		if f.val != nil {
+			sets = append(sets, f.col+" = ?")
+			args = append(args, strings.TrimSpace(*f.val))
+		}
+	}
+	sets = append(sets, "updated_at = ?")
+	args = append(args, time.Now(), id)
+	res, err := d.db.ExecContext(ctx, "UPDATE profiles SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetProfileSources 保存方案使用的机场/自建节点来源。
+// 任一参数为 nil 时不动该列；非 nil 时按 nil=未限制、空数组=明确不使用的语义落库。
+func (d *DB) SetProfileSources(ctx context.Context, id int64, airportIDs, selfNodeIDs *[]int64) error {
+	if airportIDs == nil && selfNodeIDs == nil {
+		return nil
+	}
+	sets := make([]string, 0, 3)
+	args := make([]any, 0, 4)
+	if airportIDs != nil {
+		raw, err := marshalIDList(*airportIDs)
+		if err != nil {
+			return err
+		}
+		sets = append(sets, "airport_ids = ?")
+		args = append(args, raw)
+	}
+	if selfNodeIDs != nil {
+		raw, err := marshalIDList(*selfNodeIDs)
+		if err != nil {
+			return err
+		}
+		sets = append(sets, "self_node_ids = ?")
+		args = append(args, raw)
+	}
+	sets = append(sets, "updated_at = ?")
+	args = append(args, time.Now(), id)
+	res, err := d.db.ExecContext(ctx, "UPDATE profiles SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // SetProfileRuleSources 保存方案绑定的规则源名；空数组落库为 ""（空串 = 未绑定）。

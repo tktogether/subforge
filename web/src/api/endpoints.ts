@@ -7,6 +7,7 @@ export interface Airport {
   remarks: string
   enabled: boolean
   sort_order: number
+  pipeline?: string
   // 流量字段（可选，后端 internal/store/store.go Airport 返回）
   upload?: number // 字节
   download?: number // 字节
@@ -26,6 +27,12 @@ export interface ProxyGroup {
   interval: number
   sort_order: number
   source?: string
+  // 机场自带分组的成员；手工分组通常为空，按 regex 展开。
+  members?: string[]
+  // 订阅渲染时是否在成员末尾追加方案选中的自建节点。
+  include_self?: boolean
+  // 订阅渲染时是否把方案里所有机场的节点并入（机场「全部节点」组默认开启）。
+  include_all_sources?: boolean
 }
 
 export interface SelfNode {
@@ -48,6 +55,30 @@ export interface Rule {
   raw?: string
   origin_key?: string
   group_name?: string
+}
+
+export interface RulePage {
+  rules: Rule[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface RuleSourceCount {
+  source: string
+  count: number
+}
+
+export interface RuleSourceConflictSample {
+  type: string
+  param: string
+  first: string
+  second: string
+}
+
+export interface RuleSourceConflicts {
+  total: number
+  samples: RuleSourceConflictSample[]
 }
 
 export interface SubToken {
@@ -123,6 +154,31 @@ export interface Stats {
   last: StatsLast | null
 }
 
+export interface OverviewCounts {
+  airports: number
+  airports_enabled: number
+  airport_nodes: number
+  self_nodes: number
+  self_nodes_enabled: number
+  profiles: number
+  profiles_enabled: number
+  tokens: number
+  groups: number
+  rules: number
+  rules_enabled: number
+  rule_sources: number
+  rule_sources_ready: number
+  rule_source_rules: number
+}
+
+export interface Overview {
+  name: string
+  version: string
+  startedAt: string
+  uptime: string
+  counts: OverviewCounts
+}
+
 export interface RulesetsResponse {
   rulesets: Record<string, string>
   rules: string[]
@@ -170,6 +226,7 @@ export interface AirportInput {
   subscription_url: string
   remarks: string
   enabled: boolean
+  pipeline?: string
 }
 
 export interface GroupInput {
@@ -178,6 +235,8 @@ export interface GroupInput {
   regex: string
   url: string
   interval: number
+  include_self?: boolean
+  include_all_sources?: boolean
 }
 
 export interface SelfNodeInput {
@@ -274,8 +333,33 @@ export interface RuleSourceStatus {
   dir: string
   versions: string[]
   latest: string
+  /** airport = 机场订阅生成；remote = 远程清单 */
+  origin?: 'airport' | 'remote' | string
+  /** 界面展示名；机场源已去掉内部前缀 */
+  label?: string
+  rule_count?: number
+  /** 当前版本文件修改时间（Unix 秒） */
+  updated_at?: number
+  /** 机场源对应的机场已删除 */
+  airport_missing?: boolean
 }
 export type RuleSource = RuleSourceStatus
+
+export interface RuleSourceRulesPage {
+  name: string
+  total: number
+  offset: number
+  limit: number
+  rules: string[]
+  warnings?: string[]
+}
+
+export interface RuleSourceImportResult {
+  added: number
+  skipped: number
+  overwrote: number
+  warnings?: string[]
+}
 
 export interface RuleSourceUpdateResult {
   source: string
@@ -298,7 +382,9 @@ export interface TrafficRefreshResult {
 }
 export interface ImportRulesOutcome {
   airport_id: number; name: string
-  rules_added: number; rules_skipped: number; providers_added: number
+  rules_added: number; rules_skipped: number; rules_enabled?: number; providers_added: number
+  groups_created?: number
+  rule_source_name?: string; rule_source_version?: string; rule_source_rules?: number
   warnings: string[]; err: string
 }
 export interface TrafficRefreshResponse {
@@ -306,10 +392,11 @@ export interface TrafficRefreshResponse {
   imports?: ImportRulesOutcome[]
 }
 export interface ImportRulesResult {
-  rules_added: number; rules_skipped: number; providers_added: number; warnings: string[]; groups_created?: number
+  rules_added: number; rules_skipped: number; rules_enabled?: number; providers_added: number; warnings: string[]; groups_created?: number
+  rule_source_name?: string; rule_source_version?: string; rule_source_rules?: number
 }
 export interface SubscheckResult {
-  url: string; ok: boolean; status_code: number; latency: number; bytes: number; err: string
+  name?: string; url: string; ok: boolean; status_code: number; latency_ms: number; bytes: number; err: string
 }
 export interface AlertChannel {
   kind: string; enabled: boolean
@@ -318,6 +405,23 @@ export interface AlertChannel {
   from?: string; to?: string; configured?: Record<string, boolean>
 }
 export interface AlertTestResult { ok: boolean; error: string; channel: string }
+export interface PreviewNode {
+  name: string
+  type: string
+  server: string
+  port: string
+}
+
+export interface NodePreviewResult {
+  name: string
+  pipeline?: string
+  before_count: number
+  after_count: number
+  before: PreviewNode[]
+  after: PreviewNode[]
+  warnings?: string[]
+}
+
 export interface RuleSourcesResponse {
   manifest_path: string
   default_manifest_path?: string
@@ -363,11 +467,17 @@ export interface Profile {
   description: string
   config: string
   pipeline: string
+  target: string
+  include: string
+  exclude: string
   enabled: boolean
   sort_order: number
   rule_layers: string[]
   // 规则源（D-33）：方案绑定的规则源名；未绑定 = []（后端返回空数组，不是 null）。
   rule_sources: string[]
+  // 节点来源：null = 未限制（全部启用来源）；[] = 明确不使用该类来源。
+  airport_ids: number[] | null
+  self_node_ids: number[] | null
   group_layers: string[]
   rule_count: number
   group_count: number
@@ -380,15 +490,23 @@ export interface ProfileInput {
   description?: string
   config?: string
   pipeline?: string
+  target?: string
+  include?: string
+  exclude?: string
   enabled?: boolean
   sort_order?: number
   rule_layers?: string[]
   // 规则源（D-33）：绑定到方案的规则源名；缺省 = 不改（PUT），[] = 清空。
   rule_sources?: string[]
+  // 节点来源：all_sources=true 恢复“全部启用来源”；否则按 airport_ids/self_node_ids 限制。
+  all_sources?: boolean
+  airport_ids?: number[]
+  self_node_ids?: number[]
   group_layers?: string[]
 }
 
 export const endpoints = {
+  overview: (): Promise<Overview> => api.get<Overview>('/api/overview'),
   stats: (): Promise<Stats> => api.get<Stats>('/api/stats'),
   history: (): Promise<HistoryEntry[]> => api.get<HistoryEntry[]>('/api/history'),
   pipelines: (config: string): Promise<Pipeline[]> => api.get<Pipeline[]>('/api/pipelines', { query: { config } }),
@@ -419,6 +537,20 @@ export const endpoints = {
   // GET /api/rules?source=&source_prefix=1：不带参数=全部；source=空串=只看自定义层（§6.5 编码约定）。
   listRules: (filter?: { source?: string; sourcePrefix?: boolean }): Promise<Rule[]> =>
     api.get<{ rules: Rule[] }>('/api/rules', filter && filter.source !== undefined ? { query: { source: filter.source, source_prefix: filter.sourcePrefix ? 1 : 0 } } : undefined).then((r) => r.rules),
+  listRulesPage: (query: { source?: string | null; enabled?: boolean; q?: string; limit: number; offset: number }): Promise<RulePage> =>
+    api.get<RulePage>('/api/rules', {
+      query: {
+        source: query.source === null || query.source === undefined ? undefined : query.source,
+        enabled: query.enabled === undefined ? undefined : query.enabled ? 1 : 0,
+        q: query.q === undefined || query.q === '' ? undefined : query.q,
+        limit: query.limit,
+        offset: query.offset,
+      },
+    }),
+  listRuleSourceCounts: (): Promise<RuleSourceCount[]> =>
+    api.get<{ sources: RuleSourceCount[] }>('/api/rules/sources').then((r) => r.sources),
+  checkRuleSourceConflicts: (names: string[]): Promise<RuleSourceConflicts> =>
+    api.get<RuleSourceConflicts>('/api/rule-sources/conflicts', { query: { names: names.join(',') } }),
   createRule: (body: RuleInput): Promise<Rule> => api.post<{ rule: Rule }>('/api/rules', body).then((r) => r.rule),
   updateRule: (id: number, body: RuleInput): Promise<Rule> => api.put<{ rule: Rule }>('/api/rules/' + id, body).then((r) => r.rule),
   deleteRule: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/rules/' + id),
@@ -433,6 +565,9 @@ export const endpoints = {
   createSelfNode: (body: SelfNodeInput): Promise<SelfNode> => api.post<{ self_node: SelfNode }>('/api/self-nodes', body).then((r) => r.self_node),
   updateSelfNode: (id: number, body: SelfNodeInput): Promise<OkResponse> => api.put<OkResponse>('/api/self-nodes/' + id, body),
   deleteSelfNode: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/self-nodes/' + id),
+  getSelfSourcePipeline: (): Promise<{ pipeline: string }> => api.get<{ pipeline: string }>('/api/self-nodes/pipeline'),
+  setSelfSourcePipeline: (pipeline: string): Promise<{ pipeline: string }> =>
+    api.put<{ pipeline: string }>('/api/self-nodes/pipeline', { pipeline }),
 
   listScripts: (): Promise<Script[]> => api.get<{ scripts: Script[] }>('/api/scripts').then((r) => r.scripts),
   createScript: (body: ScriptInput): Promise<Script> => api.post<{ script: Script }>('/api/scripts', body).then((r) => r.script),
@@ -458,6 +593,10 @@ export const endpoints = {
   applySuggestions: (): Promise<{ applied: number }> => api.post<{ applied: number }>('/api/suggestions/apply', {}),
   listRuleSources: (): Promise<RuleSourcesResponse> =>
     api.get<RuleSourcesResponse>('/api/rule-sources'),
+  listRuleSourceRules: (name: string, opts?: { q?: string; offset?: number; limit?: number }): Promise<RuleSourceRulesPage> =>
+    api.get<RuleSourceRulesPage>('/api/rule-sources/rules', { query: { name, q: opts?.q, offset: opts?.offset, limit: opts?.limit } }),
+  importRuleSourceRules: (body: { name: string; rules: string[]; conflict?: 'skip' | 'overwrite' }): Promise<RuleSourceImportResult> =>
+    api.post<RuleSourceImportResult>('/api/rule-sources/import-rules', body),
   updateRuleSources: (): Promise<{ results: RuleSourceUpdateResult[] }> =>
     api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update', {}),
   rollbackRuleSource: (name: string): Promise<{ path: string }> =>
@@ -468,22 +607,30 @@ export const endpoints = {
     api.post<{ path: string; created: boolean }>('/api/rule-sources', body),
   removeRuleSource: (name: string): Promise<OkResponse> =>
     api.post<OkResponse>('/api/rule-sources/remove', { name }),
+  renameRuleSource: (name: string, newName: string): Promise<{ ok: boolean; name: string }> =>
+    api.post<{ ok: boolean; name: string }>('/api/rule-sources/rename', { name, new_name: newName }),
   updateRuleSourceOne: (name: string): Promise<{ results: RuleSourceUpdateResult[] }> =>
     api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update-one', { name }),
+  testPipeline: (body: { name: string; steps: unknown[]; nodes?: unknown[] }): Promise<NodePreviewResult> =>
+    api.post<NodePreviewResult>('/api/pipelines/test', body),
+  previewAirportProcess: (id: number | string, pipeline = ''): Promise<NodePreviewResult> =>
+    api.post<NodePreviewResult>('/api/airports/' + id + '/preview-process', { pipeline }),
+  previewSelfNodesProcess: (pipeline = ''): Promise<NodePreviewResult> =>
+    api.post<NodePreviewResult>('/api/self-nodes/preview-process', { pipeline }),
 
   listSettings: (): Promise<{ settings: SettingItem[] }> => api.get<{ settings: SettingItem[] }>('/api/settings'),
   updateSettings: (values: Record<string, string>): Promise<{ settings: SettingItem[] }> => api.put<{ settings: SettingItem[] }>('/api/settings', { settings: values }),
 
   refreshAllAirports: (withRules = false): Promise<TrafficRefreshResponse> =>
     api.post<TrafficRefreshResponse>('/api/airports/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
-  refreshAirport: (id: number | string): Promise<{ result: TrafficRefreshResult }> =>
-    api.post<{ result: TrafficRefreshResult }>('/api/airports/' + id + '/refresh', {}),
+  refreshAirport: (id: number | string, withRules = false): Promise<{ result: TrafficRefreshResult; import?: ImportRulesOutcome }> =>
+    api.post<{ result: TrafficRefreshResult; import?: ImportRulesOutcome }>('/api/airports/' + id + '/refresh', {}, withRules ? { query: { with_rules: 1 } } : undefined),
   importAirportRules: (id: number | string, body?: { create_groups?: boolean }): Promise<ImportRulesResult> =>
     api.post<ImportRulesResult>('/api/airports/' + id + '/import-rules', body ?? {}),
-  checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[] }> =>
-    api.post<{ results: SubscheckResult[] }>('/api/airports/check', ids === undefined ? {} : { ids }),
-  lastAirportCheck: (): Promise<{ results: SubscheckResult[]; at?: number }> =>
-    api.get<{ results: SubscheckResult[]; at?: number }>('/api/airports/check/last'),
+  checkAirports: (ids?: number[]): Promise<{ results: SubscheckResult[]; at?: string }> =>
+    api.post<{ results: SubscheckResult[]; at?: string }>('/api/airports/check', ids === undefined ? {} : { ids }),
+  lastAirportCheck: (): Promise<{ results: SubscheckResult[]; at?: string }> =>
+    api.get<{ results: SubscheckResult[]; at?: string }>('/api/airports/check/last'),
 
   getTrafficStrategy: (): Promise<{ strategy: TrafficStrategy }> =>
     api.get<{ strategy: TrafficStrategy }>('/api/traffic/strategy'),
@@ -510,9 +657,6 @@ export const endpoints = {
   createProfile: (body: ProfileInput): Promise<Profile> => api.post<{ profile: Profile }>('/api/profiles', body).then((r) => r.profile),
   updateProfile: (id: number, body: ProfileInput): Promise<Profile> => api.put<{ profile: Profile }>('/api/profiles/' + id, body).then((r) => r.profile),
   deleteProfile: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/profiles/' + id),
-
-  initRuleManifest: (force = false): Promise<{ path: string; created: boolean }> =>
-    api.post<{ path: string; created: boolean }>('/api/rule-sources/init', {}, force ? { query: { force: 1 } } : undefined),
 }
 
 export function subscribeUrl(origin: string, token: string): string {

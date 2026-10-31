@@ -61,9 +61,9 @@ func TestRoutesAllRegistered(t *testing.T) {
 	}
 }
 
-// routingMissBody 是 server.go:handleNotFound 写出的正文。
+// routingMissBody 是 server.go:handleNotFound 写出的正文特征。
 // 只有它才代表「chi 没匹配到任何 pattern」，也就是路由真的没注册。
-const routingMissBody = "404: 路径不存在"
+const routingMissBody = `"code":"route_not_found"`
 
 // assertRouteReached 断言请求真的进了业务 handler。
 //
@@ -71,8 +71,8 @@ const routingMissBody = "404: 路径不存在"
 // （import_rules.go:31「机场不存在」、template_api.go:27「模板路径未配置」、
 // override_api.go:27「override 路径未配置」、subscription.go:119「订阅 1 不存在」）。
 // 这些 404 恰恰证明路由已经挂上、handler 已经执行，用 status 判会得到假阴性。
-// 真正的区分点：路由层 404 由 handleNotFound 写成 text/plain 的 "404: 路径不存在"；
-// 业务层 404 一律走 writeAPIError，是 application/json 的 {"error":...}。
+// 真正的区分点：路由层 404 由 handleNotFound 写成带 code=route_not_found 的 JSON；
+// 业务层 404 一律走 writeAPIError，不带这个 code。
 func assertRouteReached(t *testing.T, method, path string, status int, hdr http.Header, body string) {
 	t.Helper()
 	if status != http.StatusNotFound {

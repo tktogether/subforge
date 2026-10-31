@@ -324,6 +324,46 @@ func TestAPIAirportRefreshOneOK(t *testing.T) {
 	}
 }
 
+// TestAPIAirportRefreshOneWithRules 单机场刷新带 with_rules=1 时同时更新规则源。
+func TestAPIAirportRefreshOneWithRules(t *testing.T) {
+	ts, mgr := newWithRulesServer(t)
+	airports, err := mgr.ListAirports(t.Context())
+	if err != nil || len(airports) != 1 {
+		t.Fatalf("ListAirports: %v len=%d", err, len(airports))
+	}
+	path := "/api/airports/" + strconv.FormatInt(airports[0].ID, 10) + "/refresh?with_rules=1"
+	status, _, body := uiPostJSON(t, ts, path, "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var got struct {
+		Result json.RawMessage    `json:"result"`
+		Import *refreshImportItem `json:"import"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if len(got.Result) == 0 {
+		t.Fatalf("缺少 result: %s", body)
+	}
+	if got.Import == nil || got.Import.Err != "" || got.Import.RuleSourceRules != 2 {
+		t.Fatalf("import 不符: %+v body=%s", got.Import, body)
+	}
+}
+
+// 不带 with_rules 时不出现 import 键，保持旧响应形状。
+func TestAPIAirportRefreshOneWithoutRulesHasNoImportKey(t *testing.T) {
+	ts, _, id, _ := setupAirportWithTraffic(t)
+	path := "/api/airports/" + strconv.FormatInt(id, 10) + "/refresh"
+	status, _, body := uiPostJSON(t, ts, path, "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	if strings.Contains(body, "\"import\"") {
+		t.Fatalf("不带 with_rules 时不应出现 import 键: %s", body)
+	}
+}
+
 func TestAPIAirportRefreshOneNotFound(t *testing.T) {
 	ts, _, _, _ := setupAirportWithTraffic(t)
 	status, _, body := uiPostJSON(t, ts, "/api/airports/999999/refresh", "")
@@ -496,13 +536,17 @@ func TestAPIAirportsRefreshWithoutWithRulesHasNoImportsKey(t *testing.T) {
 }
 
 type refreshImportItem struct {
-	AirportID      int64    `json:"airport_id"`
-	Name           string   `json:"name"`
-	RulesAdded     int      `json:"rules_added"`
-	RulesSkipped   int      `json:"rules_skipped"`
-	ProvidersAdded int      `json:"providers_added"`
-	Warnings       []string `json:"warnings"`
-	Err            string   `json:"err"`
+	AirportID         int64    `json:"airport_id"`
+	Name              string   `json:"name"`
+	RulesAdded        int      `json:"rules_added"`
+	RulesSkipped      int      `json:"rules_skipped"`
+	ProvidersAdded    int      `json:"providers_added"`
+	GroupsCreated     int      `json:"groups_created"`
+	RuleSourceName    string   `json:"rule_source_name"`
+	RuleSourceRules   int      `json:"rule_source_rules"`
+	RuleSourceVersion string   `json:"rule_source_version"`
+	Warnings          []string `json:"warnings"`
+	Err               string   `json:"err"`
 }
 
 type refreshWithImports struct {
@@ -535,8 +579,8 @@ func TestAPIAirportsRefreshWithRulesImports(t *testing.T) {
 	if item.Err != "" {
 		t.Fatalf("imports[0].err = %q，应为空", item.Err)
 	}
-	if item.RulesAdded != 2 {
-		t.Fatalf("rules_added = %d，应为 2", item.RulesAdded)
+	if item.RulesAdded != 0 || item.RuleSourceRules != 2 || item.RuleSourceName == "" {
+		t.Fatalf("机场规则应写入规则源：%+v", item)
 	}
 	if item.ProvidersAdded != 1 {
 		t.Fatalf("providers_added = %d，应为 1", item.ProvidersAdded)
@@ -546,6 +590,86 @@ func TestAPIAirportsRefreshWithRulesImports(t *testing.T) {
 	}
 	if item.Name != "机场R" {
 		t.Fatalf("name = %q，应为 机场R", item.Name)
+	}
+}
+
+// TestAPIAirportsRefreshWithRulesCreatesGroups 自动导入必须和手动导入一样补建目标分组，
+// 否则规则目标找不到分组，订阅只能退化成 DIRECT/兜底。
+func TestAPIAirportsRefreshWithRulesCreatesGroups(t *testing.T) {
+	ts, mgr, _ := newTrafficTestServer(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("proxies:\n" +
+			"  - name: p1\n" +
+			"    type: ss\n" +
+			"    server: s.example.com\n" +
+			"    port: 8388\n" +
+			"    cipher: aes-256-gcm\n" +
+			"    password: pw\n" +
+			"rules:\n" +
+			"  - DOMAIN-SUFFIX,auto-group.test,自动建组\n"))
+	}))
+	t.Cleanup(up.Close)
+
+	a, err := mgr.AddAirport(t.Context(), "机场G", up.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	if a == nil {
+		t.Fatal("AddAirport 返回 nil")
+	}
+
+	status, _, body := uiPostJSON(t, ts, "/api/airports/refresh?with_rules=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	var got refreshWithImports
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, body)
+	}
+	if len(got.Imports) != 1 {
+		t.Fatalf("imports 长度 = %d；body=%s", len(got.Imports), body)
+	}
+	if got.Imports[0].GroupsCreated != 1 {
+		t.Fatalf("groups_created = %d，应为 1；body=%s", got.Imports[0].GroupsCreated, body)
+	}
+	groups, err := mgr.ListProxyGroups(t.Context())
+	if err != nil {
+		t.Fatalf("ListProxyGroups: %v", err)
+	}
+	found := false
+	for _, g := range groups {
+		if g.Name == "自动建组" && g.Source == "airport:机场G" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("自动导入未创建目标分组，groups=%+v", groups)
+	}
+	if rules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"}); err != nil {
+		t.Fatalf("ListRulesByLayers: %v", err)
+	} else if len(rules) != 0 {
+		t.Fatalf("机场规则不应写 rules 表：%+v", rules)
+	}
+	sources, err := mgr.ListRuleSources(t.Context())
+	if err != nil {
+		t.Fatalf("ListRuleSources: %v", err)
+	}
+	var srcName string
+	for _, s := range sources {
+		if s.Origin == "airport" {
+			srcName = s.Name
+			break
+		}
+	}
+	if srcName == "" {
+		t.Fatalf("自动导入未生成机场规则源：%+v", sources)
+	}
+	rules, _ := mgr.RuleSourceRules(t.Context(), []string{srcName})
+	if !strings.Contains(strings.Join(rules, "\n"), "DOMAIN-SUFFIX,auto-group.test,自动建组") {
+		t.Fatalf("机场规则源缺少 auto-group.test：%v", rules)
 	}
 }
 

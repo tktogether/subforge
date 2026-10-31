@@ -12,14 +12,13 @@ import (
 
 	"github.com/tktogether/subforge/internal/convert"
 	"github.com/tktogether/subforge/internal/render"
-	"github.com/tktogether/subforge/internal/subscheck"
 )
 
 type checkOut struct {
-	Results []subscheck.Result `json:"results"`
-	OK      int                `json:"ok"`
-	Fail    int                `json:"fail"`
-	At      string             `json:"at"`
+	Results []checkResultView `json:"results"`
+	OK      int               `json:"ok"`
+	Fail    int               `json:"fail"`
+	At      string            `json:"at"`
 }
 
 func newCheckFakeSub(t *testing.T, status int) *httptest.Server {
@@ -82,6 +81,9 @@ func TestAPICheckAllEnabledSuccess(t *testing.T) {
 	if out.OK != 2 || out.Fail != 0 {
 		t.Fatalf("ok=%d fail=%d raw=%s", out.OK, out.Fail, raw)
 	}
+	if out.Results[0].Name == "" || !strings.Contains(raw, `"name"`) || !strings.Contains(raw, `"latency_ms"`) {
+		t.Fatalf("结果应包含机场名与毫秒时延: %s", raw)
+	}
 	if _, err := time.Parse(time.RFC3339, out.At); err != nil {
 		t.Fatalf("at 非 RFC3339: %q", out.At)
 	}
@@ -102,6 +104,12 @@ func TestAPICheckFailureCounted(t *testing.T) {
 	}
 	if len(out.Results) != 1 || out.Results[0].OK {
 		t.Fatalf("结果应失败: %s", raw)
+	}
+	if !strings.Contains(out.Results[0].Err, "HTTP 500") {
+		t.Fatalf("错误应为字符串原因: %s", raw)
+	}
+	if !strings.Contains(raw, `"latency_ms"`) || strings.Contains(raw, `"Latency"`) {
+		t.Fatalf("字段名应为 snake_case: %s", raw)
 	}
 }
 
@@ -143,7 +151,7 @@ func TestAPICheckEmptyIDs(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", code, raw)
 	}
-	if !strings.Contains(raw, "没有可测活的机场") {
+	if !strings.Contains(raw, "没有可检测的机场") {
 		t.Fatalf("body=%s", raw)
 	}
 }

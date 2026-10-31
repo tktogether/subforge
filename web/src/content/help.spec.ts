@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { PAGE_HELP, pageHelp, GLOSSARY, glossaryFor, FIELD_HELP, fieldHelp, SCRIPTS_HELP, PIPELINE_HELP, FAILURE_HELP, ON_ERROR_HELP } from './help'
 
-const keys = ['overview','convert','pipelines','scripts','airports','self-nodes','rules','rule-sources','groups','subscriptions','tasks','settings','logs']
+const keys = ['overview','convert','pipelines','scripts','airports','self-nodes','rules','rule-sources','groups','profiles','subscriptions','tasks','settings','logs']
 
 describe('help.ts PAGE_HELP', () => {
-  it('恰好 13 个 key', () => {
+  it('恰好 14 个 key', () => {
     expect(Object.keys(PAGE_HELP).sort()).toEqual(keys.slice().sort())
   })
   for (const k of keys) {
@@ -55,7 +55,7 @@ describe('fieldHelp', () => {
 describe('GLOSSARY / FIELD_HELP / SCRIPTS / PIPELINE', () => {
   it('GLOSSARY 覆盖核心术语', () => {
     const terms = GLOSSARY.map((g) => g.term)
-    for (const t of ['节点','订阅','机场','规则','规则集','规则源','管线','转换','令牌','subscription-userinfo','MRS','ETag','测活']) {
+    for (const t of ['节点','订阅','机场','规则','规则集','规则源','管线','转换','令牌','subscription-userinfo','MRS','ETag','可用性检测']) {
       expect(terms).toContain(t)
     }
   })
@@ -122,25 +122,25 @@ describe('FAILURE_HELP / ON_ERROR_HELP', () => {
   it('ON_ERROR_HELP 恰好 3 条 skip/abort/warn', () => {
     expect(ON_ERROR_HELP.length).toBe(3)
     expect(ON_ERROR_HELP.map((o) => o.value)).toEqual(['skip', 'abort', 'warn'])
-    expect(ON_ERROR_HELP[0].effect).toBe('跳过该步，保留已处理结果，产物继续生成')
-    expect(ON_ERROR_HELP[1].effect).toBe('中止整次转换并报错')
-    expect(ON_ERROR_HELP[2].effect).toBe('记录告警，继续执行后续步骤')
+    expect(ON_ERROR_HELP[0].effect).toBe('跳过该步骤，保留已处理结果并继续生成产物')
+    expect(ON_ERROR_HELP[1].effect).toBe('终止本次转换并返回错误')
+    expect(ON_ERROR_HELP[2].effect).toBe('记录告警并继续执行后续步骤')
   })
   it('FIELD_HELP 增补三个键', () => {
-    expect(fieldHelp('airport.traffic_err')?.hint).toContain('错误原文')
-    expect(fieldHelp('airport.traffic_at')?.hint).toContain('Unix 秒')
-    expect(fieldHelp('pipeline.step.on_error')?.hint).toContain('skip')
+    expect(fieldHelp('airport.traffic_err')?.hint).toContain('失败')
+    expect(fieldHelp('airport.traffic_at')?.hint).toContain('时间')
+    expect(fieldHelp('pipeline.step.on_error')?.hint).toContain('失败')
   })
   it('airports/convert/rule-sources/tasks faq 含失败相关问答', () => {
     expect(PAGE_HELP.airports.faq?.some((f) => f.q.includes('余额'))).toBe(true)
-    expect(PAGE_HELP.convert.faq?.some((f) => f.q.includes('拉不到'))).toBe(true)
-    expect(PAGE_HELP['rule-sources'].faq?.some((f) => f.q.includes('变空'))).toBe(true)
+    expect(PAGE_HELP.convert.faq?.some((f) => f.q.includes('部分订阅失败'))).toBe(true)
+    expect(PAGE_HELP['rule-sources'].faq?.some((f) => f.q.includes('更新失败'))).toBe(true)
     expect(PAGE_HELP.tasks.faq?.some((f) => f.q.includes('重试'))).toBe(true)
   })
 })
 
 describe('文案与现实行为一致（W7M）', () => {
-  it('规则源不承诺 INI 模板，并说明落盘扩展名由清单 output.format 决定', () => {
+  it('规则源支持 INI 输入，并说明落盘扩展名由清单 output.format 决定', () => {
     const h = PAGE_HELP['rule-sources']
     const text = [
       h.oneLiner,
@@ -150,8 +150,8 @@ describe('文案与现实行为一致（W7M）', () => {
       ...(h.concepts ?? []).map((c) => c.term + c.explain),
     ].join('\n')
     expect(text).toContain('output.format')
-    expect(text).toContain('不含 INI 模板')
-    expect(text).not.toContain('支持 INI')
+    expect(text).toContain('INI')
+    expect(text).not.toContain('不含 INI 模板')
   })
   it('订阅页 faq 讲清令牌用途与可复用性', () => {
     const faq = PAGE_HELP.subscriptions.faq ?? []

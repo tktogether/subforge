@@ -36,12 +36,13 @@ chmod +x subforge-linux-amd64 && ./subforge-linux-amd64 version
 **二、使用容器镜像**：镜像已预设监听地址与数据目录，裸跑即可：
 
 ```sh
-docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+docker run -d --name subforge -p 25500:25500 -v "$(pwd)/data:/data" \
   ghcr.io/tktogether/subforge:latest
 ```
 
 不需要再传 `-listen` 或 `-data-dir`：镜像里 `SUBFORGE_LISTEN=0.0.0.0:25500` 让端口发布直达容器，
-`SUBFORGE_DATA_DIR=/data` 让订阅管理默认启用，SQLite 落在挂载的 `/data`。对外提供服务前请加
+`SUBFORGE_DATA_DIR=/data` 让订阅管理默认启用，SQLite 落在宿主机的 `./data` 目录；备份或迁移时
+直接复制这个目录即可。对外提供服务前请加
 `-e SUBFORGE_TOKEN=<YOUR_TOKEN>` 开启鉴权。`:latest` 基于 alpine 运行层、双架构、自带版本号与根证书；
 `:latest-scratch` 体积更小但没有根证书，只能配合 `http://` 上游或本地文件。自行构建镜像则用
 `docker build -t subforge:local -f Dockerfile.alpine .`。
@@ -107,12 +108,16 @@ bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 | `SUBFORGE_TOKEN` | `-token` |
 | `SUBFORGE_CONFIG` | `-config`（指向 INI 文件，不是目录） |
 | `SUBFORGE_DATA_DIR` | `-data-dir` |
+| `SUBFORGE_ALLOW_PRIVATE_NETWORK` | `-allow-private-network`（允许拉取私网/回环地址，默认关闭） |
 
 优先级从低到高是**环境变量 < 命令行参数 < INI 的 `[subforge]` 同名项**。仓库内的 Dockerfile 预设了
 `SUBFORGE_LISTEN` 与 `SUBFORGE_DATA_DIR`；旧名字 `SUBFORGE_DATA` 已废弃，写错不会报错，只会静默地退回
 「未启用订阅管理」。
 
-拉取上游订阅时的 User-Agent 可以用 `SUBFORGE_USER_AGENT` 覆盖，默认是 `mihomo/1.19.31 SubForge/<版本>`。
+出于 SSRF 防护，服务端默认只拉取公网 http/https 地址；本地 fixture、内网订阅或自建 LAN 规则源需要显式加
+`-allow-private-network`（或设 `SUBFORGE_ALLOW_PRIVATE_NETWORK=1`）。远程模板、规则集与告警 webhook 走同一策略。
+
+拉取上游订阅时的 User-Agent 可以用 `SUBFORGE_USER_AGENT` 覆盖，默认是 `mihomo/1.19.31 SubForge/<版本>`；若默认请求缺少流量头，会自动用 `clash.meta/1.18.0` 补取一次。
 不少机场按 User-Agent 决定返回什么内容：认成 Clash 内核时才返回带 `Subscription-Userinfo` 的完整配置，
 否则只给一份纯节点链接清单——没有流量信息、也没有机场自带的规则与规则集。
 

@@ -146,6 +146,59 @@ func TestImportRules_Success(t *testing.T) {
 	}
 }
 
+// TestImportRules_AirportRulesBecomeSource 机场规则现在落成版本化规则源，
+// 不再写 rules 表；方案需要显式绑定该源后订阅才会内联。
+func TestImportRules_AirportRulesBecomeSource(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	up := rulesUpstream(t)
+	id := addImportAirport(t, mgr, "enable", up.URL)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/import-rules", id),
+		strings.NewReader(`{"create_groups":true,"enable_rules":true}`))
+	req.SetPathValue("id", fmt.Sprintf("%d", id))
+	rr := httptest.NewRecorder()
+	srv.handleAPIImportRules(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d；body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		RulesAdded      int    `json:"rules_added"`
+		RulesEnabled    int    `json:"rules_enabled"`
+		RuleSourceName  string `json:"rule_source_name"`
+		RuleSourceRules int    `json:"rule_source_rules"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应: %v", err)
+	}
+	if resp.RulesAdded != 0 || resp.RulesEnabled != 0 || resp.RuleSourceRules != 2 || resp.RuleSourceName == "" {
+		t.Fatalf("机场规则应全部进规则源：%+v body=%s", resp, rr.Body.String())
+	}
+	rules, warnings := mgr.RuleSourceRules(t.Context(), []string{resp.RuleSourceName})
+	if len(rules) != 2 {
+		t.Fatalf("规则源规则数 = %d，应为 2；warnings=%v", len(rules), warnings)
+	}
+	dbRules, err := mgr.ListRulesByLayers(t.Context(), []string{"airport"})
+	if err != nil {
+		t.Fatalf("ListRulesByLayers: %v", err)
+	}
+	if len(dbRules) != 0 {
+		t.Fatalf("机场规则不应再写 rules 表：%+v", dbRules)
+	}
+	sources, err := mgr.ListRuleSources(t.Context())
+	if err != nil {
+		t.Fatalf("ListRuleSources: %v", err)
+	}
+	found := false
+	for _, s := range sources {
+		if s.Name == resp.RuleSourceName && s.Origin == "airport" && s.RuleCount == 2 && s.Latest != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("规则源状态未出现或规则数不对：%+v", sources)
+	}
+}
+
 func TestImportRules_IdempotentSecondImportSkips(t *testing.T) {
 	srv, mgr := importTestServer(t)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -230,11 +283,17 @@ func TestImportRulesFromAirportHelper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("importRulesFromAirport err: %v", err)
 	}
-	if ir.RulesAdded != 2 {
-		t.Fatalf("rules_added = %d，应为 2", ir.RulesAdded)
+	if ir.RulesAdded != 0 || ir.RuleSourceRules != 2 || ir.RuleSourceName == "" {
+		t.Fatalf("机场规则应只进规则源：%+v", ir)
 	}
 	if ir.ProvidersAdded != 1 {
 		t.Fatalf("providers_added = %d，应为 1", ir.ProvidersAdded)
+	}
+	if rules, _ := mgr.RuleSourceRules(t.Context(), []string{ir.RuleSourceName}); len(rules) != 2 {
+		t.Fatalf("规则源规则数 = %d，应为 2", len(rules))
+	}
+	if dbRules, _ := mgr.ListRulesByLayers(t.Context(), []string{"airport"}); len(dbRules) != 0 {
+		t.Fatalf("机场规则不应写 rules 表：%+v", dbRules)
 	}
 	if warnings == nil {
 		t.Fatalf("warnings 必须是非 nil 切片")
@@ -333,5 +392,46 @@ func TestImportRules_MissingID400(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "无效的 ID") {
 		t.Fatalf("body = %s，应含 无效的 ID", rr.Body.String())
+	}
+}
+
+// TestImportRules_GroupExpansionIgnoresPlaceholderNodes 机场常用 127.0.0.1 的假节点展示流量，
+// 判断「分组覆盖全部节点」时必须跳过这些占位节点，否则「自动选择」这类真·全节点组不会扩展。
+func TestImportRules_GroupExpansionIgnoresPlaceholderNodes(t *testing.T) {
+	srv, mgr := importTestServer(t)
+	const upstream = `proxies:
+  - {name: p1, type: ss, server: s1.example.com, port: 8388, cipher: aes-256-gcm, password: pw}
+  - {name: p2, type: ss, server: s2.example.com, port: 8388, cipher: aes-256-gcm, password: pw}
+  - {name: '剩余流量：1 GB', type: ss, server: 127.0.0.1, port: 6666, cipher: aes-128-gcm, password: pw}
+proxy-groups:
+  - {name: AUTO, type: url-test, url: 'http://example.com/generate_204', proxies: [p1, p2]}
+  - {name: PART, type: select, proxies: [p1]}
+`
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(upstream))
+	}))
+	defer up.Close()
+	id := addImportAirport(t, mgr, "placeholder", up.URL)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/import-rules", id),
+		strings.NewReader(`{"create_groups":true}`))
+	req.SetPathValue("id", fmt.Sprintf("%d", id))
+	rr := httptest.NewRecorder()
+	srv.handleAPIImportRules(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d；body=%s", rr.Code, rr.Body.String())
+	}
+	groups, err := mgr.ListProxyGroups(t.Context())
+	if err != nil {
+		t.Fatalf("ListProxyGroups: %v", err)
+	}
+	got := map[string]bool{}
+	for _, g := range groups {
+		got[g.Name] = g.IncludeAllSources
+	}
+	if !got["AUTO"] {
+		t.Fatalf("AUTO 覆盖全部真实节点，应默认开启扩展；groups=%+v", groups)
+	}
+	if got["PART"] {
+		t.Fatalf("PART 只覆盖部分节点，不应开启扩展；groups=%+v", groups)
 	}
 }

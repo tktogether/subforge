@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import InfoTip from '../components/InfoTip.vue'
+import { pageHelp } from '../content/help'
 import { endpoints, type Profile } from '../api/endpoints'
 import { notify } from '../composables/useNotify'
 import { errorMessage } from '../composables/useAsync'
+
+const help = pageHelp('profiles')
 
 // 模板列的显示上限：超过就截断，完整内容放在 title 里。
 const TEMPLATE_MAX = 60
@@ -26,19 +30,17 @@ interface LayerEditorConfig {
   hint: string
   rows: LayerRow[]
   note: string
-  move: (index: number, delta: number) => void
+  move?: (index: number, delta: number) => void
   lockTemplate: boolean
 }
 
-const LAYER_KEYS: LayerKey[] = ['custom', 'airport', 'template']
+const RULE_LAYER_KEYS: LayerKey[] = ['custom', 'template']
+const GROUP_LAYER_KEYS: LayerKey[] = ['custom', 'airport', 'template']
 const LAYER_LABELS: Record<string, string> = {
   custom: '自定义',
   airport: '机场导入',
   template: '模板',
 }
-
-// 超过这个量级说明 sort_order 是服务端回退的 UnixNano（D-41），前端显示「未设置」。
-const SORT_ORDER_UNSET_LIMIT = 1e12
 
 const EMPTY_PROFILE: Profile = {
   id: 0,
@@ -46,21 +48,69 @@ const EMPTY_PROFILE: Profile = {
   description: '',
   config: '',
   pipeline: '',
+  target: '',
+  include: '',
+  exclude: '',
   enabled: true,
   sort_order: 0,
-  rule_layers: [...LAYER_KEYS],
+  rule_layers: [...RULE_LAYER_KEYS],
   rule_sources: [],
-  group_layers: [...LAYER_KEYS],
+  airport_ids: null,
+  self_node_ids: null,
+  group_layers: [...GROUP_LAYER_KEYS],
   rule_count: 0,
   group_count: 0,
 }
 
 const profiles = ref<Profile[]>([])
+const profilePage = ref(1)
+const profilePageSize = ref(10)
 const loading = ref(false)
 const error = ref('')
 
 // 规则源选项（D-33）：方案可绑定规则源；选项来自 GET /api/rule-sources 的 sources[].name。
-const ruleSourceOptions = ref<string[]>([])
+const ruleSourceOptions = ref<{ title: string; value: string; origin?: string; ruleCount?: number }[]>([])
+
+// 节点来源选项：机场/自建节点。加载失败只降级为空选项，不阻断方案编辑。
+const airportOptions = ref<{ title: string; value: number }[]>([])
+const selfNodeOptions = ref<{ title: string; value: number }[]>([])
+const targetOptions = ref<string[]>([])
+const pipelineOptions = ref<{ title: string; value: string }[]>([])
+const pipelineItems = computed(() => {
+  const items = [...pipelineOptions.value]
+  const current = draft.value.pipeline.trim()
+  if (current !== '' && !items.some((i) => i.value === current)) {
+    items.unshift({ title: current, value: current })
+  }
+  return items
+})
+
+async function loadPipelineOptions(): Promise<void> {
+  try {
+    const list = await endpoints.pipelines('')
+    pipelineOptions.value = list.filter((p) => p.enabled).map((p) => ({ title: p.name, value: p.name }))
+  } catch {
+    pipelineOptions.value = []
+  }
+}
+
+async function loadTargetOptions(): Promise<void> {
+  try {
+    targetOptions.value = await endpoints.targets()
+  } catch {
+    targetOptions.value = []
+  }
+}
+
+async function loadSourceOptions(): Promise<void> {
+  const [airports, selfNodes] = await Promise.allSettled([endpoints.listAirports(), endpoints.listSelfNodes()])
+  airportOptions.value = airports.status === 'fulfilled'
+    ? airports.value.map((a) => ({ title: a.name + (a.enabled ? '' : '（已停用）'), value: a.id }))
+    : []
+  selfNodeOptions.value = selfNodes.status === 'fulfilled'
+    ? selfNodes.value.map((n) => ({ title: n.name + (n.enabled ? '' : '（已停用）'), value: n.id }))
+    : []
+}
 
 // editingId === 0 表示「新建」，否则为被编辑方案的 id。
 const editingId = ref(0)
@@ -70,48 +120,55 @@ const draft = ref({
   description: '',
   config: '',
   pipeline: '',
+  target: '',
+  include: '',
+  exclude: '',
   enabled: true,
-  sort_order: 0,
   // 规则源（D-33）：方案绑定的规则源名列表；空 = 未绑定。
   rule_sources: [] as string[],
+  // 未限制来源 = 使用全部启用机场/自建节点；打开后才按下面的 id 多选限制。
+  limit_sources: false,
+  airport_ids: [] as number[],
+  self_node_ids: [] as number[],
 })
 
 // 两个层编辑器的行状态（顺序即优先级）。
-const ruleLayers = ref<LayerRow[]>(defaultLayers())
-const groupLayers = ref<LayerRow[]>(defaultLayers())
+const ruleLayers = ref<LayerRow[]>(defaultLayers(RULE_LAYER_KEYS))
+const groupLayers = ref<LayerRow[]>(defaultLayers(GROUP_LAYER_KEYS))
 
 const confirmOpen = ref(false)
 const deleteTarget = ref<Profile>(EMPTY_PROFILE)
+const conflictDialogOpen = ref(false)
 
 const headers = [
   { key: 'name', title: '名称' },
   { key: 'config', title: '模板' },
-  { key: 'pipeline', title: '管线' },
+  { key: 'pipeline', title: '最终处理' },
   { key: 'rule_layers', title: '规则层' },
   { key: 'group_layers', title: '分组层' },
   { key: 'rule_sources', title: '规则源', sortable: false },
   { key: 'enabled', title: '启用' },
-  { key: 'sort_order', title: '顺序' },
   { key: 'actions', title: '操作' },
 ]
 
-// 三层默认全开、顺序 custom → airport → template。
-function defaultLayers(): LayerRow[] {
-  return LAYER_KEYS.map((key) => ({ key, enabled: true }))
+// 规则层只有自定义与模板；机场规则是规则源，在下方显式绑定。
+// 分组层保留机场层：机场自带分组仍由导入路径维护。
+function defaultLayers(keys: LayerKey[]): LayerRow[] {
+  return keys.map((key) => ({ key, enabled: true }))
 }
 
-// 后端把空数组/空串当默认值；前端同样把缺失或空数组还原成默认三层。
+// 后端把空数组/空串当默认值；前端同样把缺失或空数组还原成默认层。
 // 顺序即优先级：保持后端给的顺序，未出现的层补在末尾并默认不启用。
-function layersToRows(layers: string[] | undefined): LayerRow[] {
-  const raw = Array.isArray(layers) && layers.length > 0 ? layers : LAYER_KEYS
-  const known = raw.filter((k): k is LayerKey => (LAYER_KEYS as string[]).includes(k))
-  const missing = LAYER_KEYS.filter((k) => !known.includes(k))
+function layersToRows(layers: string[] | undefined, keys: LayerKey[]): LayerRow[] {
+  const raw = Array.isArray(layers) && layers.length > 0 ? layers : keys
+  const known = raw.filter((k): k is LayerKey => (keys as string[]).includes(k))
+  const missing = keys.filter((k) => !known.includes(k))
   return [...known, ...missing].map((key) => ({ key, enabled: known.includes(key) }))
 }
 
 // 规则层的 template 恒在末位（后端保存时也会强制移到最后）。
 function ruleRowsFrom(layers: string[] | undefined): LayerRow[] {
-  const rows = layersToRows(layers)
+  const rows = layersToRows(layers, RULE_LAYER_KEYS)
   const index = rows.findIndex((r) => r.key === 'template')
   if (index >= 0 && index !== rows.length - 1) {
     const [row] = rows.splice(index, 1)
@@ -131,18 +188,6 @@ function layerPriority(rows: LayerRow[], key: LayerKey): string {
   return index < 0 ? '未启用' : '优先级 ' + (index + 1)
 }
 
-// 规则层移动：template 恒在末位，禁止任何会把它换出末位的移动。
-function moveRuleLayer(index: number, delta: number): void {
-  const rows = ruleLayers.value
-  const target = index + delta
-  if (target < 0 || target >= rows.length) return
-  if (rows[index].key === 'template' || rows[target].key === 'template') return
-  const next = rows.slice()
-  const [row] = next.splice(index, 1)
-  next.splice(target, 0, row)
-  ruleLayers.value = next
-}
-
 // 分组层移动：同名分组先出现者胜出，顺序完全由用户决定。
 function moveGroupLayer(index: number, delta: number): void {
   const rows = groupLayers.value
@@ -159,10 +204,9 @@ const layerEditors = computed<LayerEditorConfig[]>(() => [
     testid: 'profile-rule-layers',
     prefix: 'rule',
     caption: '规则层',
-    hint: '规则层 = 按顺序拼接，先出现者优先；模板规则始终最后（MATCH/FINAL）。',
+    hint: '规则层 = 自定义规则 + 模板规则；机场规则在下方「规则源」里显式绑定。先出现者优先，模板规则始终最后（MATCH/FINAL）。',
     rows: ruleLayers.value,
     note: '模板规则始终最后（MATCH/FINAL）',
-    move: moveRuleLayer,
     lockTemplate: true,
   },
   {
@@ -176,6 +220,16 @@ const layerEditors = computed<LayerEditorConfig[]>(() => [
     lockTemplate: false,
   },
 ])
+
+const profilePageCount = computed(() => Math.max(1, Math.ceil(profiles.value.length / profilePageSize.value)))
+watch([profiles, profilePageSize], () => {
+  profilePage.value = Math.min(profilePage.value, profilePageCount.value)
+})
+
+function setProfilePageSize(next: number): void {
+  profilePageSize.value = next
+  profilePage.value = 1
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -192,13 +246,121 @@ async function load(): Promise<void> {
 // 规则源清单（D-33）：加载失败只降级成空选项，不影响方案页主功能（仍可编辑/保存其它字段）。
 async function loadRuleSourceOptions(): Promise<void> {
   try {
-    const res: { sources?: { name: string }[] } = await endpoints.listRuleSources()
-    ruleSourceOptions.value = (res.sources ?? []).map((s) => s.name)
+    const res = await endpoints.listRuleSources()
+    // 只展示已有产物的源：无产物的源绑定后订阅会静默回退，保存时也会被后端拒绝。
+    ruleSourceOptions.value = (res.sources ?? [])
+      .filter((s) => (s.latest ?? '') !== '')
+      .map((s) => ({
+        title: s.origin === 'airport' ? '机场规则 · ' + (s.label ?? s.name) : (s.label ?? s.name),
+        value: s.name,
+        origin: s.origin,
+        ruleCount: s.rule_count ?? 0,
+      }))
   } catch {
     // 规则源清单加载失败不阻断方案编辑：保留空选项，用户仍可保存其它字段
     ruleSourceOptions.value = []
   }
 }
+
+// ---- 规则源有序多选 ----
+const sourcePickerOpen = ref(false)
+const sourceSearch = ref('')
+const sourcePicked = ref<string[]>([])
+
+const filteredSourceOptions = computed(() => {
+  const selected = new Set(draft.value.rule_sources)
+  const q = sourceSearch.value.trim().toLowerCase()
+  return ruleSourceOptions.value.filter((o) => {
+    if (selected.has(o.value)) return false
+    if (q === '') return true
+    return o.title.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)
+  })
+})
+
+function sourceOption(name: string): { title: string; value: string; origin?: string; ruleCount?: number } | undefined {
+  return ruleSourceOptions.value.find((o) => o.value === name)
+}
+
+function sourceTitle(name: string): string {
+  return sourceOption(name)?.title ?? name
+}
+
+function sourceMeta(name: string): string {
+  const o = sourceOption(name)
+  if (o === undefined) return '已移除或暂无产物'
+  return (o.origin === 'airport' ? '机场' : '远程') + ' · ' + (o.ruleCount ?? 0) + ' 条'
+}
+
+function openSourcePicker(): void {
+  sourceSearch.value = ''
+  sourcePicked.value = []
+  sourcePickerOpen.value = true
+}
+
+function toggleSourcePick(value: string): void {
+  const i = sourcePicked.value.indexOf(value)
+  if (i >= 0) {
+    sourcePicked.value.splice(i, 1)
+  } else {
+    sourcePicked.value.push(value)
+  }
+}
+
+function addPickedSources(): void {
+  for (const value of sourcePicked.value) {
+    if (!draft.value.rule_sources.includes(value)) {
+      draft.value.rule_sources.push(value)
+    }
+  }
+  sourcePicked.value = []
+  sourcePickerOpen.value = false
+}
+
+function removeRuleSource(value: string): void {
+  draft.value.rule_sources = draft.value.rule_sources.filter((v) => v !== value)
+}
+
+function moveRuleSource(index: number, delta: number): void {
+  const target = index + delta
+  const list = draft.value.rule_sources
+  if (target < 0 || target >= list.length) return
+  const next = list.slice()
+  const [row] = next.splice(index, 1)
+  next.splice(target, 0, row)
+  draft.value.rule_sources = next
+}
+
+// ---- 跨源重复规则提示 ----
+const sourceConflictTotal = ref(0)
+const sourceConflictSamples = ref<{ type: string; param: string; first: string; second: string }[]>([])
+let conflictTimer: ReturnType<typeof setTimeout> | undefined
+
+async function checkSourceConflicts(): Promise<void> {
+  if (!dialog.value || draft.value.rule_sources.length < 2) {
+    sourceConflictTotal.value = 0
+    sourceConflictSamples.value = []
+    return
+  }
+  try {
+    const r = await endpoints.checkRuleSourceConflicts(draft.value.rule_sources)
+    sourceConflictTotal.value = r.total
+    sourceConflictSamples.value = r.samples
+  } catch {
+    sourceConflictTotal.value = 0
+    sourceConflictSamples.value = []
+  }
+}
+
+function scheduleConflictCheck(): void {
+  if (conflictTimer !== undefined) {
+    clearTimeout(conflictTimer)
+  }
+  conflictTimer = setTimeout(() => {
+    void checkSourceConflicts()
+  }, 250)
+}
+
+watch(() => [...draft.value.rule_sources], scheduleConflictCheck)
 
 // truncateTemplate 把过长的模板文本截断到 60 字。
 function truncateTemplate(text: string): string {
@@ -222,11 +384,6 @@ function layerText(layers: string[] | undefined): string {
   return layers.map((k) => LAYER_LABELS[k] ?? k).join(' → ')
 }
 
-// 顺序列：服务端回退的 UnixNano（19 位）显示「未设置」。
-function sortOrderText(value: number): string {
-  return value > SORT_ORDER_UNSET_LIMIT ? '未设置' : String(value)
-}
-
 function openCreate(): void {
   editingId.value = 0
   draft.value = {
@@ -234,15 +391,24 @@ function openCreate(): void {
     description: '',
     config: '',
     pipeline: '',
+    target: '',
+    include: '',
+    exclude: '',
     enabled: true,
-    sort_order: 0,
     rule_sources: [],
+    limit_sources: false,
+    airport_ids: [],
+    self_node_ids: [],
   }
-  ruleLayers.value = defaultLayers()
-  groupLayers.value = defaultLayers()
-  // 打开弹窗时重新拉一次规则源清单：清单可能已被规则源页改动。
+  ruleLayers.value = defaultLayers(RULE_LAYER_KEYS)
+  groupLayers.value = defaultLayers(GROUP_LAYER_KEYS)
+  // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
+  void loadSourceOptions()
+  void loadTargetOptions()
+  void loadPipelineOptions()
   dialog.value = true
+  scheduleConflictCheck()
 }
 
 function openEdit(row: Profile): void {
@@ -252,15 +418,24 @@ function openEdit(row: Profile): void {
     description: row.description,
     config: row.config,
     pipeline: row.pipeline,
+    target: row.target ?? '',
+    include: row.include ?? '',
+    exclude: row.exclude ?? '',
     enabled: row.enabled,
-    sort_order: row.sort_order,
     rule_sources: [...(row.rule_sources ?? [])],
+    limit_sources: row.airport_ids !== null || row.self_node_ids !== null,
+    airport_ids: [...(row.airport_ids ?? [])],
+    self_node_ids: [...(row.self_node_ids ?? [])],
   }
   ruleLayers.value = ruleRowsFrom(row.rule_layers)
-  groupLayers.value = layersToRows(row.group_layers)
-  // 打开弹窗时重新拉一次规则源清单：清单可能已被规则源页改动。
+  groupLayers.value = layersToRows(row.group_layers, GROUP_LAYER_KEYS)
+  // 打开弹窗时重新拉一次规则源与节点来源清单：清单可能已被其它页面改动。
   void loadRuleSourceOptions()
+  void loadSourceOptions()
+  void loadTargetOptions()
+  void loadPipelineOptions()
   dialog.value = true
+  scheduleConflictCheck()
 }
 
 async function save(): Promise<void> {
@@ -275,11 +450,17 @@ async function save(): Promise<void> {
     description: draft.value.description,
     config: draft.value.config,
     pipeline: draft.value.pipeline,
+    target: draft.value.target,
+    include: draft.value.include,
+    exclude: draft.value.exclude,
     enabled: draft.value.enabled,
-    sort_order: draft.value.sort_order,
     rule_layers,
     rule_sources: [...draft.value.rule_sources],
     group_layers,
+    all_sources: !draft.value.limit_sources,
+    ...(draft.value.limit_sources
+      ? { airport_ids: [...draft.value.airport_ids], self_node_ids: [...draft.value.self_node_ids] }
+      : {}),
   }
   try {
     if (editingId.value === 0) {
@@ -319,11 +500,12 @@ async function confirmDelete(): Promise<void> {
 
 load()
 loadRuleSourceOptions()
+loadPipelineOptions()
 </script>
 
 <template>
   <div class="profiles-page">
-    <PageHeader title="订阅方案" subtitle="一个方案 = 一套模板 + 规则 + 分组；令牌绑定方案后彼此隔离">
+    <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="profiles">
       <template #actions>
         <v-btn color="primary" prepend-icon="mdi-plus" data-testid="profile-new" @click="openCreate">
           新增
@@ -334,26 +516,34 @@ loadRuleSourceOptions()
       </template>
     </PageHeader>
 
-    <v-alert type="info" variant="tonal" class="mb-4" data-testid="profiles-help">
-      <div class="text-body-2">
-        <p class="mb-1"><strong>方案是什么：</strong>一个订阅方案 = 一套模板（INI config）+ 一套规则 + 一套分组；令牌绑定方案后，订阅只输出该方案的规则与分组。</p>
-        <p class="mb-1"><strong>未分配：</strong>profile_id = 0 的规则与分组就是旧全局池，没绑定方案的令牌行为与改动前完全一致。</p>
-        <p class="mb-1"><strong>删除方案：</strong>删除方案前要先把规则/分组移走或删除，否则后端会拒绝（方案下还有内容）。</p>
-        <p class="mb-1"><strong>模板留空：</strong>模板留空 = 用默认配置；管线留空 = 用全局回落。</p>
-        <p class="mb-0"><strong>层顺序：</strong>规则层 = 按顺序拼接，先出现者优先；分组层 = 同名分组先出现者胜出；模板层 = INI 模板里的规则/分组。</p>
-      </div>
-    </v-alert>
-
     <AsyncSection
-      :loading="loading"
+      :loading="loading && profiles.length === 0"
       :error="error"
       :empty="profiles.length === 0"
       empty-text="还没有订阅方案"
       @retry="load"
     >
+      <div class="profiles-table-bar">
+        <span class="text-caption text-medium-emphasis">共 {{ profiles.length }} 条</span>
+        <v-spacer />
+        <v-select
+          :model-value="profilePageSize"
+          :items="[10, 25, 50, 100]"
+          label="每页条数"
+          density="compact"
+          variant="outlined"
+          hide-details
+          data-testid="profile-page-size"
+          class="profiles-page-size"
+          @update:model-value="setProfilePageSize"
+        />
+      </div>
       <v-data-table
+        :page="profilePage"
+        :items-per-page="profilePageSize"
         :items="profiles"
         :headers="headers"
+        :items-per-page-options="[10, 25, 50, 100]"
         density="comfortable"
         hover
         data-testid="profile-table"
@@ -385,9 +575,6 @@ loadRuleSourceOptions()
             <span>{{ item.enabled ? '启用' : '停用' }}</span>
           </span>
         </template>
-        <template #item.sort_order="{ item }">
-          <span data-testid="profile-sort-order">{{ sortOrderText(item.sort_order) }}</span>
-        </template>
         <template #item.actions="{ item }">
           <v-btn
             icon="mdi-pencil"
@@ -408,77 +595,227 @@ loadRuleSourceOptions()
       </v-data-table>
     </AsyncSection>
 
-    <v-dialog v-model="dialog" max-width="560">
+    <v-dialog v-model="dialog" max-width="760">
       <v-card>
         <v-card-title>{{ editingId === 0 ? '新建方案' : '编辑方案' }}</v-card-title>
-        <v-card-text>
-          <v-text-field
-            v-model="draft.name"
-            label="名称"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-name"
-          />
-          <v-text-field
-            v-model="draft.description"
-            label="说明"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-description"
-          />
-          <v-text-field
-            v-model="draft.config"
-            label="模板"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-config"
-          />
-          <v-text-field
-            v-model="draft.pipeline"
-            label="管线"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-pipeline"
-          />
-          <v-select
-            v-model="draft.rule_sources"
-            :items="ruleSourceOptions"
-            data-testid="profile-rule-sources"
-            label="绑定规则源（产物内联进订阅，并替换模板规则）"
-            multiple
-            chips
-            closable-chips
-            variant="outlined"
-            hint="可多选；按顺序拼接。规则源页执行更新生成产物后才会生效；产物里的 FINAL/MATCH 会被忽略。"
-            persistent-hint
-            class="mb-3"
-          />
-          <v-switch
-            v-model="draft.enabled"
-            label="启用"
-            color="primary"
-            hide-details
-            class="mb-2"
-            data-testid="profile-enabled"
-          />
-          <v-text-field
-            v-model.number="draft.sort_order"
-            label="顺序"
-            type="number"
-            variant="outlined"
-            density="comfortable"
-            class="mb-2"
-            data-testid="profile-sort"
-          />
+        <v-card-text class="profile-dialog__body">
+          <div class="profile-form-row">
+            <v-text-field
+              v-model="draft.name"
+              label="名称"
+              variant="outlined"
+              density="comfortable"
+              class="mb-2"
+              data-testid="profile-name"
+            />
+            <v-text-field
+              v-model="draft.description"
+              label="说明"
+              variant="outlined"
+              density="comfortable"
+              class="mb-2"
+              data-testid="profile-description"
+            />
+          </div>
+          <div class="profile-form-row">
+            <v-text-field
+              v-model="draft.config"
+              label="模板"
+              hint="留空时使用默认模板"
+              variant="outlined"
+              density="comfortable"
+              hide-details
+              class="mb-3"
+              data-testid="profile-config"
+            />
+            <v-select
+              v-model="draft.pipeline"
+              :items="pipelineItems"
+              label="最终处理管线"
+              hint="各来源先按自己的管线处理并合并，这条管线最后执行；留空不处理。"
+              variant="outlined"
+              density="comfortable"
+              persistent-hint
+              clearable
+              class="mb-3"
+              data-testid="profile-pipeline"
+            />
+          </div>
+          <div class="profile-form-row">
+            <div class="mb-3">
+              <div class="sf-form-label">
+                <span>目标格式</span>
+                <InfoTip text="留空时使用 clash.meta。" label="目标格式" />
+              </div>
+              <v-select
+                v-model="draft.target"
+                :items="targetOptions"
+                variant="outlined"
+                density="comfortable"
+                clearable
+                hide-details
+                data-testid="profile-target"
+              />
+            </div>
+            <div class="profile-form-row__switch mb-3">
+              <v-switch
+                v-model="draft.enabled"
+                label="启用"
+                color="primary"
+                hide-details
+                data-testid="profile-enabled"
+              />
+            </div>
+          </div>
+          <div class="profile-form-row">
+            <div class="mb-3">
+              <div class="sf-form-label">
+                <span>包含节点</span>
+                <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不筛选。" example="香港,日本" label="包含节点" />
+              </div>
+              <v-text-field
+                v-model="draft.include"
+                variant="outlined"
+                density="comfortable"
+                hide-details
+                data-testid="profile-include"
+              />
+            </div>
+            <div class="mb-3">
+              <div class="sf-form-label">
+                <span>排除节点</span>
+                <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不排除。" example="过期,剩余" label="排除节点" />
+              </div>
+              <v-text-field
+                v-model="draft.exclude"
+                variant="outlined"
+                density="comfortable"
+                hide-details
+                data-testid="profile-exclude"
+              />
+            </div>
+          </div>
+          <div class="mb-3">
+            <div class="sf-form-label">
+              <span>规则源（顺序即优先级）</span>
+              <InfoTip text="同一匹配条件出现在多个规则源时，按列表顺序由先出现的源生效。机场规则源显示为「机场规则 · 名称」。" label="规则源优先级" />
+            </div>
+            <div class="sf-source-list" data-testid="profile-rule-sources">
+              <div
+                v-for="(name, index) in draft.rule_sources"
+                :key="name"
+                class="sf-source-row"
+                :data-testid="'profile-rule-source-row-' + name"
+              >
+                <span class="sf-source-priority">{{ index + 1 }}</span>
+                <span class="sf-source-name">{{ sourceTitle(name) }}</span>
+                <span class="sf-source-meta">{{ sourceMeta(name) }}</span>
+                <v-btn
+                  icon="mdi-chevron-up"
+                  size="x-small"
+                  variant="text"
+                  :disabled="index === 0"
+                  :data-testid="'profile-rule-source-up-' + name"
+                  @click="moveRuleSource(index, -1)"
+                />
+                <v-btn
+                  icon="mdi-chevron-down"
+                  size="x-small"
+                  variant="text"
+                  :disabled="index === draft.rule_sources.length - 1"
+                  :data-testid="'profile-rule-source-down-' + name"
+                  @click="moveRuleSource(index, 1)"
+                />
+                <v-btn
+                  icon="mdi-close"
+                  size="x-small"
+                  variant="text"
+                  :data-testid="'profile-rule-source-remove-' + name"
+                  @click="removeRuleSource(name)"
+                />
+              </div>
+              <div v-if="draft.rule_sources.length === 0" class="sf-source-empty text-medium-emphasis" data-testid="profile-rule-sources-empty">
+                未绑定规则源
+              </div>
+            </div>
+            <v-btn
+              size="small"
+              variant="tonal"
+              prepend-icon="mdi-plus"
+              class="mt-2"
+              data-testid="profile-rule-source-add"
+              @click="openSourcePicker"
+            >
+              添加规则源
+            </v-btn>
+            <v-alert
+              v-if="sourceConflictTotal > 0"
+              type="warning"
+              variant="tonal"
+              density="compact"
+              class="mt-2"
+              data-testid="profile-source-conflicts"
+            >
+              发现 {{ sourceConflictTotal }} 条跨源重复规则，当前按列表顺序由先出现的源生效。
+              <v-btn
+                v-if="sourceConflictSamples.length > 0"
+                variant="text"
+                size="small"
+                class="ml-2"
+                data-testid="profile-source-conflicts-detail"
+                @click="conflictDialogOpen = true"
+              >查看示例</v-btn>
+            </v-alert>
+          </div>
+          <v-divider class="mb-3" />
+          <div class="text-subtitle-2 mb-1">节点来源</div>
+          <div class="d-flex align-center ga-1 mb-2">
+            <v-switch
+              v-model="draft.limit_sources"
+              label="限制机场与自建节点来源"
+              color="primary"
+              density="compact"
+              hide-details
+              data-testid="profile-limit-sources"
+            />
+            <InfoTip text="关闭时使用全部启用的来源；开启后只使用下方选择的来源，均不选择表示不使用该类来源。" label="节点来源" />
+          </div>
+          <div class="profile-form-row">
+            <v-select
+              v-model="draft.airport_ids"
+              :items="airportOptions"
+              :disabled="!draft.limit_sources"
+              label="机场来源"
+              multiple
+              chips
+              closable-chips
+              variant="outlined"
+              density="comfortable"
+              data-testid="profile-airports"
+              class="mb-2"
+            />
+            <v-select
+              v-model="draft.self_node_ids"
+              :items="selfNodeOptions"
+              :disabled="!draft.limit_sources"
+              label="自建节点来源"
+              multiple
+              chips
+              closable-chips
+              variant="outlined"
+              density="comfortable"
+              data-testid="profile-self-nodes"
+              class="mb-2"
+            />
+          </div>
 
-          <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3">
-            <div class="text-subtitle-2 mb-1">{{ editor.caption }}</div>
-            <div class="text-caption text-medium-emphasis mb-1">{{ editor.hint }}</div>
-            <div class="sf-layer-editor" :data-testid="editor.testid">
+          <div class="profile-form-row profile-form-row--layers">
+            <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3" :data-testid="editor.testid">
+            <div class="sf-form-label">
+              <span>{{ editor.caption }}</span>
+              <InfoTip :text="editor.hint" :label="editor.caption" />
+            </div>
+            <div class="sf-layer-editor">
             <div
               v-for="(row, index) in editor.rows"
               :key="row.key"
@@ -494,6 +831,7 @@ loadRuleSourceOptions()
               <span class="sf-layer-name">{{ LAYER_LABELS[row.key] }}</span>
               <span class="sf-layer-priority">{{ layerPriority(editor.rows, row.key) }}</span>
               <v-btn
+                v-if="editor.move"
                 icon="mdi-chevron-up"
                 size="x-small"
                 variant="text"
@@ -502,6 +840,7 @@ loadRuleSourceOptions()
                 @click="editor.move(index, -1)"
               />
               <v-btn
+                v-if="editor.move"
                 icon="mdi-chevron-down"
                 size="x-small"
                 variant="text"
@@ -509,11 +848,10 @@ loadRuleSourceOptions()
                 :data-testid="editor.prefix + '-layer-down-' + row.key"
                 @click="editor.move(index, 1)"
               />
-              <span v-if="editor.note !== '' && row.key === 'template'" class="sf-layer-note">
-                {{ editor.note }}
-              </span>
             </div>
             </div>
+            <div v-if="editor.note !== ''" class="sf-layer-note">{{ editor.note }}</div>
+          </div>
           </div>
         </v-card-text>
         <v-card-actions>
@@ -524,7 +862,67 @@ loadRuleSourceOptions()
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="confirmOpen" max-width="420">
+    <v-dialog v-model="sourcePickerOpen" max-width="560">
+    <v-card data-testid="profile-source-picker">
+      <v-card-title>添加规则源</v-card-title>
+      <v-card-text>
+        <v-text-field v-model="sourceSearch" label="搜索规则源" density="compact" hide-details data-testid="profile-source-search" class="mb-2" />
+        <div class="sf-source-picker-list">
+          <v-list v-if="filteredSourceOptions.length > 0">
+            <v-list-item v-for="opt in filteredSourceOptions" :key="opt.value" data-testid="profile-source-option">
+              <template #prepend>
+                <v-checkbox
+                  :model-value="sourcePicked.includes(opt.value)"
+                  hide-details
+                  density="compact"
+                  :data-testid="'profile-source-check-' + opt.value"
+                  @update:model-value="toggleSourcePick(opt.value)"
+                />
+              </template>
+              <v-list-item-title>{{ opt.title }}</v-list-item-title>
+              <v-list-item-subtitle>{{ (opt.origin === 'airport' ? '机场' : '远程') + ' · ' + (opt.ruleCount ?? 0) + ' 条' }}</v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+          <div v-else class="text-medium-emphasis py-4 text-center" data-testid="profile-source-empty">没有可添加的规则源</div>
+        </div>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="profile-source-cancel" @click="sourcePickerOpen = false">取消</v-btn>
+        <v-btn color="primary" :disabled="sourcePicked.length === 0" data-testid="profile-source-confirm" @click="addPickedSources">添加</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="conflictDialogOpen" max-width="640" scrollable data-testid="profile-source-conflicts-dialog">
+    <v-card>
+      <v-card-title>跨源重复规则示例</v-card-title>
+      <v-card-text>
+        <p class="text-body-2 text-medium-emphasis mb-3">
+          以下匹配条件同时存在于两个规则源。订阅生成时按规则源顺序取先出现的定义。
+        </p>
+        <v-table density="compact">
+          <thead>
+            <tr><th>类型</th><th>参数</th><th>先出现</th><th>后出现</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(s, i) in sourceConflictSamples" :key="i">
+              <td>{{ s.type }}</td>
+              <td>{{ s.param }}</td>
+              <td>{{ s.first }}</td>
+              <td>{{ s.second }}</td>
+            </tr>
+          </tbody>
+        </v-table>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="profile-source-conflicts-close" @click="conflictDialogOpen = false">关闭</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="confirmOpen" max-width="420">
       <v-card>
         <v-card-title>确认删除</v-card-title>
         <v-card-text>删除方案「{{ deleteTarget.name }}」后不可恢复，确定继续？</v-card-text>
@@ -539,6 +937,50 @@ loadRuleSourceOptions()
 </template>
 
 <style scoped>
+/* 方案弹窗字段较多：双列排布压缩高度，内容超出时在弹窗内滚动。 */
+.profile-dialog__body {
+  max-height: 78vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.profile-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 16px;
+  align-items: start;
+}
+.profile-form-row__switch {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  padding-top: 18px;
+}
+.profile-form-row--layers {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .profile-form-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .profile-form-row__switch {
+    min-height: 0;
+    padding-top: 0;
+  }
+}
+.profiles-table-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.profiles-page-size {
+  max-width: 132px;
+}
+.profiles-table :deep(.v-data-table-footer__items-per-page) {
+  display: none;
+}
 .profiles-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
@@ -550,6 +992,15 @@ loadRuleSourceOptions()
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sf-form-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
 .sf-layer-editor {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
@@ -558,8 +1009,9 @@ loadRuleSourceOptions()
 .sf-layer-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 32px;
+  gap: 10px;
+  min-height: 36px;
+  padding: 2px 0;
 }
 .sf-layer-name {
   min-width: 72px;
@@ -570,7 +1022,49 @@ loadRuleSourceOptions()
   min-width: 72px;
 }
 .sf-layer-note {
+  margin-top: 6px;
   font-size: 12px;
   color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
+}
+.sf-source-list {
+  border: 1px solid var(--sf-border, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  overflow: hidden;
+}
+.sf-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--sf-border, rgba(0, 0, 0, 0.08));
+}
+.sf-source-row:last-child {
+  border-bottom: 0;
+}
+.sf-source-priority {
+  width: 20px;
+  text-align: center;
+  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
+  font-size: 12px;
+}
+.sf-source-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sf-source-meta {
+  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
+  font-size: 12px;
+  white-space: nowrap;
+}
+.sf-source-empty {
+  padding: 10px;
+  font-size: 13px;
+}
+.sf-source-picker-list {
+  max-height: 40vh;
+  overflow-y: auto;
 }
 </style>

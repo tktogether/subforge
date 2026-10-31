@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -14,8 +15,51 @@ import (
 	"github.com/tktogether/subforge/internal/subscheck"
 )
 
+type checkResultView struct {
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	OK         bool   `json:"ok"`
+	StatusCode int    `json:"status_code"`
+	LatencyMS  int64  `json:"latency_ms"`
+	Bytes      int64  `json:"bytes"`
+	Err        string `json:"err"`
+}
+
+// checkErrorText 去掉 url.Error 包装里的完整订阅地址，避免界面回显令牌。
+func checkErrorText(err error) string {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		err = uerr.Err
+	}
+	return err.Error()
+}
+
+func checkViews(targets []subforge.Airport, results []subscheck.Result) []checkResultView {
+	out := make([]checkResultView, 0, len(results))
+	for i, r := range results {
+		name := ""
+		if i < len(targets) {
+			name = targets[i].Name
+		}
+		errText := ""
+		if r.Err != nil {
+			errText = checkErrorText(r.Err)
+		}
+		out = append(out, checkResultView{
+			Name:       name,
+			URL:        r.URL,
+			OK:         r.OK,
+			StatusCode: r.StatusCode,
+			LatencyMS:  r.Latency.Milliseconds(),
+			Bytes:      r.Bytes,
+			Err:        errText,
+		})
+	}
+	return out
+}
+
 type checkSnapshot struct {
-	Results []subscheck.Result
+	Results []checkResultView
 	At      time.Time
 }
 
@@ -62,7 +106,7 @@ func (s *Server) handleAPICheck(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(ids) == 0 {
-			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有可测活的机场"))
+			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有可检测的机场"))
 			return
 		}
 	}
@@ -87,15 +131,13 @@ func (s *Server) handleAPICheck(w http.ResponseWriter, r *http.Request) {
 	for _, a := range targets {
 		urls = append(urls, a.SubscriptionURL)
 	}
-	results := subscheck.Check(r.Context(), urls, subscheck.Options{})
-	if results == nil {
-		results = []subscheck.Result{}
-	}
+	results := subscheck.Check(r.Context(), urls, subscheck.Options{Client: s.http})
 	okN, failN := subscheck.Summary(results)
+	views := checkViews(targets, results)
 	at := time.Now().UTC()
-	lastChecks.Store(s, &checkSnapshot{Results: results, At: at})
+	lastChecks.Store(s, &checkSnapshot{Results: views, At: at})
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"results": results,
+		"results": views,
 		"ok":      okN,
 		"fail":    failN,
 		"at":      at.Format(time.RFC3339),
@@ -114,7 +156,7 @@ func (s *Server) handleAPICheckLast(w http.ResponseWriter, r *http.Request) {
 	v, ok := lastChecks.Load(s)
 	if !ok {
 		s.writeJSON(w, http.StatusOK, map[string]any{
-			"results": []subscheck.Result{},
+			"results": []checkResultView{},
 			"at":      "",
 		})
 		return
@@ -122,7 +164,7 @@ func (s *Server) handleAPICheckLast(w http.ResponseWriter, r *http.Request) {
 	snap := v.(*checkSnapshot)
 	results := snap.Results
 	if results == nil {
-		results = []subscheck.Result{}
+		results = []checkResultView{}
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"results": results,

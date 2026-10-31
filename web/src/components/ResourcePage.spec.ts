@@ -133,6 +133,26 @@ describe('ResourcePage', () => {
     expect(vm.draft).toEqual({ name: '', count: 0, enabled: true })
   })
 
+  it('blank()：字段声明 default 时优先使用该值', async () => {
+    const localFields = [
+      { key: 'name', label: '名称', type: 'text' },
+      { key: 'include_self', label: '包含自建节点', type: 'switch', default: false },
+      { key: 'enabled', label: '启用', type: 'switch' },
+    ]
+    const resource = makeResource()
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields: localFields, resource },
+      global: { plugins: [vuetify] },
+      attachTo: document.body,
+    })
+    const vm = w.vm as unknown as ResourcePageVm
+    await flushPromises()
+    vm.openCreate()
+    await w.vm.$nextTick()
+    expect(vm.draft).toEqual({ name: '', include_self: false, enabled: true })
+    w.unmount()
+  })
+
   it('openEdit(row)：draft 是副本、editing 为 row、dialog 打开', async () => {
     const resource = makeResource()
     const row = { name: 'a', count: 1, enabled: false }
@@ -436,7 +456,7 @@ describe('ResourcePage', () => {
     expect(vm.confirmOpen).toBe(false)
   })
 
-  it('字段 hint/example：显式传入时渲染 field-hint 与 field-example（含「示例：」前缀）', async () => {
+  it('字段 hint/example：显式传入时渲染 InfoTip 提示文本（含示例）', async () => {
     const localFields = [
       { key: 'name', label: '名称', type: 'text', hint: '自定义提示文案', example: '自定义示例值' },
     ]
@@ -451,13 +471,10 @@ describe('ResourcePage', () => {
     vm.openCreate()
     await w.vm.$nextTick()
     await flushPromises()
-    const hint = w.find('[data-testid="field-hint"]')
-    expect(hint.exists()).toBe(true)
-    expect(hint.text()).toContain('自定义提示文案')
-    const ex = w.find('[data-testid="field-example"]')
-    expect(ex.exists()).toBe(true)
-    expect(ex.text()).toContain('示例：')
-    expect(ex.text()).toContain('自定义示例值')
+    const tips = w.findAll('[data-testid="info-tip-text"]')
+    expect(tips.length).toBe(1)
+    expect(tips[0].text()).toContain('自定义提示文案')
+    expect(tips[0].text()).toContain('示例：自定义示例值')
   })
 
   it('字段 hint/example：未显式传入时回退到 fieldHelp（FIELD_HELP）', async () => {
@@ -476,12 +493,10 @@ describe('ResourcePage', () => {
     vm.openCreate()
     await w.vm.$nextTick()
     await flushPromises()
-    const hints = w.findAll('[data-testid="field-hint"]')
-    expect(hints.length).toBe(2)
-    expect(w.text()).toContain('机场显示名称，便于识别')
-    const exs = w.findAll('[data-testid="field-example"]')
-    expect(exs.length).toBe(2)
-    expect(w.text()).toContain('香港 IEPL')
+    const tips = w.findAll('[data-testid="info-tip-text"]')
+    expect(tips.length).toBe(2)
+    expect(w.text()).toContain('机场显示名称，用于识别来源。')
+    expect(w.text()).toContain('香港专线')
   })
 
   it('字段 hint/example：既无显式也无 FIELD_HELP 时不渲染', async () => {
@@ -499,8 +514,8 @@ describe('ResourcePage', () => {
     vm.openCreate()
     await w.vm.$nextTick()
     await flushPromises()
-    expect(w.find('[data-testid="field-hint"]').exists()).toBe(false)
-    expect(w.find('[data-testid="field-example"]').exists()).toBe(false)
+    expect(w.find('[data-testid="info-tip"]').exists()).toBe(false)
+    expect(w.find('[data-testid="info-tip-text"]').exists()).toBe(false)
   })
 
   it('empty 传 EmptyStateHelp 且列表为空时渲染 empty-state（优先于 emptyText）', async () => {
@@ -733,4 +748,71 @@ describe('ResourcePage', () => {
     await select!.setValue(3)
     expect(vm.draft.group).toBe(3)
   })
+
+
+  it('表格分页状态由表格更新，重新加载后仍保留', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, name: 'row-' + i, count: i, enabled: true }))
+    const resource = makeResource(many)
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource },
+      global: { plugins: [vuetify] },
+    })
+    await flushPromises()
+    const vm = w.vm as any
+    vm.setPageSize(25)
+    await flushPromises()
+    expect((w.vm as any).itemsPerPage).toBe(25)
+    await (w.vm as any).reload()
+    await flushPromises()
+    expect((w.vm as any).itemsPerPage).toBe(25)
+    vm.page = 5
+    vm.itemsPerPage = 10
+    await flushPromises()
+    expect((w.vm as any).page).toBeGreaterThanOrEqual(1)
+    w.unmount()
+  })
+
+  it('每页条数变大导致当前页超出时自动回到最后一页', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, name: 'row-' + i, count: i, enabled: true }))
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns, fields, resource: makeResource(rows) },
+      global: { plugins: [vuetify] },
+    })
+    await flushPromises()
+    const vm = w.vm as any
+    vm.page = 3
+    expect(vm.page).toBe(3)
+    vm.itemsPerPage = 100
+    expect(vm.itemsPerPage).toBe(100)
+    expect(vm.pageCount).toBe(1)
+    await flushPromises()
+    expect(vm.page).toBe(1)
+    w.unmount()
+  })
+
+  it('members 列通过插槽渲染自定义内容', async () => {
+    const resource = makeResource([{ id: 1, name: 'g', enabled: true, members_text: '预览' }])
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns: [{ key: 'name', title: '名称' }, { key: 'members_text', title: '成员' }], fields, resource },
+      global: { plugins: [vuetify] },
+      slots: { members: '<span data-testid="custom-members">自定义成员</span>' },
+    })
+    await flushPromises()
+    expect(w.find('[data-testid="custom-members"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+
+
+  it('members 列无自定义插槽时显示原值', async () => {
+    const resource = makeResource([{ id: 1, name: 'g', enabled: true, members_text: '原样成员' }])
+    const w = mount(ResourcePage, {
+      props: { title: 'T', subtitle: 'S', columns: [{ key: 'name', title: '名称' }, { key: 'members_text', title: '成员' }], fields, resource },
+      global: { plugins: [vuetify] },
+    })
+    await flushPromises()
+    expect(w.text()).toContain('原样成员')
+    w.unmount()
+  })
+
 })

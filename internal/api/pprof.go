@@ -1,33 +1,19 @@
 // Package api 提供 HTTP 入口：路由、中间件与处理器。
 //
-// pprof 端点仅在 debug 模式下启用（通过 ?debug=1 或环境变量 SUBFORGE_DEBUG=1）。
-// 生产环境不暴露 pprof，避免安全风险。
+// pprof 端点只在启动期显式开启（serve -pprof / SUBFORGE_PPROF=1）时可用；
+// 生产默认关闭，即使请求带 ?debug=1 也返回 404。
 package api
 
 import (
 	"net/http"
 	"net/http/pprof"
-	"os"
 	"runtime"
 	"time"
 )
 
-// isDebugMode 检查是否处于调试模式。
-func isDebugMode(r *http.Request) bool {
-	// URL 参数优先级最高
-	if r.URL.Query().Get("debug") == "1" {
-		return true
-	}
-	// 环境变量
-	if os.Getenv("SUBFORGE_DEBUG") == "1" {
-		return true
-	}
-	return false
-}
-
 // handlePprofIndex 是 pprof 索引页。
 func (s *Server) handlePprofIndex(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -36,7 +22,7 @@ func (s *Server) handlePprofIndex(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofCmdline 是 pprof cmdline。
 func (s *Server) handlePprofCmdline(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -45,7 +31,7 @@ func (s *Server) handlePprofCmdline(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofProfile 是 pprof profile。
 func (s *Server) handlePprofProfile(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -54,7 +40,7 @@ func (s *Server) handlePprofProfile(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofSymbol 是 pprof symbol。
 func (s *Server) handlePprofSymbol(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -63,7 +49,7 @@ func (s *Server) handlePprofSymbol(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofTrace 是 pprof trace。
 func (s *Server) handlePprofTrace(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -72,7 +58,7 @@ func (s *Server) handlePprofTrace(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofHeap 是 pprof heap。
 func (s *Server) handlePprofHeap(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -81,7 +67,7 @@ func (s *Server) handlePprofHeap(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofGoroutine 是 pprof goroutine。
 func (s *Server) handlePprofGoroutine(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -90,7 +76,7 @@ func (s *Server) handlePprofGoroutine(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofAllocs 是 pprof allocs。
 func (s *Server) handlePprofAllocs(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -99,7 +85,7 @@ func (s *Server) handlePprofAllocs(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofBlock 是 pprof block。
 func (s *Server) handlePprofBlock(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -108,7 +94,7 @@ func (s *Server) handlePprofBlock(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofMutex 是 pprof mutex。
 func (s *Server) handlePprofMutex(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}
@@ -117,7 +103,7 @@ func (s *Server) handlePprofMutex(w http.ResponseWriter, r *http.Request) {
 
 // handlePprofThreadcreate 是 pprof threadcreate。
 func (s *Server) handlePprofThreadcreate(w http.ResponseWriter, r *http.Request) {
-	if !isDebugMode(r) {
+	if !s.cfg.PProf {
 		http.NotFound(w, r)
 		return
 	}

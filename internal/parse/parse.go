@@ -116,6 +116,9 @@ type Decoded struct {
 	Rules []string
 	// RuleProviders Clash YAML 里的 rule-providers 定义；分享链接来源恒为空。
 	RuleProviders []model.RuleProvider
+	// ProxyGroups Clash YAML 里的 proxy-groups 定义；分享链接来源恒为空。
+	// 导入时按成员落库，避免机场自带分组在解析阶段丢失。
+	ProxyGroups []model.UpstreamGroup
 	// Warnings 解析告警（如 rule-providers 提取失败）；非阻断。
 	Warnings []string
 }
@@ -153,7 +156,10 @@ func DecodeSource(buf []byte) (Decoded, error) {
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("解析 rule-providers 失败: %v", err))
 		}
-		return Decoded{Nodes: proxies, Providers: providers, Rules: rules, RuleProviders: ruleProviders, Warnings: warnings}, nil
+		// proxy-groups 同样只是附加项：解析失败不拖垮节点。
+		proxyGroups, _ := model.ParseClashProxyGroups(sniff.Decoded)
+		return Decoded{Nodes: proxies, Providers: providers, Rules: rules, RuleProviders: ruleProviders,
+			ProxyGroups: proxyGroups, Warnings: warnings}, nil
 	default:
 		nodes, err := convert.ConvertsV2Ray(sniff.Decoded)
 		if err != nil {
@@ -172,6 +178,38 @@ func NameOf(mapping map[string]any) string {
 		return s
 	}
 	return fmt.Sprint(mapping["name"])
+}
+
+// UsableNodeNames 返回可实际连接的节点名。
+// 机场常用 127.0.0.1 上的假节点展示剩余流量/到期时间，这类占位节点
+// 不应参与「分组是否覆盖全部节点」的判断。
+func UsableNodeNames(nodes []map[string]any) []string {
+	all := make([]string, 0, len(nodes))
+	usable := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		name := NameOf(n)
+		all = append(all, name)
+		if usableNode(n) {
+			usable = append(usable, name)
+		}
+	}
+	// 全是占位节点时没有可用的分母，按原样返回，避免把分组误判成空集。
+	if len(usable) == 0 {
+		return all
+	}
+	return usable
+}
+
+func usableNode(n map[string]any) bool {
+	server, ok := n["server"].(string)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(server)) {
+	case "", "127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0":
+		return false
+	}
+	return true
 }
 
 func tryBase64Blob(b []byte) ([]byte, bool) {

@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { tokenState } from '../api/token'
+import { useThemeMode, type ThemeMode } from '../composables/useThemeMode'
 
 const props = defineProps<{ title: string; group?: string }>()
 const emit = defineEmits<{ 'toggle-drawer': []; 'open-token': []; logout: [] }>()
+const brandIcon = '/favicon.svg'
+
+const theme = useThemeMode()
+const themeOptions: { value: ThemeMode; label: string; icon: string }[] = [
+  { value: 'light', label: '浅色', icon: 'mdi-white-balance-sunny' },
+  { value: 'dark', label: '深色', icon: 'mdi-weather-night' },
+  { value: 'system', label: '跟随系统', icon: 'mdi-monitor' },
+]
 
 // 顶栏是用户随时能找到令牌入口的地方；已设置时给出明确提示，避免重复填写。
 const tokenHint = computed(() =>
@@ -42,6 +51,30 @@ function requestLogout(): void {
       </template>
     </v-app-bar-title>
     <v-spacer />
+    <v-menu location="bottom end">
+      <template #activator="{ props: menuProps }">
+        <v-btn
+          v-bind="menuProps"
+          icon="mdi-theme-light-dark"
+          variant="text"
+          size="small"
+          title="页面模式"
+          aria-label="页面模式"
+          data-testid="theme-button"
+        />
+      </template>
+      <v-list density="compact" data-testid="theme-menu">
+        <v-list-item
+          v-for="option in themeOptions"
+          :key="option.value"
+          :prepend-icon="option.icon"
+          :title="option.label"
+          :active="theme.mode.value === option.value"
+          :data-testid="'theme-' + option.value"
+          @click="theme.setMode(option.value)"
+        />
+      </v-list>
+    </v-menu>
     <v-btn
       icon="mdi-key-variant"
       variant="text"
@@ -60,7 +93,10 @@ function requestLogout(): void {
       data-testid="logout"
       @click="requestLogout"
     />
-    <span class="wordmark">SubForge</span>
+    <span class="brand-lockup">
+      <img :src="brandIcon" alt="" class="brand-logo" width="22" height="22" />
+      <span class="wordmark">SubForge</span>
+    </span>
   </v-app-bar>
 </template>
 
@@ -76,5 +112,15 @@ function requestLogout(): void {
 .wordmark {
   font-weight: 600;
   color: var(--sf-text);
+}
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+}
+.brand-logo {
+  border-radius: 5px;
+  flex: 0 0 auto;
 }
 </style>

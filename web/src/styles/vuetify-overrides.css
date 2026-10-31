@@ -20,6 +20,7 @@
 .v-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
+  box-shadow: var(--sf-shadow);
 }
 
 /* th/td 的 padding 与表头排版。
@@ -37,6 +38,7 @@
    th 高度回落成 --v-table-header-height（40px ≤ 41px 验收线）。 */
 .v-table > .v-table__wrapper > table > thead > tr > th {
   background: var(--sf-surface-raised);
+  border-bottom: 1px solid var(--sf-border);
   color: var(--sf-text-muted);
   font-size: 12px;
   font-weight: 600;
@@ -69,9 +71,82 @@
 
 /* ===== 卡片 ===== */
 .v-card {
-  box-shadow: none;
+  box-shadow: var(--sf-shadow);
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
+}
+
+/* ===== 正文链接 ===== */
+/* 浏览器默认的纯蓝链接与设计令牌冲突；导航和按钮由 Vuetify 自己管理，不在此列。 */
+a:not(.v-btn):not(.v-list-item):not(.quick-link) {
+  color: var(--sf-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:not(.v-btn):not(.v-list-item):not(.quick-link):hover {
+  color: var(--sf-accent-hover);
+}
+
+/* ===== 数据表行分隔 ===== */
+/* v-table 默认只在表格外圈有边框；多行数据会粘成一块，这里统一补行线与悬停。 */
+.sf-table-rows > .v-table__wrapper > table > tbody > tr > td {
+  border-bottom: 1px solid var(--sf-border);
+}
+
+.sf-table-rows > .v-table__wrapper > table > tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.sf-table-rows > .v-table__wrapper > table > tbody > tr:hover {
+  background: var(--sf-surface-raised);
+}
+
+.sf-table-rows > .v-table__wrapper > table > tbody > tr > td.sf-row-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ===== 表单分组 ===== */
+.sf-form-section {
+  margin-bottom: 20px;
+}
+
+.sf-form-section:last-child {
+  margin-bottom: 0;
+}
+
+.sf-form-section__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sf-form-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sf-text);
+}
+
+.sf-form-section__caption {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+
+.sf-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+@media (max-width: 700px) {
+  .sf-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }
 
 /* ===== 按钮 ===== */
@@ -111,6 +186,7 @@
 /* ===== 抽屉 / 导航 ===== */
 .v-navigation-drawer {
   width: 248px !important;
+  border-right: 1px solid var(--sf-border);
 }
 
 .v-navigation-drawer .v-list-item,
@@ -155,4 +231,25 @@
 .v-dialog > .v-overlay__content > .v-card > .v-card-text,
 .v-dialog > .v-overlay__content > form > .v-card > .v-card-text {
   overflow-y: auto;
+}
+
+
+/* ---- 悬浮提示：使用实色背景与高对比文字，避免半透明叠字 ---- */
+.v-overlay-container .sf-tooltip {
+  background: var(--sf-tooltip-bg) !important;
+  color: var(--sf-tooltip-fg) !important;
+  border: 1px solid var(--sf-tooltip-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
+  opacity: 1 !important;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.v-overlay-container .sf-tooltip .text-body-2,
+.v-overlay-container .sf-tooltip .text-caption {
+  color: var(--sf-tooltip-fg) !important;
+}
+.v-overlay-container .sf-tooltip .text-caption {
+  opacity: 0.82;
 }

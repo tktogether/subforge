@@ -11,6 +11,8 @@ import { notifyState } from '../composables/useNotify'
 vi.mock('../api/endpoints', () => ({
   endpoints: {
     listRules: vi.fn(),
+    listRulesPage: vi.fn(),
+    listRuleSourceCounts: vi.fn(),
     createRule: vi.fn(),
     listGroups: vi.fn(),
     updateRule: vi.fn(),
@@ -27,7 +29,22 @@ vi.mock('../api/endpoints', () => ({
 
 const vuetify = createVuetify({ components, directives })
 
-const listRulesMock = endpoints.listRules as unknown as ReturnType<typeof vi.fn>
+const listRulesPageMock = endpoints.listRulesPage as unknown as ReturnType<typeof vi.fn>
+const listRuleSourceCountsMock = endpoints.listRuleSourceCounts as unknown as ReturnType<typeof vi.fn>
+let rulesFixture: any[] = []
+
+function setRules(rules: any[]) {
+  rulesFixture = rules
+}
+
+function sourceCounts() {
+  const map = new Map<string, number>()
+  for (const r of rulesFixture) {
+    const source = r.source ?? ''
+    map.set(source, (map.get(source) ?? 0) + 1)
+  }
+  return Array.from(map.entries()).map(([source, count]) => ({ source, count }))
+}
 const listGroupsMock = endpoints.listGroups as unknown as ReturnType<typeof vi.fn>
 const listRuleProvidersMock = endpoints.listRuleProviders as unknown as ReturnType<typeof vi.fn>
 const bulkRulesMock = endpoints.bulkRules as unknown as ReturnType<typeof vi.fn>
@@ -37,11 +54,36 @@ const rejectSuggestionMock = endpoints.rejectSuggestion as unknown as ReturnType
 const applySuggestionsMock = endpoints.applySuggestions as unknown as ReturnType<typeof vi.fn>
 const updateRuleProviderMock = endpoints.updateRuleProvider as unknown as ReturnType<typeof vi.fn>
 
+
+async function openSuggestionsTab(w: any) {
+  const tabs = w.findAll('.v-tab')
+  if (tabs.length >= 3) await tabs[2].trigger('click')
+  await flushPromises()
+}
+
 describe('RulesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     Object.defineProperty(window, 'visualViewport', { value: { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() }, writable: true, configurable: true })
-    listRulesMock.mockResolvedValue([])
+    rulesFixture = []
+    listRulesPageMock.mockImplementation(async (query: any) => {
+      let items = rulesFixture
+      if (query.source !== undefined && query.source !== null) {
+        items = items.filter((r) => (r.source ?? '') === query.source)
+      }
+      if (query.enabled !== undefined) {
+        items = items.filter((r) => r.enabled === query.enabled)
+      }
+      if (query.q) {
+        const q = String(query.q).toLowerCase()
+        items = items.filter((r) => [r.rule_type, r.rule_param, r.source ?? '', r.group_name ?? ''].some((v) => String(v ?? '').toLowerCase().includes(q)))
+      }
+      const offset = query.offset ?? 0
+      const limit = query.limit ?? 25
+      return { rules: items.slice(offset, offset + limit), total: items.length, limit, offset }
+    })
+    listRuleSourceCountsMock.mockImplementation(async () => sourceCounts())
+    setRules([])
     listGroupsMock.mockResolvedValue([])
     listRuleProvidersMock.mockResolvedValue([{ id: 1, name: 'rp', raw_json: '{}', source: 'local', enabled: true, sort_order: 1, created_at: '', updated_at: '' }])
     listSuggestionsMock.mockResolvedValue([])
@@ -53,12 +95,12 @@ describe('RulesPage', () => {
   })
 
   it('onMounted 加载三块数据', async () => {
-    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    setRules([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
     listRuleProvidersMock.mockResolvedValue([{ id: 1, name: 'rp', raw_json: '{}', source: 'local', enabled: true, sort_order: 1, created_at: '', updated_at: '' }])
     listSuggestionsMock.mockResolvedValue([{ Anomaly: { Type: 'node_unreachable', Message: 'm', Source: 's', Timestamp: 't', Raw: 'r' }, Action: 'prepend', Rule: 'RULE', Reason: 'reason', AutoApply: true }])
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(listRulesMock).toHaveBeenCalled()
+    expect(listRulesPageMock).toHaveBeenCalled()
     expect(listRuleProvidersMock).toHaveBeenCalled()
     expect(listSuggestionsMock).toHaveBeenCalled()
     w.unmount()
@@ -75,7 +117,7 @@ describe('RulesPage', () => {
     const btns = w.findAll('button')
     const allBtn = btns.find((b) => b.text().includes('全部'))
     const enBtn = btns.find((b) => b.text().includes('已启用'))
-    const disBtn = btns.find((b) => b.text().includes('已禁用'))
+    const disBtn = btns.find((b) => b.text().includes('已停用'))
     await allBtn?.trigger('click')
     await flushPromises()
     await enBtn?.trigger('click')
@@ -92,85 +134,13 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  it('候选加载失败', async () => {
-    listRulesMock.mockRejectedValueOnce(new Error('boom2'))
-    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    w.unmount()
-  })
 
-  it('导入候选：选中启用/禁用 + 按来源整批启用', async () => {
-    listRulesMock.mockResolvedValue([
-      { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' },
-      { id: 2, rule_type: 't2', rule_param: 'p2', rule_config: 5, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:x' },
-    ])
-    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const vm = w.vm as unknown as { sourceFilter: string | null }
-    vm.sourceFilter = 'airport:x'
-    await flushPromises()
-    // switch to tab 2
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    // select checkbox
-    const checkboxes = w.findAll('input[type="checkbox"]')
-    if (checkboxes.length) await checkboxes[0].setValue(true)
-    await flushPromises()
-    const enableBtn = w.findAll('button').find((b) => b.text().includes('启用选中'))
-    const disableBtn = w.findAll('button').find((b) => b.text().includes('禁用选中'))
-    const allBtn = w.find('[data-testid="enable-source-all"]')
-    await enableBtn?.trigger('click')
-    await flushPromises()
-    // 启用后整批刷新会重置选择，重新勾选，使「禁用选中」按钮可点击，覆盖其点击处理函数（D-41/D-42）
-    const checkboxes2 = w.findAll('input[type="checkbox"]')
-    if (checkboxes2.length) await checkboxes2[0].setValue(true)
-    await flushPromises()
-    await disableBtn?.trigger('click')
-    await flushPromises()
-    await allBtn?.trigger('click')
-    await flushPromises()
-    expect(bulkRulesMock).toHaveBeenCalledWith({ source: 'airport:x', sourcePrefix: false, enabled: true })
-    w.unmount()
-  })
-
-  it('导入候选：enableSelected 空选中直接返回', async () => {
-    listRulesMock.mockResolvedValue([])
-    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    const enableBtn = w.findAll('button').find((b) => b.text().includes('启用选中'))
-    await enableBtn?.trigger('click')
-    await flushPromises()
-    w.unmount()
-  })
-
-  it('导入候选：bulk 失败 notify', async () => {
-    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
-    bulkRulesMock.mockRejectedValueOnce(new Error('bulkerr'))
-    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    const checkboxes = w.findAll('input[type="checkbox"]')
-    if (checkboxes.length) await checkboxes[0].setValue(true)
-    await flushPromises()
-    const enableBtn = w.findAll('button').find((b) => b.text().includes('启用选中'))
-    await enableBtn?.trigger('click')
-    await flushPromises()
-    w.unmount()
-  })
 
   it('Rule-Bot 建议：confirm/reject/apply', async () => {
     listSuggestionsMock.mockResolvedValue([{ Anomaly: { Type: 'node_unreachable', Message: 'm', Source: 's', Timestamp: 't', Raw: 'r' }, Action: 'prepend', Rule: 'RULE', Reason: 'reason', AutoApply: false }])
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 4) await tabs[3].trigger('click')
-    await flushPromises()
+    await openSuggestionsTab(w)
     const confirmBtn = w.find('[data-testid="suggestion-confirm"]')
     const rejectBtn = w.find('[data-testid="suggestion-reject"]')
     const applyBtn = w.findAll('button').find((b) => b.text().includes('应用已确认建议'))
@@ -188,9 +158,7 @@ describe('RulesPage', () => {
     applySuggestionsMock.mockRejectedValueOnce(new Error('applyerr'))
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 4) await tabs[3].trigger('click')
-    await flushPromises()
+    await openSuggestionsTab(w)
     const applyBtn = w.findAll('button').find((b) => b.text().includes('应用已确认建议'))
     await applyBtn?.trigger('click')
     await flushPromises()
@@ -203,9 +171,7 @@ describe('RulesPage', () => {
     rejectSuggestionMock.mockRejectedValueOnce(new Error('rerr'))
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 4) await tabs[3].trigger('click')
-    await flushPromises()
+    await openSuggestionsTab(w)
     const confirmBtn = w.find('[data-testid="suggestion-confirm"]')
     await confirmBtn?.trigger('click')
     await flushPromises()
@@ -219,6 +185,7 @@ describe('RulesPage', () => {
     listSuggestionsMock.mockRejectedValueOnce(new Error('suggerr'))
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
+    await openSuggestionsTab(w)
     w.unmount()
   })
 
@@ -226,9 +193,7 @@ describe('RulesPage', () => {
     listSuggestionsMock.mockRejectedValueOnce(new Error('Rule-Bot 建议队列未启用 501'))
     const w = mount(RulesPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 4) await tabs[3].trigger('click')
-    await flushPromises()
+    await openSuggestionsTab(w)
     w.unmount()
   })
 
@@ -294,7 +259,7 @@ describe('RulesPage', () => {
 
   it('coverage: 规则行 ResourcePage 编辑/新建/删除', async () => {
     const rules = [{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: true, sort_order: 1 }]
-    listRulesMock.mockResolvedValue(rules)
+    setRules(rules)
     const updateMock = endpoints.updateRule as unknown as ReturnType<typeof vi.fn>
     const deleteMock = endpoints.deleteRule as unknown as ReturnType<typeof vi.fn>
     updateMock.mockResolvedValue({ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: true, sort_order: 1 })
@@ -323,48 +288,8 @@ describe('RulesPage', () => {
   })
 
 
-  it('coverage: candidates 加载失败 + 按来源整批启用失败', async () => {
-    // candidates 加载失败
-    listRulesMock.mockRejectedValueOnce(new Error('canderr'))
-    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    await new Promise(r => setTimeout(r, 50))
-    await flushPromises()
-    // 按来源整批启用失败（需要 candidates 有数据）
-    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
-    bulkRulesMock.mockRejectedValueOnce(new Error('bulkerr'))
-    notifyState.open = false
-    await w.unmount()
-    const w2 = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const vm = w2.vm as unknown as { sourceFilter: string | null }
-    vm.sourceFilter = 'airport:x'
-    await flushPromises()
-    const tabs = w2.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    const enableAllBtn = w2.find('[data-testid="enable-source-all"]')
-    if (enableAllBtn) { await enableAllBtn.trigger('click'); await flushPromises() }
-    expect(notifyState.kind).toBe('error')
-    expect(notifyState.text).toContain('bulkerr')
-    w2.unmount()
-  })
-
-
-
-  it('coverage: candidates 加载失败', async () => {
-    listRulesMock.mockImplementation(() => { throw new Error('canderr') })
-    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    await new Promise(r => setTimeout(r, 50))
-    await flushPromises()
-    w.unmount()
-    // restore
-    listRulesMock.mockResolvedValue([])
-  })
-
-  it('导入候选：按来源整批启用/停用走带 source 的 bulk 接口', async () => {
-    listRulesMock.mockResolvedValue([
+  it('按来源整批启用/停用走带 source 的 bulk 接口', async () => {
+    setRules([
       { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' },
       { id: 2, rule_type: 't2', rule_param: 'p2', rule_config: 5, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:x' },
       { id: 3, rule_type: 't3', rule_param: 'p3', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 3, source: 'manual' },
@@ -376,9 +301,6 @@ describe('RulesPage', () => {
     await flushPromises()
     const vm = w.vm as unknown as { sourceFilter: string | null }
     vm.sourceFilter = 'airport:x'
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
     await w.find('[data-testid="enable-source-all"]').trigger('click')
     await flushPromises()
@@ -398,26 +320,8 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  it('导入候选：没有具体来源时整批按钮禁用且不发请求', async () => {
-    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
-    const w = mount(RulesPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    // 默认「全部来源」：整批按钮不可用
-    expect(w.find('[data-testid="enable-source-all"]').attributes('disabled')).toBeDefined()
-    expect(w.find('[data-testid="disable-source-all"]').attributes('disabled')).toBeDefined()
-    expect(w.find('[data-testid="delete-source-all"]').attributes('disabled')).toBeDefined()
-    expect(w.find('[data-testid="source-batch-hint"]').exists()).toBe(true)
-    await w.find('[data-testid="enable-source-all"]').trigger('click')
-    await flushPromises()
-    expect(bulkRulesMock).not.toHaveBeenCalled()
-    w.unmount()
-  })
-
   it('coverage: AutoApply status dot / disabled provider / null source', async () => {
-    listRulesMock.mockResolvedValue([
+    setRules([
       { id: 1, rule_type: 't', rule_param: 'p', rule_config: 1, resolve_dns: true, enabled: false, sort_order: 1, source: null },
     ])
     listRuleProvidersMock.mockResolvedValue([
@@ -429,7 +333,7 @@ describe('RulesPage', () => {
     const tabs = w.findAll('.v-tab')
     if (tabs.length >= 2) await tabs[1].trigger('click')
     await flushPromises()
-    if (tabs.length >= 4) await tabs[3].trigger('click')
+    if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
     expect(w.text()).toContain('自动应用')
     w.unmount()
@@ -477,32 +381,68 @@ describe('RulesPage', () => {
   // ---------------- 来源（source）筛选 / 按来源整批操作 ----------------
 
   it('来源筛选：默认「全部来源」不带参数，选中具体来源后带 source 请求', async () => {
-    listRulesMock.mockResolvedValue([])
+    rulesFixture = []
+    listRulesPageMock.mockImplementation(async (query: any) => {
+      let items = rulesFixture
+      if (query.source !== undefined && query.source !== null) {
+        items = items.filter((r) => (r.source ?? '') === query.source)
+      }
+      if (query.enabled !== undefined) {
+        items = items.filter((r) => r.enabled === query.enabled)
+      }
+      if (query.q) {
+        const q = String(query.q).toLowerCase()
+        items = items.filter((r) => [r.rule_type, r.rule_param, r.source ?? '', r.group_name ?? ''].some((v) => String(v ?? '').toLowerCase().includes(q)))
+      }
+      const offset = query.offset ?? 0
+      const limit = query.limit ?? 25
+      return { rules: items.slice(offset, offset + limit), total: items.length, limit, offset }
+    })
+    listRuleSourceCountsMock.mockImplementation(async () => sourceCounts())
+    setRules([])
     const w = mountRules()
     await flushPromises()
-    expect(listRulesMock).toHaveBeenCalledWith()
+    expect(listRulesPageMock).toHaveBeenCalledWith(expect.objectContaining({ source: null, limit: 25, offset: 0 }))
     const vm = w.vm as unknown as { sourceFilter: string | null; sourceOptions: { title: string; value: string | null }[] }
     expect(vm.sourceFilter).toBe(null)
     expect(vm.sourceOptions.map((o) => o.title)).toEqual(['全部来源', '自定义'])
     vm.sourceFilter = 'airport:PEK'
     await flushPromises()
-    expect(listRulesMock).toHaveBeenCalledWith({ source: 'airport:PEK', sourcePrefix: false })
+    expect(listRulesPageMock).toHaveBeenCalledWith(expect.objectContaining({ source: 'airport:PEK' }))
     w.unmount()
   })
 
   it('来源筛选：选「自定义」时带空串 source', async () => {
-    listRulesMock.mockResolvedValue([])
+    rulesFixture = []
+    listRulesPageMock.mockImplementation(async (query: any) => {
+      let items = rulesFixture
+      if (query.source !== undefined && query.source !== null) {
+        items = items.filter((r) => (r.source ?? '') === query.source)
+      }
+      if (query.enabled !== undefined) {
+        items = items.filter((r) => r.enabled === query.enabled)
+      }
+      if (query.q) {
+        const q = String(query.q).toLowerCase()
+        items = items.filter((r) => [r.rule_type, r.rule_param, r.source ?? '', r.group_name ?? ''].some((v) => String(v ?? '').toLowerCase().includes(q)))
+      }
+      const offset = query.offset ?? 0
+      const limit = query.limit ?? 25
+      return { rules: items.slice(offset, offset + limit), total: items.length, limit, offset }
+    })
+    listRuleSourceCountsMock.mockImplementation(async () => sourceCounts())
+    setRules([])
     const w = mountRules()
     await flushPromises()
     const vm = w.vm as unknown as { sourceFilter: string | null }
     vm.sourceFilter = ''
     await flushPromises()
-    expect(listRulesMock).toHaveBeenCalledWith({ source: '', sourcePrefix: false })
+    expect(listRulesPageMock).toHaveBeenCalledWith(expect.objectContaining({ source: '' }))
     w.unmount()
   })
 
   it('来源下拉：列出数据里出现过的来源（去重/排序）；来源列表拉取失败时降级', async () => {
-    listRulesMock.mockResolvedValue([
+    setRules([
       { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:PEK' },
       { id: 2, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:PEK' },
       { id: 3, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 3, source: '' },
@@ -513,11 +453,11 @@ describe('RulesPage', () => {
     expect(vm.sourceOptions).toEqual([
       { title: '全部来源', value: null },
       { title: '自定义', value: '' },
-      { title: 'airport:PEK', value: 'airport:PEK' },
+      { title: 'airport:PEK · 2 条', value: 'airport:PEK' },
     ])
     expect(w.find('[data-testid="rules-source-filter"]').exists()).toBe(true)
     w.unmount()
-    listRulesMock.mockRejectedValue(new Error('sources boom'))
+    listRuleSourceCountsMock.mockRejectedValueOnce(new Error('sources boom'))
     const w2 = mountRules()
     await flushPromises()
     expect((w2.vm as unknown as { sourceOptions: { title: string; value: string | null }[] }).sourceOptions).toEqual([
@@ -525,11 +465,29 @@ describe('RulesPage', () => {
       { title: '自定义', value: '' },
     ])
     w2.unmount()
-    listRulesMock.mockResolvedValue([])
+    rulesFixture = []
+    listRulesPageMock.mockImplementation(async (query: any) => {
+      let items = rulesFixture
+      if (query.source !== undefined && query.source !== null) {
+        items = items.filter((r) => (r.source ?? '') === query.source)
+      }
+      if (query.enabled !== undefined) {
+        items = items.filter((r) => r.enabled === query.enabled)
+      }
+      if (query.q) {
+        const q = String(query.q).toLowerCase()
+        items = items.filter((r) => [r.rule_type, r.rule_param, r.source ?? '', r.group_name ?? ''].some((v) => String(v ?? '').toLowerCase().includes(q)))
+      }
+      const offset = query.offset ?? 0
+      const limit = query.limit ?? 25
+      return { rules: items.slice(offset, offset + limit), total: items.length, limit, offset }
+    })
+    listRuleSourceCountsMock.mockImplementation(async () => sourceCounts())
+    setRules([])
   })
 
   it('按来源整批删除：必须二次确认，确认后调用 bulk delete=true', async () => {
-    listRulesMock.mockResolvedValue([
+    setRules([
       { id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:PEK' },
       { id: 2, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 2, source: 'airport:PEK' },
     ])
@@ -539,9 +497,6 @@ describe('RulesPage', () => {
     await flushPromises()
     const vm = w.vm as unknown as { sourceFilter: string | null; sourceDeleteOpen: boolean }
     vm.sourceFilter = 'airport:PEK'
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
     await w.find('[data-testid="delete-source-all"]').trigger('click')
     await flushPromises()
@@ -577,9 +532,6 @@ describe('RulesPage', () => {
     const w = mount(RulesPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: DialogStub } } })
     await flushPromises()
     const vm = w.vm as unknown as { sourceDeleteOpen: boolean; tab: number }
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
     const target = w.findAllComponents({ name: 'VDialog' }).find((d) => d.attributes('data-testid') === 'confirm-source-delete')
     expect(target).toBeDefined()
     await (target as unknown as { vm: { $emit: (e: string, ...a: unknown[]) => void } }).vm.$emit('update:modelValue', false)
@@ -589,7 +541,7 @@ describe('RulesPage', () => {
   })
 
   it('整批操作守卫：没有具体来源 / 进行中时不发请求', async () => {
-    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    setRules([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
     const w = mountRules()
     await flushPromises()
     const vm = w.vm as unknown as {
@@ -620,16 +572,13 @@ describe('RulesPage', () => {
   })
 
   it('按来源整批删除失败：错误提示', async () => {
-    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    setRules([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
     bulkRulesMock.mockRejectedValueOnce(new Error('del boom'))
     notifyState.open = false
     const w = mountRules()
     await flushPromises()
     const vm = w.vm as unknown as { sourceFilter: string | null; sourceDeleteOpen: boolean }
     vm.sourceFilter = 'airport:x'
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
     await w.find('[data-testid="delete-source-all"]').trigger('click')
     await flushPromises()
@@ -644,16 +593,13 @@ describe('RulesPage', () => {
   })
 
   it('整批结果缺 updated/deleted 字段时回退为当前来源的规则条数', async () => {
-    listRulesMock.mockResolvedValue([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    setRules([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
     bulkRulesMock.mockResolvedValue({})
     notifyState.open = false
     const w = mountRules()
     await flushPromises()
     const vm = w.vm as unknown as { sourceFilter: string | null }
     vm.sourceFilter = 'airport:x'
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
     await flushPromises()
     await w.find('[data-testid="enable-source-all"]').trigger('click')
     await flushPromises()
@@ -662,7 +608,7 @@ describe('RulesPage', () => {
   })
 
   it('规则表：来源列渲染原始 source；不再有方案列与批量移动入口', async () => {
-    listRulesMock.mockResolvedValue([
+    setRules([
       { id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:PEK' },
       { id: 2, rule_type: 'DOMAIN', rule_param: 'b.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 2, source: '' },
     ])
@@ -678,7 +624,25 @@ describe('RulesPage', () => {
   })
 
   it('新增规则提交 body 不含 profile_id（v2：规则不再归属方案）', async () => {
-    listRulesMock.mockResolvedValue([])
+    rulesFixture = []
+    listRulesPageMock.mockImplementation(async (query: any) => {
+      let items = rulesFixture
+      if (query.source !== undefined && query.source !== null) {
+        items = items.filter((r) => (r.source ?? '') === query.source)
+      }
+      if (query.enabled !== undefined) {
+        items = items.filter((r) => r.enabled === query.enabled)
+      }
+      if (query.q) {
+        const q = String(query.q).toLowerCase()
+        items = items.filter((r) => [r.rule_type, r.rule_param, r.source ?? '', r.group_name ?? ''].some((v) => String(v ?? '').toLowerCase().includes(q)))
+      }
+      const offset = query.offset ?? 0
+      const limit = query.limit ?? 25
+      return { rules: items.slice(offset, offset + limit), total: items.length, limit, offset }
+    })
+    listRuleSourceCountsMock.mockImplementation(async () => sourceCounts())
+    setRules([])
     const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
     createMock.mockResolvedValue({ id: 1, rule_type: 'DOMAIN', rule_param: 'a.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1 })
     const w = mountRules()
@@ -693,7 +657,7 @@ describe('RulesPage', () => {
   })
 
   it('编辑规则回填来源字段并随保存发出（body 不含 profile_id）', async () => {
-    listRulesMock.mockResolvedValue([{ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:PEK' }])
+    setRules([{ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:PEK' }])
     const updateMock = endpoints.updateRule as unknown as ReturnType<typeof vi.fn>
     updateMock.mockResolvedValue({ id: 9, rule_type: 'DOMAIN', rule_param: 'e.com', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:PEK' })
     const w = mountRules()
@@ -707,27 +671,6 @@ describe('RulesPage', () => {
     expect(updateMock.mock.calls[0][1]).not.toHaveProperty('profile_id')
     w.unmount()
   })
-
-  it('候选列表加载失败：错误态展示', async () => {
-    listRulesMock.mockRejectedValue(new Error('canderr'))
-    const w = mountRules()
-    await flushPromises()
-    expect((w.vm as unknown as { candidatesError: string }).candidatesError).toContain('canderr')
-    w.unmount()
-    listRulesMock.mockResolvedValue([])
-  })
-
-  it('导入候选提示文案说明来源筛选与整批操作', async () => {
-    listRulesMock.mockResolvedValue([])
-    const w = mountRules()
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    expect(w.text()).toContain('来源筛选')
-    expect(w.text()).toContain('airport:')
-  })
-
 
   it('loadGroups 失败软化：groups 归空数组，页面主功能不炸（T10 补 catch 分支）', async () => {
     listGroupsMock.mockRejectedValueOnce(new Error('groups boom'))
@@ -756,7 +699,7 @@ describe('RulesPage', () => {
   }
 
   it('D-09 表头全选命中当前筛选的全部行，批量禁用只调用一次且 ids 正确', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
+    setRules(D09_RULES)
     const w = mountRules()
     await flushPromises()
     const table = w.find('[data-testid="table"]')
@@ -776,7 +719,7 @@ describe('RulesPage', () => {
   })
 
   it('D-09 筛选后表头全选只选中筛选命中的行', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
+    setRules(D09_RULES)
     const w = mountRules()
     await flushPromises()
     await w.find('[data-testid="filter-disabled"]').trigger('click')
@@ -793,7 +736,7 @@ describe('RulesPage', () => {
   })
 
   it('D-09 批量删除必须二次确认：取消不发请求，确认后才发送 delete payload', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
+    setRules(D09_RULES)
     bulkRulesMock.mockResolvedValue({ deleted: 2 })
     const w = mountRules()
     await flushPromises()
@@ -826,7 +769,7 @@ describe('RulesPage', () => {
   })
 
   it('D-09 批量失败：错误提示出来且不清空选择', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
+    setRules(D09_RULES)
     bulkRulesMock.mockRejectedValueOnce(new Error('bulk boom'))
     notifyState.open = false
     const w = mountRules()
@@ -846,23 +789,23 @@ describe('RulesPage', () => {
   })
 
   it('D-09 批量成功后：清空选择并刷新列表', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
+    setRules(D09_RULES)
     bulkRulesMock.mockResolvedValue({ updated: 3 })
     const w = mountRules()
     await flushPromises()
-    const before = listRulesMock.mock.calls.length
+    const before = listRulesPageMock.mock.calls.length
     const headerBox = w.find('[data-testid="table"] thead input[type="checkbox"]')
     await headerBox.setValue(true)
     await flushPromises()
     await w.find('[data-testid="bulk-enable"]').trigger('click')
     await flushPromises()
-    expect(listRulesMock.mock.calls.length).toBeGreaterThan(before)
+    expect(listRulesPageMock.mock.calls.length).toBeGreaterThan(before)
     expect(w.find('[data-testid="bulk-bar"]').exists()).toBe(false)
     w.unmount()
   })
 
   it('D-09 规则行分页 footer 保留（每页数目 / 分页器）', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
+    setRules(D09_RULES)
     const w = mountRules()
     await flushPromises()
     expect(w.find('[data-testid="table"]').exists()).toBe(true)
@@ -885,26 +828,28 @@ describe('RulesPage', () => {
   }
 
   it('搜索框输入触发过滤（source 为 null、group_name 缺失也不炸）', async () => {
-    listRulesMock.mockResolvedValue(COV_RULES)
+    setRules(COV_RULES)
     const w = mountCov()
     await flushPromises()
     const search = w.findComponent('[data-testid="rule-search"]')
     expect(search.exists()).toBe(true)
     const searchVm = (search as unknown as { vm: { $emit: (ev: string, v: unknown) => void } }).vm
     searchVm.$emit('update:modelValue', 'HK')
+    await new Promise((r) => setTimeout(r, 350))
     await flushPromises()
     expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 1 条')
-    searchVm.$emit('update:modelValue', 'no-such-rule')
+    ;(w.vm as any).ruleSearch = 'no-such-rule'
+    await new Promise((r) => setTimeout(r, 400))
     await flushPromises()
     expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 0 条')
     w.unmount()
   })
 
   it('筛选按钮与刷新按钮走查（已启用 / 全部 / 重新加载）', async () => {
-    listRulesMock.mockResolvedValue(COV_RULES)
+    setRules(COV_RULES)
     const w = mountCov()
     await flushPromises()
-    const before = listRulesMock.mock.calls.length
+    const before = listRulesPageMock.mock.calls.length
     await w.find('[data-testid="filter-enabled"]').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 1 条')
@@ -913,12 +858,12 @@ describe('RulesPage', () => {
     expect(w.find('[data-testid="rule-selection-count"]').text()).toContain('筛选命中 2 条')
     await w.find('[data-testid="refresh"]').trigger('click')
     await flushPromises()
-    expect(listRulesMock.mock.calls.length).toBeGreaterThan(before)
+    expect(listRulesPageMock.mock.calls.length).toBeGreaterThan(before)
     w.unmount()
   })
 
   it('新增保存失败：错误提示弹出且对话框保持打开', async () => {
-    listRulesMock.mockResolvedValue(COV_RULES)
+    setRules(COV_RULES)
     const createMock = endpoints.createRule as unknown as ReturnType<typeof vi.fn>
     createMock.mockRejectedValueOnce(new Error('create boom'))
     notifyState.open = false
@@ -936,7 +881,7 @@ describe('RulesPage', () => {
   })
 
   it('守卫分支：无待删目标 / 空选择批量 / 批量删除失败', async () => {
-    listRulesMock.mockResolvedValue(COV_RULES)
+    setRules(COV_RULES)
     const w = mountCov()
     await flushPromises()
     const vm = w.vm as unknown as {
@@ -967,7 +912,7 @@ describe('RulesPage', () => {
   })
 
   it('弹窗 v-model setter 与取消按钮', async () => {
-    listRulesMock.mockResolvedValue(COV_RULES)
+    setRules(COV_RULES)
     const w = mountCov()
     await flushPromises()
     const vm = w.vm as unknown as {
@@ -1020,7 +965,7 @@ describe('RulesPage', () => {
   })
 
   it('来源筛选下拉的 update:modelValue 与按来源删除确认弹窗', async () => {
-    listRulesMock.mockResolvedValue(D09_RULES)
+    setRules(D09_RULES)
     const w = mountRules()
     await flushPromises()
     const vm = w.vm as unknown as {
@@ -1036,12 +981,9 @@ describe('RulesPage', () => {
     await filterSel!.vm.$emit('update:modelValue', 'airport:PEK')
     await flushPromises()
     expect(vm.sourceFilter).toBe('airport:PEK')
-    expect(listRulesMock).toHaveBeenCalledWith({ source: 'airport:PEK', sourcePrefix: false })
+    expect(listRulesPageMock).toHaveBeenCalledWith(expect.objectContaining({ source: 'airport:PEK' }))
     expect(vm.sourceTarget()).toBe('airport:PEK')
     // 2) 按来源删除确认弹窗：打开再取消（弹窗在「导入候选」tab 里）
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
     vm.sourceDeleteOpen = true
     await flushPromises()
     const cancelBtn = w.find('[data-testid="confirm-source-delete-cancel"]')
@@ -1052,98 +994,34 @@ describe('RulesPage', () => {
     w.unmount()
   })
 
-  // ---------------- D-41 / D-42：导入候选工具条可见性 + 切 tab 刷新 ----------------
 
-  const D41_RULES = [
-    { id: 31, rule_type: 'DOMAIN', rule_param: 'a.example', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: 'airport:aaa' },
-    { id: 32, rule_type: 'DOMAIN-SUFFIX', rule_param: 'b.example', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 2, source: 'airport:aaa' },
-  ]
-
-  it('D-41 空候选时整批按钮仍可见可点（不被 AsyncSection 空态藏住）', async () => {
-    // 该来源的规则全部 enabled=true → 候选为空（用户正需要整批停用/启用/删除来撤回）
-    listRulesMock.mockResolvedValue(D41_RULES)
-    const w = mountRules()
-    await flushPromises()
-    const vm = w.vm as unknown as { sourceFilter: string | null }
-    vm.sourceFilter = 'airport:aaa'
-    await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    // 前提：候选确实为空
-    expect((w.vm as unknown as { candidates: unknown[] }).candidates).toEqual([])
-
-    const enableAll = w.find('[data-testid="enable-source-all"]')
-    const disableAll = w.find('[data-testid="disable-source-all"]')
-    const deleteAll = w.find('[data-testid="delete-source-all"]')
-    expect(enableAll.exists()).toBe(true)
-    expect(disableAll.exists()).toBe(true)
-    expect(deleteAll.exists()).toBe(true)
-    // 可见（不再是空态里消失的一整块）
-    expect(enableAll.isVisible()).toBe(true)
-    expect(disableAll.isVisible()).toBe(true)
-    expect(deleteAll.isVisible()).toBe(true)
-    // 选中具体来源后整批按钮可用（未 disabled）
-    expect(enableAll.attributes('disabled')).toBeUndefined()
-    expect(disableAll.attributes('disabled')).toBeUndefined()
-    expect(deleteAll.attributes('disabled')).toBeUndefined()
-    // 空态提示出现，告诉用户仍可用整批按钮
-    const hint = w.find('[data-testid="candidates-empty-hint"]')
-    expect(hint.exists()).toBe(true)
-    expect(hint.isVisible()).toBe(true)
-    expect(hint.text()).toContain('整批按钮')
-    // 整批删除入口仍然能打开二次确认（用户有撤回路径）
-    await deleteAll.trigger('click')
-    await flushPromises()
-    expect((w.vm as unknown as { sourceDeleteOpen: boolean }).sourceDeleteOpen).toBe(true)
-    expect(w.find('[data-testid="confirm-source-delete-text"]').exists()).toBe(true)
-    w.unmount()
-  })
-
-  it('D-41 回归：候选非空时工具条与候选表都可见', async () => {
-    listRulesMock.mockResolvedValue([
-      { id: 41, rule_type: 'DOMAIN', rule_param: 'c.example', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:aaa' },
+  it('服务端分页选项变化触发重新取数', async () => {
+    setRules([
+      { id: 1, rule_type: 'DOMAIN', rule_param: 'a.test', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 1, source: '' },
+      { id: 2, rule_type: 'DOMAIN', rule_param: 'b.test', rule_config: 0, resolve_dns: true, enabled: true, sort_order: 2, source: '' },
     ])
     const w = mountRules()
     await flushPromises()
-    const vm = w.vm as unknown as { sourceFilter: string | null }
-    vm.sourceFilter = 'airport:aaa'
+    const vm = w.vm as any
+    vm.setRulePageSize(50)
     await flushPromises()
-    const tabs = w.findAll('.v-tab')
-    if (tabs.length >= 3) await tabs[2].trigger('click')
-    await flushPromises()
-    expect((w.vm as unknown as { candidates: unknown[] }).candidates.length).toBe(1)
-    expect(w.find('[data-testid="enable-source-all"]').isVisible()).toBe(true)
-    expect(w.find('[data-testid="disable-source-all"]').isVisible()).toBe(true)
-    expect(w.find('[data-testid="delete-source-all"]').isVisible()).toBe(true)
-    expect(w.find('[data-testid="enable-selected"]').isVisible()).toBe(true)
-    expect(w.find('[data-testid="disable-selected"]').isVisible()).toBe(true)
-    expect(w.find('[data-testid="candidates-table"]').exists()).toBe(true)
-    // 候选非空时不再显示空态提示
-    expect(w.find('[data-testid="candidates-empty-hint"]').exists()).toBe(false)
+    expect(listRulesPageMock).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50, offset: 0 }))
     w.unmount()
   })
 
-  it('D-42 切到「导入候选」tab 时重新拉取候选', async () => {
-    listRulesMock.mockResolvedValue([
-      { id: 51, rule_type: 'DOMAIN', rule_param: 'd.example', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:aaa' },
-    ])
+  it('按来源整批启用失败提示 error', async () => {
+    setRules([{ id: 1, rule_type: 't', rule_param: 'p', rule_config: 0, resolve_dns: true, enabled: false, sort_order: 1, source: 'airport:x' }])
+    bulkRulesMock.mockRejectedValueOnce(new Error('bulk boom'))
+    notifyState.open = false
     const w = mountRules()
     await flushPromises()
-    const vm = w.vm as unknown as { sourceFilter: string | null; tab: number }
-    vm.sourceFilter = 'airport:aaa'
+    const vm = w.vm as unknown as { sourceFilter: string | null; sourceEnableAll: (v: boolean) => Promise<void> }
+    vm.sourceFilter = 'airport:x'
     await flushPromises()
-    // 清空调用记录，只观察「切 tab」这一次触发的请求
-    listRulesMock.mockClear()
-    vm.tab = 2
+    await vm.sourceEnableAll(true)
     await flushPromises()
-    expect(listRulesMock).toHaveBeenCalled()
-    expect(listRulesMock).toHaveBeenCalledWith({ source: 'airport:aaa', sourcePrefix: false })
-    // 切到其它 tab 不再拉候选
-    listRulesMock.mockClear()
-    vm.tab = 1
-    await flushPromises()
-    expect(listRulesMock).not.toHaveBeenCalled()
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('bulk boom')
     w.unmount()
   })
 })

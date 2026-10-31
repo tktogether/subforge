@@ -149,6 +149,37 @@ func TestImportRulesIdempotent(t *testing.T) {
 	}
 }
 
+// TestImportRulesWithOptionsEnableRules 覆盖“导入即启用”：新规则 enabled=true，
+// 同时按 CreateGroups 补建目标分组，供机场页默认勾选的“立即启用”使用。
+func TestImportRulesWithOptionsEnableRules(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+
+	res, err := m.ImportRulesToLibraryWithOptions(ctx, "airport:HK",
+		[]string{"DOMAIN-SUFFIX,enabled.test,自动启用组"}, nil,
+		ImportOptions{CreateGroups: true, EnableRules: true})
+	if err != nil {
+		t.Fatalf("ImportRulesToLibraryWithOptions: %v", err)
+	}
+	if res.RulesAdded != 1 || res.GroupsCreated != 1 {
+		t.Fatalf("added/groups = %d/%d，应为 1/1", res.RulesAdded, res.GroupsCreated)
+	}
+	rules, err := m.ListRulesByLayers(ctx, []string{"airport"})
+	if err != nil {
+		t.Fatalf("ListRulesByLayers: %v", err)
+	}
+	if len(rules) != 1 || !rules[0].Enabled {
+		t.Fatalf("规则应 enabled=true，实际 %+v", rules)
+	}
+	groups, err := m.ListProxyGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListProxyGroups: %v", err)
+	}
+	if len(groups) != 1 || groups[0].Name != "自动启用组" {
+		t.Fatalf("目标分组未创建，实际 %+v", groups)
+	}
+}
+
 // TestImportRuleProviders 覆盖 provider 幂等写入且 enabled=false。
 func TestImportRuleProviders(t *testing.T) {
 	ctx := context.Background()
@@ -576,5 +607,203 @@ func TestImportRulesToLibraryReusesExistingGroup(t *testing.T) {
 	}
 	if res.GroupsCreated != 0 || len(res.Warnings) != 1 {
 		t.Fatalf("createGroups=false 应只提示不建组, groups=%d warnings=%v", res.GroupsCreated, res.Warnings)
+	}
+}
+
+// TestImportRulesWithUpstreamGroups 机场自带分组应先落库，规则目标直接指向该组，
+// 不再为同名目标建 regex="." 的占位组。
+func TestImportRulesWithUpstreamGroups(t *testing.T) {
+	m := newTestManager(t)
+	upstream := []model.UpstreamGroup{
+		{Name: "PROXY", Type: "select", Members: []string{"HK-1", "JP-1"}},
+		{Name: "HK-ONLY", Type: "select", Members: []string{"HK-1"}},
+		{Name: "GROUP-ONLY", Type: "select", Members: []string{"PROXY", "DIRECT"}},
+	}
+	res, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:HK",
+		[]string{"DOMAIN-SUFFIX,x.test,PROXY"}, nil,
+		ImportOptions{
+			CreateGroups:      true,
+			EnableRules:       true,
+			UpstreamGroups:    upstream,
+			UpstreamNodeNames: []string{"HK-1", "JP-1"},
+		})
+	if err != nil {
+		t.Fatalf("ImportRulesToLibraryWithOptions: %v", err)
+	}
+	if res.GroupsCreated != 3 {
+		t.Fatalf("GroupsCreated = %d，应为 3", res.GroupsCreated)
+	}
+	groups, err := m.ListProxyGroups(t.Context())
+	if err != nil || len(groups) != 3 {
+		t.Fatalf("分组数不符: %+v err=%v", groups, err)
+	}
+	byName := make(map[string]ProxyGroup, len(groups))
+	for _, g := range groups {
+		byName[g.Name] = g
+	}
+	if g := byName["PROXY"]; strings.Join(g.Members, ",") != "HK-1,JP-1" || !g.IncludeSelf || !g.IncludeAllSources {
+		t.Fatalf("覆盖全部机场节点的 PROXY 应开启自建/全部来源扩展: %+v", g)
+	}
+	if g := byName["HK-ONLY"]; g.IncludeSelf || g.IncludeAllSources {
+		t.Fatalf("子集组 HK-ONLY 不应开启扩展: %+v", g)
+	}
+	if g := byName["GROUP-ONLY"]; g.IncludeSelf || g.IncludeAllSources {
+		t.Fatalf("只引用子组的 GROUP-ONLY 不应开启扩展: %+v", g)
+	}
+	rules, err := m.ListRulesByLayers(t.Context(), []string{"airport"})
+	if err != nil || len(rules) != 1 || rules[0].RuleConfig != byName["PROXY"].ID || !rules[0].Enabled {
+		t.Fatalf("规则未指向上游分组: %+v err=%v", rules, err)
+	}
+}
+
+// TestCoversAllNodes 覆盖全节点判断的边界：空名单、空成员、子组名、部分覆盖。
+func TestCoversAllNodes(t *testing.T) {
+	cases := []struct {
+		name      string
+		members   []string
+		nodeNames []string
+		want      bool
+	}{
+		{"空节点名单", []string{"HK-1"}, nil, false},
+		{"空成员", nil, []string{"HK-1"}, false},
+		{"全部覆盖", []string{"HK-1", "JP-1"}, []string{"HK-1", "JP-1"}, true},
+		{"含子组名也覆盖", []string{"PROXY", "HK-1", "JP-1", "DIRECT"}, []string{"HK-1", "JP-1"}, true},
+		{"只缺一个", []string{"HK-1"}, []string{"HK-1", "JP-1"}, false},
+		{"节点名单只有空白", []string{"HK-1"}, []string{"  "}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := coversAllNodes(c.members, c.nodeNames); got != c.want {
+				t.Fatalf("coversAllNodes(%v,%v) = %v，应为 %v", c.members, c.nodeNames, got, c.want)
+			}
+		})
+	}
+}
+
+// TestImportRefreshUpdatesAllSourceFlag 同一机场再次导入时，派生的成员与
+// 「全部来源」标志要跟随订阅变化；用户改过的类型保留。
+func TestImportRefreshUpdatesAllSourceFlag(t *testing.T) {
+	m := newTestManager(t)
+	nodes := []string{"HK-1", "JP-1"}
+	upstream := []model.UpstreamGroup{{Name: "ALL", Type: "select", Members: nodes}}
+	opts := ImportOptions{
+		CreateGroups:      true,
+		UpstreamGroups:    upstream,
+		UpstreamNodeNames: nodes,
+	}
+	if _, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:fx", nil, nil, opts); err != nil {
+		t.Fatalf("首次导入: %v", err)
+	}
+	groups, _ := m.ListProxyGroups(t.Context())
+	if len(groups) != 1 || !groups[0].IncludeAllSources {
+		t.Fatalf("首次导入应开启全部来源: %+v", groups)
+	}
+	if err := m.UpdateProxyGroup(t.Context(), groups[0].ID, "ALL", "url-test", "", "https://test", 300, 0); err != nil {
+		t.Fatalf("UpdateProxyGroup: %v", err)
+	}
+
+	// 第二次导入变成子集组：标志应关闭，成员跟随订阅，类型保留。
+	opts.UpstreamGroups = []model.UpstreamGroup{{Name: "ALL", Type: "select", Members: []string{"HK-1"}}}
+	opts.UpstreamNodeNames = []string{"HK-1", "JP-1"}
+	res, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:fx", nil, nil, opts)
+	if err != nil {
+		t.Fatalf("二次导入: %v", err)
+	}
+	if res.GroupsCreated != 0 {
+		t.Fatalf("同源分组应刷新而不是新建，GroupsCreated = %d", res.GroupsCreated)
+	}
+	got, err := m.GetProxyGroup(t.Context(), groups[0].ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if got.IncludeAllSources || len(got.Members) != 1 || got.Members[0] != "HK-1" {
+		t.Fatalf("二次导入未刷新扩展/成员: %+v", got)
+	}
+	if got.Type != "url-test" || got.URL != "https://test" {
+		t.Fatalf("用户编辑的类型/测活不应被覆盖: %+v", got)
+	}
+}
+
+// TestImportRefreshPromotesFullGroupToSelf 分组从子集升级为全节点时恢复完整扩展，
+// 修复旧版本把「自动选择」判成子集后留下的 all=false/self=false 状态。
+func TestImportRefreshPromotesFullGroupToSelf(t *testing.T) {
+	m := newTestManager(t)
+	opts := ImportOptions{
+		CreateGroups:      true,
+		UpstreamGroups:    []model.UpstreamGroup{{Name: "AUTO", Type: "url-test", Members: []string{"HK-1"}}},
+		UpstreamNodeNames: []string{"HK-1", "JP-1"},
+	}
+	if _, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:fx", nil, nil, opts); err != nil {
+		t.Fatalf("首次导入: %v", err)
+	}
+	groups, _ := m.ListProxyGroups(t.Context())
+	if len(groups) != 1 || groups[0].IncludeAllSources || groups[0].IncludeSelf {
+		t.Fatalf("子集组不应扩展: %+v", groups)
+	}
+	opts.UpstreamGroups = []model.UpstreamGroup{{Name: "AUTO", Type: "url-test", Members: []string{"HK-1", "JP-1"}}}
+	if _, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:fx", nil, nil, opts); err != nil {
+		t.Fatalf("二次导入: %v", err)
+	}
+	got, err := m.GetProxyGroup(t.Context(), groups[0].ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if !got.IncludeAllSources || !got.IncludeSelf {
+		t.Fatalf("升级为全节点组后应恢复完整扩展: %+v", got)
+	}
+}
+
+func TestSplitRuleFieldsLogical(t *testing.T) {
+	cases := []struct {
+		line string
+		want []string
+	}{
+		{"DOMAIN-SUFFIX,a.com,PROXY", []string{"DOMAIN-SUFFIX", "a.com", "PROXY"}},
+		{"AND,((DST-PORT,443),(NETWORK,UDP)),PROXY", []string{"AND", "((DST-PORT,443),(NETWORK,UDP))", "PROXY"}},
+		{"IP-CIDR,10.0.0.0/8,DIRECT,no-resolve", []string{"IP-CIDR", "10.0.0.0/8", "DIRECT", "no-resolve"}},
+	}
+	for _, c := range cases {
+		got := splitRuleFields(c.line)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("splitRuleFields(%q) = %#v, want %#v", c.line, got, c.want)
+		}
+	}
+}
+
+// TestImportLogicalRuleDoesNotCreateBogusGroup 逻辑规则参数里的逗号不能被当成目标分组。
+func TestImportLogicalRuleDoesNotCreateBogusGroup(t *testing.T) {
+	m := newTestManager(t)
+	res, err := m.ImportRulesToLibraryWithOptions(t.Context(), "airport:x", []string{
+		"AND,((DST-PORT,443),(NETWORK,UDP)),PROXY",
+	}, nil, ImportOptions{
+		CreateGroups:      true,
+		EnableRules:       true,
+		UpstreamGroups:    []model.UpstreamGroup{{Name: "PROXY", Type: "select", Members: []string{"A-1"}}},
+		UpstreamNodeNames: []string{"A-1"},
+	})
+	if err != nil {
+		t.Fatalf("导入逻辑规则: %v", err)
+	}
+	if res.GroupsCreated != 1 {
+		t.Fatalf("应只创建 PROXY 一个分组，GroupsCreated=%d", res.GroupsCreated)
+	}
+	groups, err := m.ListProxyGroups(t.Context())
+	if err != nil {
+		t.Fatalf("ListProxyGroups: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "443)" || g.Name == "PROXY" && len(groups) != 1 {
+			t.Fatalf("出现异常分组: %+v", groups)
+		}
+	}
+	rules, err := m.ListRulesFiltered(t.Context(), SourceFilter{Source: "airport:x"})
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("逻辑规则未正确导入: %+v err=%v", rules, err)
+	}
+	if rules[0].RuleType != "AND" || rules[0].RuleParam != "((DST-PORT,443),(NETWORK,UDP))" {
+		t.Fatalf("逻辑规则字段错误: %+v", rules[0])
+	}
+	if rules[0].RuleConfig == 0 {
+		t.Fatalf("逻辑规则目标未解析到 PROXY: %+v", rules[0])
 	}
 }

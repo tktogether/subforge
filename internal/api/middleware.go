@@ -44,7 +44,7 @@ func requestLogger(l *log.Logger) func(http.Handler) http.Handler {
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 			l.Printf("%s %s -> %d (%d B, %s, rid=%s) %s",
-				r.Method, r.URL.Path, rec.status, rec.bytes,
+				r.Method, redactPath(r.URL.Path), rec.status, rec.bytes,
 				time.Since(start).Round(time.Microsecond), dash(id), clientOf(r))
 		})
 	}

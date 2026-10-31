@@ -46,6 +46,7 @@ describe('AppNav', () => {
       expect(w.text()).toContain(g.name)
     }
     expect(w.text()).toContain('SubForge')
+    expect(appNav.find('img[src="/favicon.svg"]').exists()).toBe(true)
     w.unmount()
   })
 

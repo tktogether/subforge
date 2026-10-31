@@ -6,6 +6,7 @@ import * as directives from 'vuetify/directives'
 import SettingsPage from './SettingsPage.vue'
 import { endpoints } from '../api/endpoints'
 import { pageHelp } from '../content/help'
+import { notifyState } from '../composables/useNotify'
 
 vi.mock('../api/endpoints', () => ({
   endpoints: {
@@ -13,24 +14,14 @@ vi.mock('../api/endpoints', () => ({
     stats: vi.fn(),
     listSettings: vi.fn(),
     updateSettings: vi.fn(),
+    getTemplate: vi.fn(),
+    putTemplate: vi.fn(),
   },
-}))
-
-const mockSetMode = vi.fn()
-vi.mock('../composables/useThemeMode', () => ({
-  useThemeMode: () => ({
-    mode: { value: 'system' },
-    isDark: { value: false },
-    setMode: mockSetMode,
-    cycle: vi.fn(),
-  }),
 }))
 
 const vuetify = createVuetify({ components, directives })
 
 interface SettingsPageVm {
-  targets: string[]
-  statsHistory: number
   error: string
   settings: any[]
   saving: boolean
@@ -45,6 +36,8 @@ describe('SettingsPage', () => {
     vi.clearAllMocks()
     vi.mocked(endpoints.listSettings).mockResolvedValue({ settings: sampleSettings } as any)
     vi.mocked(endpoints.updateSettings).mockResolvedValue({ ok: true } as any)
+    vi.mocked(endpoints.getTemplate).mockResolvedValue({ path: '/data/template.ini', content: '[custom]\n' } as any)
+    vi.mocked(endpoints.putTemplate).mockResolvedValue({ ok: true } as any)
   })
 
   const sampleStats = { history: { total: 7 } } as any
@@ -53,111 +46,62 @@ describe('SettingsPage', () => {
     { key: 'rules.manifest_path', kind: 'path', label: 'manifest', description: 'manifest 路径', value: '/tmp/m', is_default: false, placeholder: '/default/m' },
   ] as any
 
-  it('onMounted 调用 load：targets 与 stats 并发调用，结果写入，error 为空', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue(['clash', 'yaml'])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
+  it('模板卡片：已配置时加载路径/内容，保存调用 putTemplate 并提示', async () => {
+    vi.mocked(endpoints.getTemplate).mockResolvedValue({ path: '/data/template.ini', content: '[custom]\n' } as any)
     const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    const vm = w.vm as unknown as SettingsPageVm
+    const vm = w.vm as any
     await flushPromises()
-    expect(endpoints.targets).toHaveBeenCalledTimes(1)
-    expect(endpoints.stats).toHaveBeenCalledTimes(1)
-    expect(vm.targets).toEqual(['clash', 'yaml'])
-    expect(vm.statsHistory).toBe(7)
-    expect(vm.error).toBe('')
+    expect(vm.templateAvailable).toBe(true)
+    expect(vm.templatePath).toBe('/data/template.ini')
+    expect(w.find('[data-testid="template-content"]').exists()).toBe(true)
+    await w.find('[data-testid="template-content"] textarea').setValue('[custom]\nruleset=x,[]FINAL')
+    await flushPromises()
+    expect(vm.templateContent).toBe('[custom]\nruleset=x,[]FINAL')
+    await w.find('[data-testid="template-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.putTemplate).toHaveBeenCalledWith('[custom]\nruleset=x,[]FINAL')
+    expect(endpoints.getTemplate).toHaveBeenCalledTimes(2)
+    expect(notifyState.text).toBe('模板已保存')
+  })
+
+  it('模板卡片：未配置 -config 时给出引导，不渲染编辑器', async () => {
+    vi.mocked(endpoints.getTemplate).mockRejectedValueOnce(new Error('模板路径未配置'))
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="template-unavailable"]').exists()).toBe(true)
+    expect(w.find('[data-testid="template-content"]').exists()).toBe(false)
+    expect(w.find('[data-testid="template-error"]').text()).toContain('模板路径未配置')
+  })
+
+  it('模板卡片：保存失败显示语法错误', async () => {
+    vi.mocked(endpoints.getTemplate).mockResolvedValue({ path: '/data/template.ini', content: '[custom]' } as any)
+    vi.mocked(endpoints.putTemplate).mockRejectedValueOnce(new Error('模板语法错误: bad'))
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="template-save"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="template-error"]').text()).toContain('模板语法错误')
+  })
+
+  it('设置项集中渲染在单个卡片内', async () => {
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(endpoints.listSettings).toHaveBeenCalledTimes(1)
+    expect(w.findAll('[data-testid="setting-row"]').length).toBe(2)
+    const cards = w.findAllComponents({ name: 'VCard' })
+    const settingsCard = cards.find((c) => c.classes().includes('settings-card'))
+    expect(settingsCard?.exists()).toBe(true)
+    expect(settingsCard?.text()).toContain('manifest 路径')
     w.unmount()
   })
 
-  it('load 失败：error 为 errorMessage(err)', async () => {
-    vi.mocked(endpoints.targets).mockRejectedValue(new Error('fail-load'))
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
+  it('加载设置失败显示错误', async () => {
+    vi.mocked(endpoints.listSettings).mockRejectedValueOnce(new Error('fail-load'))
     const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
     const vm = w.vm as unknown as SettingsPageVm
     await flushPromises()
     expect(vm.error).toBe('fail-load')
-    expect(vm.targets).toEqual([])
-    w.unmount()
-  })
-
-  it('load 失败（非 Error）：error 为 String(err)', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue(['clash'])
-    vi.mocked(endpoints.stats).mockRejectedValue('str-fail')
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    const vm = w.vm as unknown as SettingsPageVm
-    await flushPromises()
-    expect(vm.error).toBe('str-fail')
-    w.unmount()
-  })
-
-  it('模板：targets 为空时显示「（无）」', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).toContain('（无）')
-    expect(w.text()).toContain('7')
-    w.unmount()
-  })
-
-  it('模板：targets 非空时 join 渲染', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue(['clash', 'yaml'])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).toContain('clash, yaml')
-    expect(w.text()).not.toContain('（无）')
-    w.unmount()
-  })
-
-  it('模板：error 为空时不显示错误块', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).not.toContain('fail-load')
-    expect(w.find('.text-error').exists()).toBe(false)
-    w.unmount()
-  })
-
-  it('模板：error 非空时显示错误块', async () => {
-    vi.mocked(endpoints.targets).mockRejectedValue(new Error('boom'))
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.text()).toContain('boom')
-    expect(w.find('.text-error').exists()).toBe(true)
-    w.unmount()
-  })
-
-  it('点击浅色按钮：theme.setMode("light")', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const btn = w.findAllComponents({ name: 'VBtn' }).find((b) => b.text().includes('浅色'))
-    await btn!.trigger('click')
-    expect(mockSetMode).toHaveBeenCalledWith('light')
-    w.unmount()
-  })
-
-  it('点击深色按钮：theme.setMode("dark")', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const btn = w.findAllComponents({ name: 'VBtn' }).find((b) => b.text().includes('深色'))
-    await btn!.trigger('click')
-    expect(mockSetMode).toHaveBeenCalledWith('dark')
-    w.unmount()
-  })
-
-  it('点击跟随系统按钮：theme.setMode("system")', async () => {
-    vi.mocked(endpoints.targets).mockResolvedValue([])
-    vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
-    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const btn = w.findAllComponents({ name: 'VBtn' }).find((b) => b.text().includes('跟随系统'))
-    await btn!.trigger('click')
-    expect(mockSetMode).toHaveBeenCalledWith('system')
+    expect(w.text()).toContain('fail-load')
     w.unmount()
   })
 
@@ -294,13 +238,13 @@ describe('SettingsPage', () => {
     w.unmount()
   })
 
-  it('模板：fieldHelp 为 undefined 时 hint 回落空串', async () => {
+  it('模板：fieldHelp 为 undefined 时不渲染说明图标', async () => {
     vi.mocked(endpoints.targets).mockResolvedValue([])
     vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)
     vi.mocked(endpoints.listSettings).mockResolvedValue({ settings: [{ key: 'unknown.key', kind: 'path', label: 'u', description: 'd', value: '', is_default: false }] } as any)
     const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.find('[data-testid="setting-hint"]').text()).toBe('')
+    expect(w.find('[data-testid="info-tip"]').exists()).toBe(false)
     w.unmount()
   })
 })

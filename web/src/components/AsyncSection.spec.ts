@@ -93,7 +93,7 @@ describe('AsyncSection', () => {
     expect(wrapper.find('[data-testid="empty-state-detail"]').text()).toContain('点新增添加')
   })
 
-  it('empty 的 action 有 to 时渲染 empty-state-action 为链接', () => {
+  it('empty 的 action 有 to 时渲染 empty-state-action 为按钮', () => {
     const wrapper = mount(AsyncSection, {
       props: {
         loading: false, error: '',
@@ -105,6 +105,7 @@ describe('AsyncSection', () => {
     const a = wrapper.find('[data-testid="empty-state-action"]')
     expect(a.exists()).toBe(true)
     expect(a.text()).toContain('去添加')
+    expect(a.classes()).toContain('v-btn')
   })
 
   it('D-22：errorDetail 非空时渲染可折叠的详情块，主文案区不重复原始报文', () => {

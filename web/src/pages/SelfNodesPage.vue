@@ -1,22 +1,80 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
 import { pageHelp } from '../content/help'
 import ResourcePage from '../components/ResourcePage.vue'
-import { endpoints } from '../api/endpoints'
+import NodePreviewDialog from '../components/NodePreviewDialog.vue'
+import { endpoints, type NodePreviewResult } from '../api/endpoints'
+import { notify } from '../composables/useNotify'
+import { errorMessage } from '../composables/useAsync'
 
 const help = pageHelp('self-nodes')
+
+const pipeline = ref('')
+const pipelineOptions = ref<{ title: string; value: string }[]>([])
+const pipelineSaving = ref(false)
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const previewError = ref('')
+const previewResult = ref<NodePreviewResult | null>(null)
+
+async function previewProcess(): Promise<void> {
+  previewOpen.value = true
+  previewLoading.value = true
+  previewError.value = ''
+  previewResult.value = null
+  try {
+    previewResult.value = await endpoints.previewSelfNodesProcess(pipeline.value.trim())
+  } catch (err) {
+    previewError.value = errorMessage(err)
+  } finally {
+    previewLoading.value = false
+  }
+}
+const pipelineItems = computed(() => {
+  const items = [...pipelineOptions.value]
+  const current = pipeline.value.trim()
+  if (current !== '' && !items.some((i) => i.value === current)) {
+    items.unshift({ title: current, value: current })
+  }
+  return items
+})
+
+async function loadSourcePipeline(): Promise<void> {
+  try {
+    const [source, list] = await Promise.all([endpoints.getSelfSourcePipeline(), endpoints.pipelines('')])
+    pipeline.value = source.pipeline
+    pipelineOptions.value = list.filter((p) => p.enabled).map((p) => ({ title: p.name, value: p.name }))
+  } catch {
+    // 来源处理配置读取失败不阻塞自建节点列表
+  }
+}
+
+async function saveSourcePipeline(): Promise<void> {
+  pipelineSaving.value = true
+  try {
+    await endpoints.setSelfSourcePipeline(pipeline.value.trim())
+    notify('已保存自建节点处理管线')
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    pipelineSaving.value = false
+  }
+}
+
+onMounted(() => {
+  void loadSourcePipeline()
+})
 
 const selfNodeColumns = [
   { key: 'name', title: '名称' },
   { key: 'link', title: '链接' },
   { key: 'enabled', title: '启用' },
-  { key: 'sort_order', title: '顺序' },
 ]
 
 const selfNodeFields = [
   { key: 'name', label: '名称', type: 'text', hint: '输出到客户端显示的名字；留空则用链接里自带的名字', example: '自建-香港' },
   { key: 'link', label: '分享链接', type: 'text', hint: '标准分享链接，以 ss:// / vmess:// / vless:// / trojan:// / hysteria2:// 开头', example: 'vless://uuid@1.2.3.4:443?encryption=none&security=tls#香港' },
   { key: 'enabled', label: '启用', type: 'switch', hint: '关闭后不参与输出' },
-  { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
 ]
 
 const resource: any = {
@@ -29,22 +87,35 @@ const resource: any = {
 
 <template>
   <div class="self-nodes-page">
-    <v-alert type="info" variant="tonal" class="mb-4" data-testid="self-node-help">
-      <div class="text-body-2">
-        <p class="mb-1"><strong>和机场节点的区别（最关键）：</strong></p>
-        <ul class="mb-2">
-          <li><strong>机场节点</strong>：来自「机场」页配置的订阅地址，整份订阅一起拉取、一起更新。</li>
-          <li><strong>自建节点</strong>：这里一行一条，<strong>直接填节点分享链接</strong>（<code>ss://</code>、<code>vmess://</code>、<code>vless://</code>、<code>trojan://</code>、<code>hysteria2://</code> 等）。服务会把它写成临时文件交给同一套解析引擎，<strong>和机场节点走完全相同的去重、管线、分组、规则流程</strong>。</li>
-          <li>两者的节点在输出里<strong>没有区别</strong>，只是来源不同。</li>
-        </ul>
-        <p class="mb-1"><strong>什么时候用它：</strong>机场里没有的机器（自己的 VPS）、临时补一个节点、或者不想把链接放进机场订阅时。</p>
-        <p class="mb-0"><strong>链接格式：</strong>必须是<strong>标准分享链接</strong>（客户端里「复制链接」得到的那一串）。保存时服务端会逐条解析校验：名称或链接为空、链接解析失败、节点字段校验不通过，都会<strong>直接返回 400 并报错</strong>（提示形如「分享链接格式不正确：…」），<strong>不会静默入列表</strong>——加完可以去「概览」页核对节点数。</p>
+    <p class="text-body-2 text-medium-emphasis mb-3">
+      自建节点与机场节点合并输出。分享链接需为标准格式，保存时会校验名称、链接与必要字段。
+    </p>
+
+    <v-card class="mb-4 pa-4" data-testid="self-source-card">
+      <div class="text-subtitle-2 mb-1">自建节点处理</div>
+      <div class="text-caption text-medium-emphasis mb-3">
+        所有选中的自建节点作为同一个来源，先经过这条管线，再与机场来源合并；留空表示不处理。
       </div>
-    </v-alert>
+      <div class="d-flex align-start ga-3">
+        <v-select
+          v-model="pipeline"
+          :items="pipelineItems"
+          label="处理管线"
+          variant="outlined"
+          density="comfortable"
+          hide-details
+          clearable
+          data-testid="self-source-pipeline"
+          class="self-source-select"
+        />
+        <v-btn color="primary" :loading="pipelineSaving" data-testid="self-source-save" @click="saveSourcePipeline">保存</v-btn>
+        <v-btn variant="tonal" prepend-icon="mdi-eye-outline" data-testid="self-preview-process" @click="previewProcess">预览处理</v-btn>
+      </div>
+    </v-card>
 
     <ResourcePage
       title="自建节点"
-      subtitle="手动添加的节点，与机场节点合并输出"
+      :subtitle="help.oneLiner"
       help-key="self-nodes"
       :columns="selfNodeColumns"
       :fields="selfNodeFields"
@@ -66,5 +137,19 @@ const resource: any = {
         </v-expansion-panel-text>
       </v-expansion-panel>
     </v-expansion-panels>
+    <NodePreviewDialog
+      v-model="previewOpen"
+      title="自建节点处理预览"
+      :loading="previewLoading"
+      :error="previewError"
+      :result="previewResult"
+    />
   </div>
 </template>
+
+<style scoped>
+.self-source-select {
+  max-width: 360px;
+  flex: 1 1 240px;
+}
+</style>

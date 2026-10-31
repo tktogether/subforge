@@ -6,6 +6,7 @@ import * as directives from 'vuetify/directives'
 import GroupsPage from './GroupsPage.vue'
 import ResourcePage from '../components/ResourcePage.vue'
 import { endpoints } from '../api/endpoints'
+import { pageHelp } from '../content/help'
 
 vi.mock('../api/endpoints', async () => {
   const actual = await vi.importActual<any>('../api/endpoints')
@@ -39,38 +40,53 @@ describe('GroupsPage', () => {
     const rp = w.findComponent(ResourcePage)
     expect(rp.exists()).toBe(true)
     expect(rp.props('title')).toBe('代理分组')
-    expect(rp.props('subtitle')).toBe('决定客户端里的策略组与节点归组')
+    expect(rp.props('subtitle')).toBe(pageHelp('groups').oneLiner)
     expect(rp.props('helpKey')).toBe('groups')
     expect(rp.props('columns')).toEqual([
       { key: 'name', title: '名称' },
       { key: 'source_text', title: '来源' },
       { key: 'type', title: '类型' },
       { key: 'regex', title: '匹配正则' },
-      { key: 'url', title: '测活地址' },
+      { key: 'members_text', title: '成员' },
+      { key: 'expand_text', title: '成员扩展' },
+      { key: 'url', title: '检测地址' },
       { key: 'interval', title: '间隔(秒)' },
-      { key: 'sort_order', title: '顺序' },
     ])
     expect(rp.props('fields')).toEqual([
-      { key: 'name', label: '名称', type: 'text', hint: '客户端里显示的策略组名；规则行的目标分组就是按这个名找的', example: '香港' },
-      { key: 'type', label: '类型', type: 'text', hint: 'select=手动选；url-test=自动选延迟最低；fallback=按顺序回退；load-balance=负载均衡', example: 'select' },
-      { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名匹配成员；留空则不自动收节点', example: '香港|HK' },
-      { key: 'url', label: '测活地址', type: 'text', hint: '仅 url-test / fallback 需要；返回 204 的地址最合适', example: 'http://www.gstatic.com/generate_204' },
-      { key: 'interval', label: '测活间隔（秒）', type: 'number', hint: '仅 url-test 需要；太小会频繁测活', example: '300' },
-      { key: 'sort_order', label: '排序', type: 'number', hint: '越小越靠前' },
+      { key: 'name', label: '名称', type: 'text', hint: '客户端中显示的策略组名称；规则通过该名称选择目标分组。', example: '香港' },
+      { key: 'type', label: '类型', type: 'text', hint: 'select 手动选择；url-test 自动选择延迟最低；fallback 按顺序故障切换；load-balance 负载均衡。', example: 'select' },
+      { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名称匹配成员；留空时不按正则选择成员。', example: '香港|HK' },
+      { key: 'url', label: '检测地址', type: 'text', hint: '自动测速使用的检测地址；仅 url-test 与 fallback 需要。', example: 'http://www.gstatic.com/generate_204' },
+      { key: 'interval', label: '检测间隔（秒）', type: 'number', hint: '自动测速间隔，单位秒。', example: '300' },
+      {
+        key: 'include_all_sources',
+        label: '包含全部来源节点',
+        type: 'switch',
+        default: false,
+        hint: '将方案中所有机场的节点加入该分组。成员覆盖本机场全部节点的分组在导入时默认开启。',
+      },
+      {
+        key: 'include_self',
+        label: '包含自建节点',
+        type: 'switch',
+        default: false,
+        hint: '将方案中选中的自建节点加入该分组。',
+      },
     ])
+    expect(rp.props('rankKey')).toBeUndefined()
     const resource = rp.props('resource') as any
     expect(resource.list).not.toBe(endpoints.listGroups)
     expect(resource.create).toBe(endpoints.createGroup)
-    expect(w.text()).toContain('分组是什么')
-    expect(w.text()).toContain('rule_config')
-    expect(w.text()).toContain('DIRECT')
+    expect(w.text()).toContain('代理分组')
     w.unmount()
   })
 
   it('resource.list 包装 endpoints.listGroups，给每行补 source_text 并渲染进表格', async () => {
     listMock.mockResolvedValue([
-      { id: 1, name: '分组A', type: 'select', regex: '.*', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X' },
-      { id: 2, name: '自定义组', type: 'select', regex: '.*', url: '', interval: 0, sort_order: 2, source: '' },
+      { id: 1, name: '分组A', type: 'select', regex: '', url: 'https://g.example', interval: 300, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'JP-1', 'SG-1', 'US-1'], include_all_sources: true, include_self: true },
+      { id: 2, name: '自定义组', type: 'select', regex: '.*', url: '', interval: 0, sort_order: 2, source: '', include_self: false },
+      { id: 3, name: '其他机场组', type: 'select', regex: '', url: '', interval: 0, sort_order: 3, source: 'airport:机场Y', members: ['HK-1'], include_all_sources: true, include_self: false },
+      { id: 4, name: '仅自建组', type: 'select', regex: '', url: '', interval: 0, sort_order: 4, source: '', members: ['HK-1'], include_self: true },
     ])
 
     const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
@@ -82,6 +98,14 @@ describe('GroupsPage', () => {
     expect(w.text()).toContain('机场:机场X')
     expect(w.text()).toContain('自定义组')
     expect(w.text()).toContain('自定义')
+    expect(w.text()).toContain('4 个：HK-1、JP-1、SG-1…')
+    expect(w.text()).toContain('成员扩展')
+    expect(w.text()).toContain('全部来源')
+    const rows = await (w.findComponent(ResourcePage).props('resource') as any).list()
+    expect(rows[0].expand_text).toBe('全部来源')
+    expect(rows[1].expand_text).toBe('—')
+    expect(rows[2].expand_text).toBe('其他机场')
+    expect(rows[3].expand_text).toBe('自建')
     w.unmount()
   })
 
@@ -179,6 +203,33 @@ describe('GroupsPage', () => {
     w.unmount()
   })
 
+  it('编辑分组时「包含全部来源/包含自建」开关回填并随提交保存', async () => {
+    listMock.mockResolvedValue([
+      { id: 9, name: '机场组', type: 'select', regex: '', url: '', interval: 0, sort_order: 1, source: 'airport:机场X', members: ['HK-1'], include_self: true },
+    ])
+    updateMock.mockResolvedValue({ id: 9, name: '机场组' })
+    const w = mount(GroupsPage, {
+      global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+
+    const switches = w.findAllComponents({ name: 'VSwitch' })
+    expect(switches.length).toBe(2)
+    expect(switches[0].props('modelValue')).toBe(false)
+    expect(switches[1].props('modelValue')).toBe(true)
+    await switches[0].setValue(true)
+    await switches[1].setValue(false)
+    await w.find('[data-testid="dialog-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    expect(updateMock.mock.calls[0][1].include_all_sources).toBe(true)
+    expect(updateMock.mock.calls[0][1].include_self).toBe(false)
+    w.unmount()
+  })
+
   it('来源列格式化：airport: 前缀转「机场:」、空串转「自定义」、其它原样', async () => {
     listMock.mockResolvedValue([
       { id: 1, name: 'g1', type: 't', regex: '', url: '', interval: 0, sort_order: 0, source: 'airport:北京' },
@@ -200,7 +251,7 @@ describe('GroupsPage', () => {
   it('help-panel 渲染 oneLiner', async () => {
     const w = mount(GroupsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('决定客户端里的策略组与节点归组')
+    expect(w.text()).toContain(pageHelp('groups').oneLiner)
     w.unmount()
   })
 
@@ -215,4 +266,35 @@ describe('GroupsPage', () => {
     expect(w.text()).toContain('故障转移')
     w.unmount()
   })
+
+
+  it('成员列按需打开完整列表并支持搜索', async () => {
+    listMock.mockResolvedValue([
+      { id: 1, name: '全部节点', type: 'select', regex: '', url: '', interval: 0, sort_order: 1, source: 'airport:机场X', members: ['HK-1', 'HK-2', 'HK-3', 'HK-4', 'HK-5', 'HK-6', 'HK-7', 'HK-8', 'HK-9', 'HK-10', 'JP-1', 'JP-2'], include_all_sources: true, include_self: true },
+    ])
+    const w = mount(GroupsPage, {
+      global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' } } },
+    })
+    await flushPromises()
+    const open = w.find('[data-testid="group-members-open"]')
+    expect(open.exists()).toBe(true)
+    expect(open.text()).toContain('12 个')
+    expect(w.find('[data-testid="group-members-dialog"]').exists()).toBe(false)
+    await open.trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="group-members-dialog"]').exists()).toBe(true)
+    expect(w.findAll('[data-testid="group-member-item"]').length).toBe(12)
+    expect(w.text()).toContain('HK-1')
+    expect(w.text()).toContain('JP-2')
+    await w.find('[data-testid="group-members-search"] input').setValue('jp')
+    await flushPromises()
+    expect(w.findAll('[data-testid="group-member-item"]').length).toBe(2)
+    expect(w.text()).toContain('JP-1')
+    expect(w.find('[data-testid="group-member-list"]').text()).not.toContain('HK-1')
+    await w.find('[data-testid="group-members-close"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).membersOpen).toBe(false)
+    w.unmount()
+  })
+
 })

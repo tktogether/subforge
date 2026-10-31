@@ -53,6 +53,24 @@ func (m *Manager) UpdateProfile(ctx context.Context, id int64, name, description
 	return m.db.UpdateProfile(ctx, id, name, description, configName, pipeline, enabled, sortOrder)
 }
 
+// SetProfileRenderOptions 保存方案的 target/include/exclude；nil = 不修改该列。
+func (m *Manager) SetProfileRenderOptions(ctx context.Context, id int64, target, include, exclude *string) error {
+	err := m.db.SetProfileRenderOptions(ctx, id, target, include, exclude)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("订阅方案 %d 不存在", id)
+	}
+	return err
+}
+
+// SetProfileSources 保存方案使用的机场/自建节点来源；nil = 不修改该列。
+func (m *Manager) SetProfileSources(ctx context.Context, id int64, airportIDs, selfNodeIDs *[]int64) error {
+	err := m.db.SetProfileSources(ctx, id, airportIDs, selfNodeIDs)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("订阅方案 %d 不存在", id)
+	}
+	return err
+}
+
 // DeleteProfile 删除订阅方案；目标不存在时返回 sql.ErrNoRows。
 func (m *Manager) DeleteProfile(ctx context.Context, id int64) error {
 	return m.db.DeleteProfile(ctx, id)
@@ -71,6 +89,11 @@ func (m *Manager) CreateSubTokenWithProfile(ctx context.Context, token, name, ta
 // Prefix=true 时按前缀匹配。
 func (m *Manager) ListRulesFiltered(ctx context.Context, f SourceFilter) ([]Rule, error) {
 	return m.db.ListRulesFiltered(ctx, f)
+}
+
+// ListRuleSourceCounts 返回规则来源及条数（轻量来源列表）。
+func (m *Manager) ListRuleSourceCounts(ctx context.Context) ([]store.RuleSourceCount, error) {
+	return m.db.ListRuleSourceCounts(ctx)
 }
 
 // BatchSetRulesEnabledBySource 按来源批量启用/停用规则，返回实际更新的行数。

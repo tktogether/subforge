@@ -51,7 +51,15 @@ describe('ScriptsPage', () => {
 
     expect(listScriptsMock).toHaveBeenCalledTimes(1)
     expect(w.text()).toContain('a')
-    expect(w.text()).toContain('filter')
+    expect(w.text()).toContain('过滤脚本')
+    w.unmount()
+  })
+
+  it('未标注 kind 的旧脚本显示「未标注类型」', async () => {
+    listScriptsMock.mockResolvedValue([{ id: 9, name: 'legacy', kind: '', code: 'x', enabled: true }])
+    const w = mount(ScriptsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.text()).toContain('未标注类型')
     w.unmount()
   })
 
@@ -61,7 +69,7 @@ describe('ScriptsPage', () => {
     const w = mount(ScriptsPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } } })
     await flushPromises()
 
-    expect(w.text()).toContain('还没有脚本')
+    expect(w.text()).toContain('暂无脚本')
     w.unmount()
   })
 
@@ -311,7 +319,7 @@ describe('ScriptsPage', () => {
     const w = mount(ScriptsPage, { global: { plugins: [vuetify], stubs: { teleport: true, VDialog: { template: '<div><slot /></div>' } } } })
     await flushPromises()
 
-    expect(w.text()).toContain('脚本在服务端 goja 沙箱执行')
+    expect(w.text()).toContain('脚本在服务端沙箱中执行')
     w.unmount()
   })
 
@@ -427,6 +435,12 @@ describe('ScriptsPage', () => {
     expect(w.find('[data-testid="scripts-return-rules"]').exists()).toBe(true)
     expect(w.find('[data-testid="scripts-writeback"]').exists()).toBe(true)
     expect(w.find('[data-testid="scripts-variables"]').text()).toContain('只读')
+    await w.find('[data-testid="scripts-reference"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).referenceOpen).toBe(true)
+    await w.find('[data-testid="scripts-reference-close"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).referenceOpen).toBe(false)
     w.unmount()
   })
 
@@ -435,7 +449,7 @@ describe('ScriptsPage', () => {
     const w = mountPage()
     await flushPromises()
     const vm = w.vm as unknown as ScriptsVm
-    vm.onExampleSelect('改写 SNI')
+    vm.onExampleSelect('修改 SNI')
     await nextTick()
     expect(vm.formKind).toBe('operate')
     expect(vm.formCode).toBe("if (node.raw.sni) { node.raw.sni = 'example.com' }")
@@ -718,7 +732,7 @@ describe('ScriptsPage', () => {
   })
 
   describe('W3 探针', () => {
-    it('W3D-15：点一次「插入示例」即写入默认示例，且下拉同时展开', async () => {
+    it('W3D-15：点「插入示例」展开列表，选中示例后才写入代码与类型', async () => {
       listScriptsMock.mockResolvedValue([])
       const w = mountPage()
       await flushPromises()
@@ -729,13 +743,18 @@ describe('ScriptsPage', () => {
       expect(vm.formCode).toBe('')
       await w.find('[data-testid="example-insert"]').trigger('click')
       await flushPromises()
+      expect(vm.exampleMenu).toBe(true)
+      expect(vm.formCode).toBe('')
+      const items = w.findAll('[data-testid="example-item"]')
+      expect(items.length).toBeGreaterThan(0)
+      await items[0].trigger('click')
+      await flushPromises()
 
       const def = SCRIPTS_HELP.examples[0]
       expect(def).toBeTruthy()
       expect(vm.formCode).toBe(def!.code)
       expect(vm.formKind).toBe(def!.kind)
-      expect(vm.exampleMenu).toBe(true)
-      expect(w.find('[data-testid="example-item"]').exists()).toBe(true)
+      expect(vm.exampleMenu).toBe(false)
       w.unmount()
     })
 
@@ -803,9 +822,7 @@ describe('ScriptsPage', () => {
       const el = w.find('[data-testid="test-result"]')
       expect(el.exists()).toBe(true)
       expect(el.classes()).toContain('test-result-scroll')
-      const style = el.attributes('style') ?? ''
-      expect(style).toContain('max-height')
-      expect(style).toContain('overflow-y: auto')
+      expect(el.classes()).toContain('result-panel')
 
       // 0 结果：容器不渲染，对话框仍可正常关闭（高度自适应）
       const w2 = mountPage()
@@ -814,9 +831,9 @@ describe('ScriptsPage', () => {
       vm2.testDialog = true
       await flushPromises()
       expect(w2.find('[data-testid="test-result"]').exists()).toBe(false)
-      const close = w2.findAll('button').find((b) => b.text().includes('关闭'))
-      expect(close).toBeDefined()
-      await close!.trigger('click')
+      const close = w2.find('[data-testid="test-close"]')
+      expect(close.exists()).toBe(true)
+      await close.trigger('click')
       await flushPromises()
       expect(vm2.testDialog).toBe(false)
       w2.unmount()

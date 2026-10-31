@@ -5,10 +5,9 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { zhHans } from 'vuetify/locale'
 
-// P3 森林柔和（Everforest 系）双主题（subforgeLight / subforgeDark）。
-// 色值逐字取自 docs/design/mockups/palette-p3-forest.html:10-46：
-//   浅色 :10-25，深色 :31-46。令牌真值源是 web/src/design/tokens.css，
-//   两处的一致性由 web/src/plugins/vuetify.spec.ts 的断言锁定。
+// 高对比中性蓝双主题（subforgeLight / subforgeDark）。
+// 令牌真值源是 web/src/design/tokens.css，两处的一致性由
+// web/src/plugins/vuetify.spec.ts 的断言锁定。
 // 注意：这里必须写字面 hex 而不是 var(--sf-*)。Vuetify 生成 --v-theme-* 时会对每个
 // 色值调用 parseColor()（web/node_modules/vuetify/lib/composables/theme.js:124，
 // 实现见 web/node_modules/vuetify/lib/util/colorUtils.js:81-91），传 var(--sf-accent)
@@ -29,33 +28,33 @@ export const vuetify = createVuetify({
       subforgeLight: {
         dark: false,
         colors: {
-          primary: '#4F6E35', // --sf-accent          palette-p3-forest.html:19
-          secondary: '#405B2B', // --sf-accent-hover  palette-p3-forest.html:20
-          success: '#2b7b41', // --sf-ok              palette-p3-forest.html:22
-          warning: '#976000', // --sf-warn            palette-p3-forest.html:23
-          error: '#B3382E', // --sf-danger            palette-p3-forest.html:24
-          info: '#2B6198', // --sf-info               palette-p3-forest.html:25
-          background: '#F0F2E6', // --sf-bg          palette-p3-forest.html:10
-          surface: '#F9FAEF', // --sf-surface        palette-p3-forest.html:12
-          'surface-variant': '#FDFEF6', // --sf-surface-raised palette-p3-forest.html:13
-          'on-surface': '#242B26', // --sf-text       palette-p3-forest.html:16
-          'on-background': '#242B26', // --sf-text    palette-p3-forest.html:16
+          primary: '#174C80', // --sf-accent
+          secondary: '#103A63', // --sf-accent-hover
+          success: '#15803D', // --sf-ok
+          warning: '#9A5B00', // --sf-warn
+          error: '#B42318', // --sf-danger
+          info: '#0E7490', // --sf-info
+          background: '#EEF2F7', // --sf-bg
+          surface: '#FFFFFF', // --sf-surface
+          'surface-variant': '#F5F8FC', // --sf-surface-raised
+          'on-surface': '#0F172A', // --sf-text
+          'on-background': '#0F172A', // --sf-text
         },
       },
       subforgeDark: {
         dark: true,
         colors: {
-          primary: '#A5C08B', // --sf-accent          palette-p3-forest.html:40
-          secondary: '#B7D2A0', // --sf-accent-hover  palette-p3-forest.html:41
-          success: '#93CA83', // --sf-ok              palette-p3-forest.html:43
-          warning: '#DBBC7F', // --sf-warn            palette-p3-forest.html:44
-          error: '#f9837a', // --sf-danger            palette-p3-forest.html:45
-          info: '#7CB6C8', // --sf-info               palette-p3-forest.html:46
-          background: '#232B30', // --sf-bg          palette-p3-forest.html:31
-          surface: '#323C41', // --sf-surface        palette-p3-forest.html:33
-          'surface-variant': '#3B474D', // --sf-surface-raised palette-p3-forest.html:34
-          'on-surface': '#D8DCC6', // --sf-text       palette-p3-forest.html:37
-          'on-background': '#D8DCC6', // --sf-text    palette-p3-forest.html:37
+          primary: '#8BB8FF', // --sf-accent
+          secondary: '#B3D1FF', // --sf-accent-hover
+          success: '#5BD68A', // --sf-ok
+          warning: '#F5C451', // --sf-warn
+          error: '#FF9B90', // --sf-danger
+          info: '#6FD8E8', // --sf-info
+          background: '#0B1220', // --sf-bg
+          surface: '#162033', // --sf-surface
+          'surface-variant': '#1D2A40', // --sf-surface-raised
+          'on-surface': '#F1F5F9', // --sf-text
+          'on-background': '#F1F5F9', // --sf-text
         },
       },
     },

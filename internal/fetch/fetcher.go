@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tktogether/subforge/internal/netguard"
 	"github.com/tktogether/subforge/internal/parse"
 )
 
@@ -189,12 +190,36 @@ func (f *Fetcher) Fetch(ctx context.Context, sources []Source) ([]Result, error)
 }
 
 func (f *Fetcher) fetchOnce(ctx context.Context, src Source) (Result, error) {
+	res, err := f.fetchOnceWithUA(ctx, src, f.cfg.UserAgent, true, true)
+	if err != nil {
+		return res, err
+	}
+	// 部分机场按 UA 返回不同内容：Clash 内核标识可能只得到 node-only 精简版，
+	// 既没有流量头也没有规则。检测到这种形态后用 Clash.Meta 标识补取一次。
+	if res.Err == nil && strings.TrimSpace(res.SubscriptionUserinfo) == "" &&
+		f.cfg.FallbackUserAgent != "" && f.cfg.UserAgent != f.cfg.FallbackUserAgent {
+		alt, altErr := f.fetchOnceWithUA(ctx, src, f.cfg.FallbackUserAgent, false, false)
+		if altErr == nil && (alt.SubscriptionUserinfo != "" || len(alt.Content) > len(res.Content)) {
+			if f.cache != nil {
+				_ = f.cache.Save(src.URL, alt.Content, cacheMeta{ETag: alt.Etag, Modified: alt.Modified})
+			}
+			return alt, nil
+		}
+	}
+	return res, nil
+}
+
+// fetchOnceWithUA 执行一次请求；cacheRead 控制条件请求，cacheWrite 控制写缓存。
+func (f *Fetcher) fetchOnceWithUA(ctx context.Context, src Source, userAgent string, cacheRead, cacheWrite bool) (Result, error) {
 	if src.URL == "" {
 		return Result{}, errors.New("来源 URL 为空")
 	}
+	if err := netguard.ValidateHTTPURL(src.URL); err != nil {
+		return Result{}, &PermanentError{Reason: err.Error()}
+	}
 
 	etag, modified := "", time.Time{}
-	if f.cache != nil {
+	if cacheRead && f.cache != nil {
 		etag, modified = f.cache.Meta(src.URL)
 	}
 
@@ -202,7 +227,7 @@ func (f *Fetcher) fetchOnce(ctx context.Context, src Source) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	req.Header.Set("User-Agent", f.cfg.UserAgent)
+	req.Header.Set("User-Agent", userAgent)
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
@@ -250,7 +275,7 @@ func (f *Fetcher) fetchOnce(ctx context.Context, src Source) (Result, error) {
 		return Result{}, errors.New("响应内容为空")
 	}
 
-	if f.cache != nil {
+	if cacheWrite && f.cache != nil {
 		// 缓存失败不阻断本次结果
 		_ = f.cache.Save(src.URL, body, cacheMeta{ETag: resp.Header.Get("Etag"), Modified: parseModified(resp)})
 	}

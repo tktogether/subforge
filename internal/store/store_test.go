@@ -29,7 +29,7 @@ func newTestDB(t *testing.T) (*DB, context.Context) {
 
 // 期望的 7 张表（migrate 建表，全部 CREATE TABLE IF NOT EXISTS）。
 var wantTables = []string{
-	"airports", "config", "pipelines", "proxy_groups", "rule_providers", "rules", "scripts", "self_nodes", "sub_tokens",
+	"airports", "config", "pipelines", "proxy_groups", "rule_providers", "rules", "scripts", "self_nodes", "source_pipelines", "sub_tokens",
 }
 
 // TestOpenCloseRaw 覆盖 Open / Close / Raw 与 migrate 建表。
@@ -1627,5 +1627,134 @@ func TestSortOrderPersisted(t *testing.T) {
 	}
 	if nodes[0].ID != n1.ID || nodes[1].ID != n2.ID {
 		t.Fatalf("ListSelfNodes 顺序不对: %+v", nodes)
+	}
+}
+
+// TestProxyGroupMembersRoundTrip 机场自带分组的成员列表应能落库并读回。
+func TestProxyGroupMembersRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	g, err := d.AddProxyGroupWithMembers(ctx, "PROXY", "select", "", "http://x/204", 300, 0, "airport:fx", []string{"HK-1", "JP-1"})
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembers: %v", err)
+	}
+	got, err := d.GetProxyGroup(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if strings.Join(got.Members, ",") != "HK-1,JP-1" {
+		t.Fatalf("成员未落库: %+v", got)
+	}
+	list, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
+	if err != nil || len(list) != 1 || strings.Join(list[0].Members, ",") != "HK-1,JP-1" {
+		t.Fatalf("列表成员不符: %+v err=%v", list, err)
+	}
+	plain, err := d.AddProxyGroup(ctx, "AUTO", "url-test", ".", "", 300, 0)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+	if plain.Members != nil {
+		t.Fatalf("手工分组 members 应为 nil: %+v", plain.Members)
+	}
+}
+
+// TestProxyGroupIncludeSelfRoundTrip 分组「包含自建节点」开关应能落库、读回并更新。
+func TestProxyGroupIncludeSelfRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	g, err := d.AddProxyGroupWithMembersAndIncludeSelf(ctx, "ALL", "select", "", "", 0, 0, "airport:fx", []string{"HK-1"}, true)
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembersAndIncludeSelf: %v", err)
+	}
+	got, err := d.GetProxyGroup(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if !got.IncludeSelf {
+		t.Fatalf("include_self 未落库: %+v", got)
+	}
+	list, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
+	if err != nil || len(list) != 1 || !list[0].IncludeSelf {
+		t.Fatalf("列表 include_self 不符: %+v err=%v", list, err)
+	}
+	if err := d.SetProxyGroupIncludeSelf(ctx, g.ID, false); err != nil {
+		t.Fatalf("SetProxyGroupIncludeSelf: %v", err)
+	}
+	got, err = d.GetProxyGroup(ctx, g.ID)
+	if err != nil || got.IncludeSelf {
+		t.Fatalf("更新后 include_self = %v err=%v，应为 false", got.IncludeSelf, err)
+	}
+	if err := d.SetProxyGroupIncludeSelf(ctx, 99999, true); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+	plain, err := d.AddProxyGroup(ctx, "PLAIN", "select", ".", "", 0, 0)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+	if plain.IncludeSelf {
+		t.Fatalf("手工分组 include_self 默认应为 false: %+v", plain)
+	}
+}
+
+// TestProxyGroupIncludeAllSourcesRoundTrip 分组「包含全部来源」开关与导入刷新。
+func TestProxyGroupIncludeAllSourcesRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	g, err := d.AddProxyGroupWithMembersAndFlags(ctx, "守候网络", "select", "", "", 0, 0, "airport:fx", []string{"HK-1"}, true, true)
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembersAndFlags: %v", err)
+	}
+	if !g.IncludeAllSources || !g.IncludeSelf {
+		t.Fatalf("扩展标志未落库: %+v", g)
+	}
+	got, err := d.GetProxyGroup(ctx, g.ID)
+	if err != nil || !got.IncludeAllSources {
+		t.Fatalf("GetProxyGroup include_all_sources 不符: %+v err=%v", got, err)
+	}
+	list, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
+	if err != nil || len(list) != 1 || !list[0].IncludeAllSources {
+		t.Fatalf("列表 include_all_sources 不符: %+v err=%v", list, err)
+	}
+	if err := d.SetProxyGroupIncludeAllSources(ctx, g.ID, false); err != nil {
+		t.Fatalf("SetProxyGroupIncludeAllSources: %v", err)
+	}
+	got, _ = d.GetProxyGroup(ctx, g.ID)
+	if got.IncludeAllSources {
+		t.Fatalf("include_all_sources 应为 false: %+v", got)
+	}
+	if err := d.SetProxyGroupIncludeAllSources(ctx, 99999, true); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+
+	// 导入刷新只改成员与扩展标志，保留用户改过的类型。
+	if err := d.UpdateProxyGroup(ctx, g.ID, "守候网络", "url-test", "", "https://test", 300, 0); err != nil {
+		t.Fatalf("UpdateProxyGroup: %v", err)
+	}
+	if err := d.UpdateImportedGroupMembersFlags(ctx, g.ID, []string{"HK-1", "JP-1"}, true, true); err != nil {
+		t.Fatalf("UpdateImportedGroupMembersFlags: %v", err)
+	}
+	got, _ = d.GetProxyGroup(ctx, g.ID)
+	if got.Type != "url-test" || len(got.Members) != 2 || !got.IncludeAllSources || !got.IncludeSelf {
+		t.Fatalf("刷新结果不符: %+v", got)
+	}
+	if err := d.UpdateImportedGroupMembersFlags(ctx, 99999, nil, false, false); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+}
+
+// TestSourcePipelineCRUD 覆盖来源级处理管线的写入、读取与清空。
+func TestSourcePipelineCRUD(t *testing.T) {
+	d, ctx := newTestDB(t)
+	if v, err := d.GetSourcePipeline(ctx, "airport:1"); err != nil || v != "" {
+		t.Fatalf("空记录应返回空串, got %q err=%v", v, err)
+	}
+	if err := d.SetSourcePipeline(ctx, "airport:1", "p1"); err != nil {
+		t.Fatalf("SetSourcePipeline: %v", err)
+	}
+	if v, err := d.GetSourcePipeline(ctx, "airport:1"); err != nil || v != "p1" {
+		t.Fatalf("GetSourcePipeline = %q err=%v", v, err)
+	}
+	if err := d.SetSourcePipeline(ctx, "airport:1", "  "); err != nil {
+		t.Fatalf("清空来源管线: %v", err)
+	}
+	if v, err := d.GetSourcePipeline(ctx, "airport:1"); err != nil || v != "" {
+		t.Fatalf("清空后应返回空串, got %q err=%v", v, err)
 	}
 }

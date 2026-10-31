@@ -96,8 +96,8 @@ curl -H "X-Token: <YOUR_TOKEN>" "http://127.0.0.1:25500/api/stats"
 | POST | `/api/scripts/test` | 试运行脚本 | 不需要 |
 | GET、POST | `/api/airports` | 机场列表与新建 | 需要 |
 | POST | `/api/airports/refresh` | 刷新全部启用机场流量 | 需要 |
-| POST | `/api/airports/check` | 订阅测活 | 需要 |
-| GET | `/api/airports/check/last` | 上次测活结果 | 需要 |
+| POST | `/api/airports/check` | 订阅可用性检测 | 需要 |
+| GET | `/api/airports/check/last` | 上次检测结果 | 需要 |
 | GET、PUT、DELETE | `/api/airports/{id}` | 查询、修改、删除机场 | 需要 |
 | POST | `/api/airports/{id}/refresh` | 刷新单个机场流量 | 需要 |
 | POST | `/api/airports/{id}/import-rules` | 从订阅导入规则 | 需要 |
@@ -272,7 +272,7 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 
 刷新结果里还有一个可选的 `note` 字段（`internal/subforge/traffic.go:34-36`）：拉取成功但上游没回 `subscription-userinfo` 时，`ok` 仍为 `true`、`note` 给出说明，节点数照常写回。详见[流量策略与用量统计](流量策略与用量统计)第 3.3 节。
 
-测活结果保存在进程内存中，重启后 `/api/airports/check/last` 返回空结果（`internal/api/check.go:30-131`）。`ids` 为空数组时返回 400 `没有可测活的机场`，包含不存在的机场时返回 400 `机场 N 不存在`。
+检测结果保存在进程内存中，重启后 `/api/airports/check/last` 返回空结果。结果字段为 `name`、`url`、`ok`、`status_code`、`latency_ms`、`bytes`、`err`。`ids` 为空数组时返回 400 `没有可检测的机场`，包含不存在的机场时返回 400 `机场 N 不存在`。
 
 ### 5.2 自建节点
 
@@ -291,10 +291,10 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 | 方法 | 路径 | 请求 | 响应 |
 | --- | --- | --- | --- |
 | GET | `/api/groups` | — | `{"groups":[...]}` |
-| POST | `/api/groups` | `name`、`type`、`regex`、`url`、`interval` | 201 `{"group":{...}}` |
-| GET、PUT、DELETE | `/api/groups/{id}` | PUT 同 POST | `{"group":{...}}` 或 `{"ok":true}` |
+| POST | `/api/groups` | `name`、`type`、`regex`、`url`、`interval`，可选 `include_self`、`include_all_sources` | 201 `{"group":{...}}` |
+| GET、PUT、DELETE | `/api/groups/{id}` | PUT 同 POST；`include_self` / `include_all_sources` 省略时保持原值 | `{"group":{...}}` 或 `{"ok":true}` |
 
-`type` 常用取值为 `select`、`url-test`、`fallback`、`load-balance`；`regex` 是成员节点名正则，`url` 是测活地址，`interval` 是测活间隔秒数（`internal/api/subscription.go:170-186`）。需要特别注意：mihomo 只接受上述四种分组类型，`relay` 已被上游移除，其他类型会直接报错（`internal/render/clashmeta/clashmeta.go:293-312`）。
+`type` 常用取值为 `select`、`url-test`、`fallback`、`load-balance`；`regex` 是成员节点名正则，`url` 是检测地址，`interval` 是检测间隔秒数（`internal/api/subscription.go:170-186`）。需要特别注意：mihomo 只接受上述四种分组类型，`relay` 已被上游移除，其他类型会直接报错（`internal/render/clashmeta/clashmeta.go:293-312`）。
 
 ### 5.4 规则与规则集
 
@@ -450,7 +450,7 @@ flowchart TD
 
 ### 7.2 生成过程与响应
 
-生成时读取「已启用且配置了订阅地址」的机场与「已启用」的自建节点；两者都为空时返回 400 `没有启用的订阅或自建节点`（`internal/api/subscription.go:609-647`）。自建节点会逐条写入临时文件，文件名形如 `self-<id>.txt`，权限 0600，请求结束后删除（`internal/api/subscription.go:622-647`）。代理分组会映射为目标格式的策略组：`regex` 非空时作为成员模式，`url` 作为测活地址，`interval` 作为测活间隔（`internal/api/subscription.go:654-674`）。规则行按 `rule_type,rule_param,policy` 拼装，`policy` 取 `rule_config` 对应的分组名，`resolve_dns` 为真时追加 `,no-resolve`（`internal/api/subscription.go:676-698`）。
+生成时读取「已启用且配置了订阅地址」的机场与「已启用」的自建节点；两者都为空时返回 400 `没有启用的订阅或自建节点`（`internal/api/subscription.go:609-647`）。自建节点会逐条写入临时文件，文件名形如 `self-<id>.txt`，权限 0600，请求结束后删除（`internal/api/subscription.go:622-647`）。代理分组会映射为目标格式的策略组：`regex` 非空时作为成员模式，`url` 作为检测地址，`interval` 作为检测间隔（`internal/api/subscription.go:654-674`）。规则行按 `rule_type,rule_param,policy` 拼装，`policy` 取 `rule_config` 对应的分组名，`resolve_dns` 为真时追加 `,no-resolve`（`internal/api/subscription.go:676-698`）。
 
 响应为 `text/plain; charset=utf-8` 纯文本，且不写 `Content-Disposition`（`internal/api/subscription.go:747`）。当流量策略可用时，响应会带上 `Subscription-Userinfo` 头，格式为 `upload=<字节>; download=<字节>; total=<字节>; expire=<Unix 秒>`（`internal/traffic/traffic.go:69-71`）。参与聚合的只有「启用、订阅地址非空且流量刷新时间大于 0」的机场（`internal/api/subscription.go:722-746`）。
 
@@ -458,7 +458,7 @@ flowchart TD
 
 ### 8.1 pprof
 
-`/debug/pprof/*` 默认关闭，只有在查询参数带 `debug=1` 或环境变量 `SUBFORGE_DEBUG=1` 时才生效（`internal/api/pprof.go:16-26`）。可用路径包括 `/debug/pprof/`、`/cmdline`、`/profile`、`/symbol`、`/trace`、`/heap`、`/goroutine`、`/allocs`、`/block`、`/mutex`、`/threadcreate`（`internal/api/pprof.go:29-125`）。未开启时由标准库返回纯文本 404。
+`/debug/pprof/*` 默认关闭，只有在启动时显式 `-pprof` 或设置 `SUBFORGE_PPROF=1` 时才生效；请求带 `?debug=1` 不会开启（`internal/api/pprof.go`）。可用路径包括 `/debug/pprof/`、`/cmdline`、`/profile`、`/symbol`、`/trace`、`/heap`、`/goroutine`、`/allocs`、`/block`、`/mutex`、`/threadcreate`（`internal/api/pprof.go:29-125`）。未开启时由标准库返回纯文本 404。
 
 ### 8.2 GET /api/metrics
 

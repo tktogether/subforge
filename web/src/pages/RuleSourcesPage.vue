@@ -3,9 +3,10 @@ import { computed, onMounted, ref } from 'vue'
 import { endpoints, type RuleSource, type RuleSourceUpdateResult, type RuleSourcesResponse } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
-import { pageHelp, glossaryFor } from '../content/help'
+import { pageHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import InfoTip from '../components/InfoTip.vue'
 import { formatBytes } from '../format'
 
 const help = pageHelp('rule-sources')
@@ -19,10 +20,6 @@ const defaultManifestPath = ref('')
 const outputDir = ref('')
 const exists = ref(false)
 const hint = ref('')
-const manifestTemplate = ref('')
-
-const initDialog = ref(false)
-const initForce = ref(false)
 
 const rollbackDialog = ref(false)
 const rollbackName = ref('')
@@ -39,6 +36,10 @@ const addSaving = ref(false)
 const removeDialog = ref(false)
 const removeName = ref('')
 const removeSaving = ref(false)
+const renameDialog = ref(false)
+const renameName = ref('')
+const renameValue = ref('')
+const renameSaving = ref(false)
 const updatingOne = ref('')
 // updating 表示「有一条会改动版本状态的请求正在飞」：全部更新、单源更新、回滚、生成 MRS。
 // 请求期间把所有会再次发请求的按钮一起 disable —— 之前没有这个状态，双击「全部更新」
@@ -63,43 +64,12 @@ async function load(): Promise<void> {
     outputDir.value = r.output_dir ?? ''
     exists.value = r.exists ?? false
     hint.value = r.hint ?? ''
-    manifestTemplate.value = r.manifest_template ?? ''
     sources.value = r.sources ?? []
   } catch (err) {
     error.value = errorMessage(err)
   } finally {
     loading.value = false
   }
-}
-
-function openInit(): void {
-  if (exists.value) {
-    initForce.value = true
-    initDialog.value = true
-  } else {
-    void doInit(false)
-  }
-}
-
-async function doInit(force: boolean): Promise<void> {
-  try {
-    const r = await endpoints.initRuleManifest(force)
-    notify('已生成: ' + r.path + (r.created ? '（新建）' : '（覆盖）'), 'ok')
-    initDialog.value = false
-    initForce.value = false
-    await load()
-  } catch (err) {
-    notify(errorMessage(err), 'error')
-  }
-}
-
-async function confirmInit(): Promise<void> {
-  await doInit(true)
-}
-
-function cancelInit(): void {
-  initDialog.value = false
-  initForce.value = false
 }
 
 async function updateAll(): Promise<void> {
@@ -196,6 +166,30 @@ async function confirmAdd(): Promise<void> {
   }
 }
 
+function openRename(source: RuleSource): void {
+  if (source.origin === 'airport') return
+  renameName.value = source.name
+  renameValue.value = source.name
+  renameDialog.value = true
+}
+
+async function confirmRename(): Promise<void> {
+  if (renameSaving.value) return
+  const next = renameValue.value.trim()
+  if (next === '' || next === renameName.value) return
+  renameSaving.value = true
+  try {
+    await endpoints.renameRuleSource(renameName.value, next)
+    renameDialog.value = false
+    notify('已改名为 ' + next, 'ok')
+    await load()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    renameSaving.value = false
+  }
+}
+
 function openRemove(name: string): void {
   removeName.value = name
   removeDialog.value = true
@@ -257,6 +251,135 @@ async function updateOne(name: string): Promise<void> {
   }
 }
 
+function originText(s: RuleSource): string {
+  return s.origin === 'airport' ? '机场' : '远程'
+}
+
+function updatedText(ts?: number): string {
+  if (!ts) return '—'
+  const d = new Date(ts * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// ---- 从规则源挑选规则到自定义层 ----
+const rulesDialog = ref(false)
+const rulesSource = ref<RuleSource | null>(null)
+const rulesList = ref<string[]>([])
+const rulesTotal = ref(0)
+const rulesOffset = ref(0)
+const rulesLimit = 50
+const rulesQuery = ref('')
+const rulesLoading = ref(false)
+const rulesError = ref('')
+const rulesSelected = ref<string[]>([])
+const rulesConflict = ref<'skip' | 'overwrite'>('skip')
+const rulesImporting = ref(false)
+
+const rulesPage = computed({
+  get: () => Math.floor(rulesOffset.value / rulesLimit) + 1,
+  set: (p: number) => {
+    rulesOffset.value = Math.max(0, (p - 1) * rulesLimit)
+    void loadRules()
+  },
+})
+const rulesTotalPages = computed(() => Math.max(1, Math.ceil(rulesTotal.value / rulesLimit)))
+
+async function loadRules(): Promise<void> {
+  const src = rulesSource.value
+  if (src === null) return
+  rulesLoading.value = true
+  rulesError.value = ''
+  try {
+    const r = await endpoints.listRuleSourceRules(src.name, {
+      q: rulesQuery.value,
+      offset: rulesOffset.value,
+      limit: rulesLimit,
+    })
+    rulesList.value = r.rules
+    rulesTotal.value = r.total
+    rulesOffset.value = r.offset
+  } catch (err) {
+    rulesError.value = errorMessage(err)
+  } finally {
+    rulesLoading.value = false
+  }
+}
+
+function openRules(s: RuleSource): void {
+  rulesSource.value = s
+  rulesDialog.value = true
+  rulesList.value = []
+  rulesTotal.value = 0
+  rulesOffset.value = 0
+  rulesQuery.value = ''
+  rulesSelected.value = []
+  rulesConflict.value = 'skip'
+  rulesError.value = ''
+  void loadRules()
+}
+
+function searchRules(): void {
+  rulesOffset.value = 0
+  void loadRules()
+}
+
+function clearRulesSearch(): void {
+  rulesQuery.value = ''
+  rulesOffset.value = 0
+  void loadRules()
+}
+
+function isRuleSelected(rule: string): boolean {
+  return rulesSelected.value.includes(rule)
+}
+
+function toggleRule(rule: string): void {
+  const i = rulesSelected.value.indexOf(rule)
+  if (i >= 0) {
+    rulesSelected.value.splice(i, 1)
+  } else {
+    rulesSelected.value.push(rule)
+  }
+}
+
+function selectCurrentPage(): void {
+  for (const rule of rulesList.value) {
+    if (!rulesSelected.value.includes(rule)) {
+      rulesSelected.value.push(rule)
+    }
+  }
+}
+
+function clearSelectedRules(): void {
+  rulesSelected.value = []
+}
+
+async function importSelectedRules(): Promise<void> {
+  const src = rulesSource.value
+  if (src === null || rulesSelected.value.length === 0 || rulesImporting.value) return
+  rulesImporting.value = true
+  try {
+    const r = await endpoints.importRuleSourceRules({
+      name: src.name,
+      rules: [...rulesSelected.value],
+      conflict: rulesConflict.value,
+    })
+    let text = '已加入自定义：新增 ' + r.added
+    if (r.skipped > 0) text += '，跳过 ' + r.skipped
+    if (r.overwrote > 0) text += '，覆盖 ' + r.overwrote
+    notify(text, 'ok')
+    if (r.warnings && r.warnings.length > 0) {
+      notify(r.warnings[0], 'info')
+    }
+    rulesDialog.value = false
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    rulesImporting.value = false
+  }
+}
+
 onMounted(() => {
   void load()
 })
@@ -265,13 +388,76 @@ onMounted(() => {
 <template>
   <PageHeader title="规则源" :subtitle="help.oneLiner" help-key="rule-sources">
     <template #actions>
-      <v-btn data-testid="init-manifest" :color="exists ? undefined : 'primary'" variant="tonal" @click="openInit">
-        生成默认清单
-      </v-btn>
       <v-btn data-testid="update-all" variant="tonal" :loading="updatingAll" :disabled="updating" @click="updateAll">全部更新</v-btn>
-      <v-btn data-testid="source-add" variant="tonal" @click="openAdd">新增规则源</v-btn>
+      <v-btn data-testid="source-add" color="primary" variant="tonal" @click="openAdd">新增规则源</v-btn>
     </template>
   </PageHeader>
+
+  <v-dialog v-model="rulesDialog" max-width="900">
+    <v-card data-testid="source-rules-dialog">
+      <v-card-title>从规则源复制规则：{{ rulesSource?.label || rulesSource?.name }}</v-card-title>
+      <v-card-text>
+        <div class="text-caption text-medium-emphasis mb-2">
+          选中的规则会复制到自定义层；规则源后续更新或删除不影响已复制的规则。重复规则默认跳过，可改为覆盖。
+        </div>
+        <div class="d-flex ga-2 align-center mb-2 flex-wrap">
+          <v-text-field v-model="rulesQuery" label="搜索规则" density="compact" hide-details data-testid="source-rules-search" @keyup.enter="searchRules" />
+          <v-btn variant="tonal" data-testid="source-rules-search-btn" @click="searchRules">搜索</v-btn>
+          <v-btn variant="text" data-testid="source-rules-clear-search" @click="clearRulesSearch">清空</v-btn>
+        </div>
+        <v-alert v-if="rulesError !== ''" type="error" variant="tonal" class="mb-2">{{ rulesError }}</v-alert>
+        <v-progress-linear v-if="rulesLoading" indeterminate class="mb-2" />
+        <div class="rule-picker-list">
+          <v-table density="compact" data-testid="source-rules-table">
+            <thead>
+              <tr><th style="width: 48px"></th><th>规则</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(rule, index) in rulesList" :key="index + '-' + rule" data-testid="source-rule-row">
+                <td>
+                  <v-checkbox :model-value="isRuleSelected(rule)" hide-details density="compact" data-testid="source-rule-check" @update:model-value="toggleRule(rule)" />
+                </td>
+                <td><code class="rule-source-rule">{{ rule }}</code></td>
+              </tr>
+            </tbody>
+          </v-table>
+          <div v-if="!rulesLoading && rulesList.length === 0" data-testid="source-rules-empty" class="text-medium-emphasis py-4 text-center">
+            没有匹配的规则
+          </div>
+        </div>
+        <div class="d-flex align-center ga-3 mt-2 flex-wrap">
+          <span class="text-body-2" data-testid="source-rules-count">共 {{ rulesTotal }} 条，已选 {{ rulesSelected.length }} 条</span>
+          <v-btn size="small" variant="text" data-testid="source-rules-select-page" @click="selectCurrentPage">全选本页</v-btn>
+          <v-btn size="small" variant="text" data-testid="source-rules-clear-selected" @click="clearSelectedRules">清空已选</v-btn>
+          <v-spacer />
+          <v-select
+            v-model="rulesConflict"
+            :items="[{ title: '重复时跳过', value: 'skip' }, { title: '重复时覆盖', value: 'overwrite' }]"
+            item-title="title"
+            item-value="value"
+            density="compact"
+            hide-details
+            style="max-width: 160px"
+            data-testid="source-rules-conflict"
+          />
+        </div>
+        <v-pagination
+          v-if="rulesTotalPages > 1"
+          v-model="rulesPage"
+          :length="rulesTotalPages"
+          :total-visible="7"
+          density="compact"
+          class="mt-2"
+          data-testid="source-rules-pagination"
+        />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="source-rules-cancel" @click="rulesDialog = false">取消</v-btn>
+        <v-btn color="primary" :loading="rulesImporting" :disabled="rulesSelected.length === 0" data-testid="source-rules-import" @click="importSelectedRules">复制到自定义</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 
       <!-- Manifest card -->
     <v-card data-testid="manifest-card" class="mb-4">
@@ -294,51 +480,31 @@ onMounted(() => {
       <thead>
         <tr>
           <th>名称</th>
-          <th>URL</th>
-          <th>格式</th>
-          <th>输出目录</th>
-          <th>版本数</th>
-          <th>当前版本</th>
+          <th>来源</th>
+          <th>规则数</th>
+          <th>更新时间</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="s in sources" :key="s.name" data-testid="source-row">
-          <td>{{ s.name }}</td>
-          <td>{{ s.url }}</td>
-          <td>{{ s.format }}</td>
-          <td>{{ s.dir }}</td>
-          <td>{{ s.versions.length }}</td>
           <td>
-            <span v-if="s.latest === ''" data-testid="no-version">暂无当前版本</span>
-            <span v-else>{{ s.latest }}</span>
+            <v-btn variant="text" size="small" data-testid="source-rules" @click="openRules(s)">{{ s.label || s.name }}</v-btn>
+            <span v-if="s.airport_missing" class="text-warning text-caption ml-1" data-testid="source-airport-missing">机场已删除</span>
           </td>
+          <td>{{ originText(s) }}</td>
+          <td>{{ s.rule_count ?? 0 }}</td>
+          <td>{{ updatedText(s.updated_at) }}</td>
           <td>
+            <v-btn size="small" variant="text" data-testid="source-rename" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源名称跟随机场，请修改机场名称' : '重命名规则源'" @click="openRename(s)">改名</v-btn>
             <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" :disabled="updating" @click="updateOne(s.name)">更新</v-btn>
             <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
             <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="updating || s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1" @click="openRemove(s.name)">删除</v-btn>
+            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1 || (s.origin === 'airport' && !s.airport_missing)" @click="openRemove(s.name)">删除</v-btn>
           </td>
         </tr>
       </tbody>
     </v-table>
-
-    <!-- Version list per source -->
-    <v-expansion-panels class="mt-4">
-      <v-expansion-panel v-for="s in sources" :key="'versions-' + s.name" :title="s.name + ' 的版本'">
-        <v-expansion-panel-text>
-          <div v-for="v in s.versions" :key="v" data-testid="version-item">{{ v }}</div>
-
-        </v-expansion-panel-text>
-      </v-expansion-panel>
-    </v-expansion-panels>
-
-    <!-- MRS format + retention explanation -->
-    <v-card class="mt-4">
-      <v-card-title>MRS 格式说明</v-card-title>
-      <v-card-text>{{ glossaryFor('MRS') }}</v-card-text>
-      <v-card-text class="text-caption text-medium-emphasis">版本保留策略：每个源保留最近 5 个版本，可回滚；更新失败不会删掉旧版本。</v-card-text>
-    </v-card>
 
     <!-- Update results -->
     <div v-if="showUpdateResults" data-testid="update-results" class="mt-4">
@@ -358,21 +524,6 @@ onMounted(() => {
     </div>
   </AsyncSection>
 
-  <!-- Init confirm dialog -->
-  <v-dialog v-model="initDialog" max-width="480">
-    <v-card>
-      <v-card-title>覆盖现有清单？</v-card-title>
-      <v-card-text>
-        会覆盖现有 manifest.yaml，旧文件备份为 {{ manifestPath }}.bak
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="cancelInit">取消</v-btn>
-        <v-btn color="primary" @click="confirmInit">确认覆盖</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
   <!-- Rollback confirm dialog -->
   <v-dialog v-model="rollbackDialog" max-width="480">
     <v-card>
@@ -389,7 +540,7 @@ onMounted(() => {
   </v-dialog>
 
   <!-- MRS dialog -->
-  <v-dialog v-model="mrsDialog" max-width="480">
+  <v-dialog v-model="mrsDialog" max-width="480" data-testid="mrs-dialog">
     <v-card>
       <v-card-title>生成 MRS - {{ mrsName }}</v-card-title>
       <v-card-text>
@@ -408,9 +559,12 @@ onMounted(() => {
     <v-card data-testid="add-dialog">
       <v-card-title>新增规则源</v-card-title>
       <v-card-text>
-        <v-text-field data-testid="add-name" v-model="addName" label="名称（留空自动取 URL 末段）" />
-        <v-text-field data-testid="add-url" v-model="addUrl" label="订阅地址" placeholder="https://… 支持 http/https" />
-        <v-text-field data-testid="add-format" v-model="addFormat" label="输入格式（可选：ini / clash / auto）" />
+        <div class="sf-form-label">名称 <InfoTip text="留空时使用订阅地址的最后一段。" label="名称" /></div>
+        <v-text-field data-testid="add-name" v-model="addName" hide-details class="mb-3" />
+        <div class="sf-form-label">订阅地址 <InfoTip text="规则文件的 http 或 https 地址。" example="https://example.com/rules.yaml" label="订阅地址" /></div>
+        <v-text-field data-testid="add-url" v-model="addUrl" hide-details class="mb-3" />
+        <div class="sf-form-label">输入格式 <InfoTip text="可选 ini、clash 或 auto；留空时自动识别。" label="输入格式" /></div>
+        <v-text-field data-testid="add-format" v-model="addFormat" hide-details />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
@@ -421,6 +575,20 @@ onMounted(() => {
   </v-dialog>
 
   <!-- Remove rule source dialog -->
+  <v-dialog v-model="renameDialog" max-width="460">
+    <v-card>
+      <v-card-title>重命名规则源</v-card-title>
+      <v-card-text>
+        <v-text-field v-model="renameValue" label="新名称" hint="引用该规则源的方案会自动更新绑定" variant="outlined" density="comfortable" persistent-hint data-testid="source-rename-input" />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="source-rename-cancel" @click="renameDialog = false">取消</v-btn>
+        <v-btn color="primary" :loading="renameSaving" :disabled="renameValue.trim() === '' || renameValue.trim() === renameName" data-testid="source-rename-confirm" @click="confirmRename">保存</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
   <v-dialog v-model="removeDialog" max-width="420">
     <v-card data-testid="remove-dialog">
       <v-card-title>删除规则源</v-card-title>
@@ -433,3 +601,26 @@ onMounted(() => {
     </v-card>
   </v-dialog>
 </template>
+
+<style scoped>
+.sf-form-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+.rule-picker-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--sf-border);
+  border-radius: 8px;
+}
+.rule-source-rule {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+}
+</style>

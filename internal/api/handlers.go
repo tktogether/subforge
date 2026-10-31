@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -322,13 +324,55 @@ type apiErrorBody struct {
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, err error) {
 	rid := chimw.GetReqID(r.Context())
 	s.logger.Printf("rid=%s %s %s -> %d: %v",
-		dash(rid), r.Method, r.URL.RequestURI(), status, err)
+		dash(rid), r.Method, redactURI(r.URL.RequestURI()), status, redactSecretText(err.Error()))
 	msg, detail := apiErrorText(status, err, rid)
 	body := apiErrorBody{Error: msg, Detail: detail}
 	if status >= 500 && rid != "" {
 		body.RequestID = rid
 	}
 	s.writeJSON(w, status, body)
+}
+
+// secretQueryKeys 是需要从日志/错误里脱敏的查询参数名。
+var secretQueryKeys = []string{"token", "key", "password", "secret", "access_token", "auth"}
+
+// redactPath 对路径里本身就是凭据的 /api/tokens/{token} 做脱敏。
+func redactPath(p string) string {
+	const prefix = "/api/tokens/"
+	if strings.HasPrefix(p, prefix) && len(p) > len(prefix) {
+		return prefix + "***"
+	}
+	return p
+}
+
+// redactURI 对请求 URI 的路径与查询做脱敏，日志与错误响应共用。
+func redactURI(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return redactSecretText(raw)
+	}
+	u.Path = redactPath(u.Path)
+	q := u.Query()
+	changed := false
+	for _, key := range secretQueryKeys {
+		if q.Has(key) {
+			q.Set(key, "***")
+			changed = true
+		}
+	}
+	if changed {
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
+}
+
+// redactSecretText 兜底处理错误文本里可能出现的 key=value 形式凭据。
+func redactSecretText(text string) string {
+	for _, key := range secretQueryKeys {
+		re := regexp.MustCompile(`(?i)(` + regexp.QuoteMeta(key) + `=)[^&\s"']+`)
+		text = re.ReplaceAllString(text, "${1}***")
+	}
+	return text
 }
 
 // apiErrorText 返回 (给用户看的文案, 排障用的原始报文)。

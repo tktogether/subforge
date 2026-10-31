@@ -18,14 +18,16 @@ vi.mock('../api/endpoints', () => ({
     refreshAllAirports: vi.fn(),
     checkAirports: vi.fn(),
     lastAirportCheck: vi.fn(),
-    listSettings: vi.fn(),
-    updateSettings: vi.fn(),
+    pipelines: vi.fn(),
+    previewAirportProcess: vi.fn(),
   },
 }))
 
 const vuetify = createVuetify({ components, directives })
 
 const listMock = endpoints.listAirports as unknown as ReturnType<typeof vi.fn>
+const pipelinesMock = endpoints.pipelines as unknown as ReturnType<typeof vi.fn>
+const previewProcessMock = endpoints.previewAirportProcess as unknown as ReturnType<typeof vi.fn>
 const createMock = endpoints.createAirport as unknown as ReturnType<typeof vi.fn>
 const updateMock = endpoints.updateAirport as unknown as ReturnType<typeof vi.fn>
 const deleteMock = endpoints.deleteAirport as unknown as ReturnType<typeof vi.fn>
@@ -34,8 +36,6 @@ const importMock = endpoints.importAirportRules as unknown as ReturnType<typeof 
 const refreshAllMock = endpoints.refreshAllAirports as unknown as ReturnType<typeof vi.fn>
 const checkMock = endpoints.checkAirports as unknown as ReturnType<typeof vi.fn>
 const lastCheckMock = endpoints.lastAirportCheck as unknown as ReturnType<typeof vi.fn>
-const listSettingsMock = endpoints.listSettings as unknown as ReturnType<typeof vi.fn>
-const updateSettingsMock = endpoints.updateSettings as unknown as ReturnType<typeof vi.fn>
 
 function makeAirport(overrides: Record<string, unknown> = {}) {
   return {
@@ -58,9 +58,10 @@ function makeAirport(overrides: Record<string, unknown> = {}) {
 
 function makeCheckResult(overrides: Record<string, unknown> = {}) {
   return {
+    name: '示例机场',
     url: 'https://x.com/sub',
     ok: true,
-    latency: 123,
+    latency_ms: 123,
     bytes: 0,
     status_code: 200,
     err: '',
@@ -76,12 +77,12 @@ beforeEach(() => {
   updateMock.mockResolvedValue(makeAirport())
   deleteMock.mockResolvedValue({ ok: true })
   refreshMock.mockResolvedValue({ result: { ok: true, err: '' } })
-  importMock.mockResolvedValue({ rules_added: 1, rules_skipped: 2, providers_added: 1, warnings: [] })
+  importMock.mockResolvedValue({ rules_added: 0, rules_skipped: 0, providers_added: 1, rule_source_rules: 1, warnings: [] })
   refreshAllMock.mockResolvedValue({ ok: 1, fail: 0, imports: [{ airport_id: 1, name: 'HK', rules_added: 1, rules_skipped: 0, providers_added: 1, warnings: [], err: '' }] })
   checkMock.mockResolvedValue({ results: [makeCheckResult()] })
   lastCheckMock.mockResolvedValue({ results: [makeCheckResult()] })
-  listSettingsMock.mockResolvedValue({ settings: [] })
-  updateSettingsMock.mockResolvedValue({ settings: [] })
+  pipelinesMock.mockResolvedValue([])
+  previewProcessMock.mockResolvedValue({ name: 'HK', pipeline: '', before_count: 1, after_count: 1, before: [], after: [], warnings: [] })
 })
 
 describe('AirportsPage', () => {
@@ -123,7 +124,7 @@ describe('AirportsPage', () => {
     await flushPromises()
     expect(w.find('[data-testid="traffic-unknown"]').exists()).toBe(true)
     expect(w.find('[data-testid="traffic-at"]').exists()).toBe(true)
-    expect(w.find('[data-testid="traffic-at"]').text()).toBe('从未采集')
+    expect(w.find('[data-testid="traffic-at"]').text()).toBe('尚未采集')
     expect(w.find('[data-testid="traffic-stale"]').exists()).toBe(false)
     expect(w.find('[data-testid="expire-unknown"]').exists()).toBe(true)
     w.unmount()
@@ -256,7 +257,7 @@ describe('AirportsPage', () => {
     await flushPromises()
     ;(w.vm as any).refreshOne((w.vm as any).rows[0])
     await flushPromises()
-    expect(refreshMock).toHaveBeenCalledWith(1)
+    expect(refreshMock).toHaveBeenCalledWith(1, true)
     expect(listMock).toHaveBeenCalledTimes(2)
     w.unmount()
   })
@@ -281,7 +282,7 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('导入规则（弹窗确认）只带建组参数调用 importAirportRules（无 profile_id）', async () => {
+  it('更新规则源（弹窗确认）只带建组参数调用 importAirportRules（无 profile_id）', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
@@ -290,8 +291,30 @@ describe('AirportsPage', () => {
     await (w.vm as any).confirmImportRules()
     await flushPromises()
     expect(importMock).toHaveBeenCalledWith(1, { create_groups: false })
+    expect(notifyState.text).toContain('规则源已更新')
     expect(listMock).toHaveBeenCalledTimes(2)
     w.unmount()
+  })
+
+  it('手动导入结果面板可关闭', async () => {
+    importMock.mockResolvedValueOnce({ rules_added: 0, rules_skipped: 0, providers_added: 0, rule_source_rules: 1, warnings: [] })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    try {
+      await flushPromises()
+      ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
+      await (w.vm as any).confirmImportRules()
+      await flushPromises()
+      const alert = w.find('[data-testid="manual-import-result"]')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text()).toContain('规则源已更新 1 条')
+      const alertComp = w.findComponent({ name: 'VAlert' })
+      expect(alertComp.exists()).toBe(true)
+      alertComp.vm.$emit('click:close')
+      await flushPromises()
+      expect(w.find('[data-testid="manual-import-result"]').exists()).toBe(false)
+    } finally {
+      w.unmount()
+    }
   })
 
   it('导入规则失败', async () => {
@@ -318,8 +341,9 @@ describe('AirportsPage', () => {
       expect((w.vm as any).importCreateGroups).toBe(true)
       const hint = document.body.querySelector('[data-testid="import-rules-hint"]')
       expect(hint).toBeTruthy()
-      expect((hint as HTMLElement).textContent).toContain('airport:机场名')
+      expect((hint as HTMLElement).textContent).toContain('规则源')
       expect(document.body.querySelector('[data-testid="import-rules-profile"]')).toBeNull()
+      expect(document.body.querySelector('[data-testid="import-rules-enable"]')).toBeNull()
     } finally {
       w.unmount()
     }
@@ -337,14 +361,17 @@ describe('AirportsPage', () => {
   })
 
   it('新建分组 > 0 时 toast 追加「，新建分组 Z」', async () => {
-    importMock.mockResolvedValueOnce({ rules_added: 2, rules_skipped: 1, providers_added: 1, warnings: [], groups_created: 3 })
+    importMock.mockResolvedValueOnce({ rules_added: 0, rules_skipped: 0, providers_added: 1, warnings: [], rule_source_rules: 2, groups_created: 3 })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     ;(w.vm as any).openImportDialog((w.vm as any).rows[0])
     await (w.vm as any).confirmImportRules()
     await flushPromises()
-    expect(notifyState.text).toBe('已导入规则：新增 2，跳过 1，新建分组 3')
+    expect(notifyState.text).toBe('规则源已更新：2 条，新建分组 3')
     expect(notifyState.kind).toBe('ok')
+    const alert = w.find('[data-testid="manual-import-result"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('规则源已更新 2 条')
     w.unmount()
   })
 
@@ -387,6 +414,8 @@ describe('AirportsPage', () => {
     expect(w.findAll('[data-testid="check-result-row"]').length).toBe(2)
     expect(w.text()).toContain('可用')
     expect(w.text()).toContain('不可用')
+    expect(w.text()).toContain('示例机场')
+    expect(w.text()).toContain('123 ms')
     expect(w.text()).toContain('timeout')
     w.unmount()
   })
@@ -394,7 +423,6 @@ describe('AirportsPage', () => {
   it('refreshAll 成功渲染 summary 与 imports', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    ;(w.vm as any).withRules = true
     await (w.vm as any).refreshAll()
     await flushPromises()
     expect(refreshAllMock).toHaveBeenCalledWith(true)
@@ -473,12 +501,12 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('refreshAll 默认 withRules=false', async () => {
+  it('refreshAll 默认 withRules=true', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     await (w.vm as any).refreshAll()
     await flushPromises()
-    expect(refreshAllMock).toHaveBeenCalledWith(false)
+    expect(refreshAllMock).toHaveBeenCalledWith(true)
     w.unmount()
   })
 
@@ -492,29 +520,10 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('with-rules 开关渲染', async () => {
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.find('[data-testid="with-rules"]').exists()).toBe(true)
-    w.unmount()
-  })
-
-  it('W8A 开关在 table 之前渲染', async () => {
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const html = w.html()
-    const switchIdx = html.indexOf('data-testid="with-rules"')
-    const tableIdx = html.indexOf('data-testid="table"')
-    expect(switchIdx).toBeGreaterThan(-1)
-    expect(tableIdx).toBeGreaterThan(-1)
-    expect(switchIdx).toBeLessThan(tableIdx)
-    w.unmount()
-  })
-
   it('pageHelp oneLiner 渲染在 PageHeader subtitle', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(w.text()).toContain('管理上游订阅地址')
+    expect(w.text()).toContain('管理机场订阅地址')
     w.unmount()
   })
 
@@ -647,7 +656,7 @@ describe('AirportsPage', () => {
     await flushPromises()
     await w.find('[data-testid="refresh-traffic"]').trigger('click')
     await flushPromises()
-    expect(refreshMock).toHaveBeenCalled()
+    expect(refreshMock).toHaveBeenCalledWith(1, true)
     w.unmount()
   })
 
@@ -668,19 +677,21 @@ describe('AirportsPage', () => {
     await flushPromises()
     await new Promise((r) => setTimeout(r, 50))
     await flushPromises()
-    const confirm = Array.from(document.body.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '确认导入')
+    const confirm = Array.from(document.body.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '确认更新')
     expect(confirm).toBeTruthy()
     ;(confirm as HTMLElement).click()
     await flushPromises()
     expect(importMock).toHaveBeenCalledWith(1, { create_groups: true })
+    expect(notifyState.text).toContain('规则源已更新')
     w.unmount()
   })
 
   it('导入规则返回 warnings 时显示首条提示', async () => {
     importMock.mockResolvedValueOnce({
-      rules_added: 3,
+      rules_added: 0,
       rules_skipped: 0,
       providers_added: 0,
+      rule_source_rules: 3,
       warnings: ['2 条规则的目标分组（如 📺 Netflix）还没在「分组」页里建'],
     })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
@@ -700,16 +711,6 @@ describe('AirportsPage', () => {
     await w.find('[data-testid="check-one"]').trigger('click')
     await flushPromises()
     expect(checkMock).toHaveBeenCalled()
-    w.unmount()
-  })
-
-  it('UI with-rules 开关切换', async () => {
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    const input = w.find('[data-testid="with-rules"] input')
-    await input.setValue(true)
-    await flushPromises()
-    expect((w.vm as any).withRules).toBe(true)
     w.unmount()
   })
 
@@ -769,15 +770,6 @@ describe('AirportsPage', () => {
     w.unmount()
   })
 
-  it('with-rules 开关有 hint 文案', async () => {
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect(w.find('[data-testid="with-rules"]').exists()).toBe(true)
-    // '全部刷新' 只出现在 airport.with_rules 的 hint 文案里（按钮是「刷新全部流量」），命中即证明 hint 渲染
-    expect(w.text()).toContain('全部刷新')
-    w.unmount()
-  })
-
   it('行内开关调 updateAirport', async () => {
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
@@ -803,50 +795,55 @@ describe('AirportsPage', () => {
   })
 
 
-  it('D-06 挂载时 listSettings 回填 airport.with_rules', async () => {
-    listSettingsMock.mockResolvedValueOnce({
-      settings: [
-        { key: 'airport.with_rules', value: 'true', kind: 'bool', label: '刷新时同时导入规则', description: '' },
-      ],
+  it('每页条数选择：改变后刷新列表仍保持，且回到第一页', async () => {
+    listMock.mockResolvedValue(Array.from({ length: 30 }, (_, i) => makeAirport({ id: i + 1, name: 'A' + i })))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="airport-page-size"]').exists()).toBe(true)
+    ;(w.vm as any).page = 2
+    ;(w.vm as any).setPageSize(25)
+    await flushPromises()
+    expect((w.vm as any).itemsPerPage).toBe(25)
+    expect((w.vm as any).page).toBe(1)
+    await (w.vm as any).load()
+    await flushPromises()
+    expect((w.vm as any).itemsPerPage).toBe(25)
+    expect((w.vm as any).page).toBe(1)
+    w.unmount()
+  })
+
+  it('列表变短时当前页自动收敛到最后一页', async () => {
+    listMock.mockResolvedValue(Array.from({ length: 30 }, (_, i) => makeAirport({ id: i + 1, name: 'A' + i })))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).page = 3
+    listMock.mockResolvedValue([makeAirport()])
+    await (w.vm as any).load()
+    await flushPromises()
+    expect((w.vm as any).page).toBe(1)
+    w.unmount()
+  })
+
+  it('单机场刷新同时更新规则源并展示结果', async () => {
+    refreshMock.mockResolvedValueOnce({
+      result: { airport_id: 1, name: 'HK', ok: true, usage: { upload: '', download: '', total: '', expire: '' }, node_count: 5, err: '' },
+      import: { airport_id: 1, name: 'HK', rules_added: 0, rules_skipped: 0, providers_added: 1, rule_source_rules: 7, warnings: [], err: '' },
     })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
-    expect(listSettingsMock).toHaveBeenCalledTimes(1)
-    expect((w.vm as any).withRules).toBe(true)
+    await (w.vm as any).refreshOne((w.vm as any).rows[0])
+    await flushPromises()
+    expect(refreshMock).toHaveBeenCalledWith(1, true)
+    expect(w.find('[data-testid="imports"]').text()).toContain('规则源 7 条')
     w.unmount()
   })
 
-  it('D-06 服务端没有该项时保持默认关闭', async () => {
-    listSettingsMock.mockResolvedValueOnce({ settings: [] })
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect((w.vm as any).withRules).toBe(false)
-    w.unmount()
-  })
-
-  it('D-06 切换 with-rules 写回 updateSettings', async () => {
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    await w.find('[data-testid="with-rules"] input').setValue(true)
-    await flushPromises()
-    expect(updateSettingsMock).toHaveBeenCalledWith({ 'airport.with_rules': 'true' })
-    w.unmount()
-  })
-
-  it('D-06 listSettings 失败时静默保持默认，不阻塞页面', async () => {
-    listSettingsMock.mockRejectedValueOnce(new Error('settings boom'))
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    expect((w.vm as any).withRules).toBe(false)
-    expect(w.find('[data-testid="table"]').exists()).toBe(true)
-    w.unmount()
-  })
-
-  it('D-24 测活全部后显示「测活完成」汇总', async () => {
+  it('D-24 检测全部后显示结果摘要', async () => {
     checkMock.mockResolvedValueOnce({
+      at: '2026-10-30T13:00:00Z',
       results: [
         makeCheckResult({ ok: true }),
-        makeCheckResult({ url: 'https://y.com/sub', ok: false, err: 'timeout', latency: 0 }),
+        makeCheckResult({ url: 'https://y.com/sub', ok: false, err: 'timeout', latency_ms: 0 }),
       ],
     })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
@@ -855,27 +852,28 @@ describe('AirportsPage', () => {
     await flushPromises()
     const el = w.find('[data-testid="check-summary"]')
     expect(el.exists()).toBe(true)
-    expect(el.text()).toContain('测活完成')
-    expect(el.text()).toContain('1 个可用')
-    expect(el.text()).toContain('1 个失败')
-    expect(el.text()).toContain('共 2 个')
+    expect(el.text()).toContain('可用 1')
+    expect(el.text()).toContain('不可用 1')
+    expect(el.text()).toContain('共 2')
+    expect(w.text()).toContain('检测时间')
     w.unmount()
   })
 
   it('D-24 单机场测活同样显示汇总', async () => {
     checkMock.mockResolvedValueOnce({
-      results: [makeCheckResult({ ok: false, err: 'boom', latency: 0 })],
+      results: [makeCheckResult({ ok: false, err: 'boom', latency_ms: 0 })],
     })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     await w.find('[data-testid="check-one"]').trigger('click')
     await flushPromises()
-    expect(w.find('[data-testid="check-summary"]').text()).toContain('测活完成：0 个可用 / 1 个失败（共 1 个）')
+    expect(w.find('[data-testid="check-summary"]').text()).toContain('不可用 1')
     w.unmount()
   })
 
   it('D-24 测活请求失败时只显示错误，不显示汇总', async () => {
     checkMock.mockRejectedValueOnce(new Error('check boom'))
+    lastCheckMock.mockResolvedValueOnce({ results: [] })
     const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
     await flushPromises()
     await w.find('[data-testid="check-all"]').trigger('click')
@@ -887,26 +885,6 @@ describe('AirportsPage', () => {
 
 })
 
-
-// ---------------- 覆盖率补齐：D-06 保存设置失败分支 ----------------
-
-describe('AirportsPage 覆盖率补齐（D-06 保存失败）', () => {
-  it('开关保存失败：错误提示弹出，页面不炸', async () => {
-    listMock.mockResolvedValue([makeAirport()])
-    listSettingsMock.mockResolvedValue({ settings: [{ key: 'airport.with_rules', value: 'false', kind: 'bool', label: 'x' }] })
-    updateSettingsMock.mockRejectedValueOnce(new Error('settings boom'))
-    notifyState.open = false
-    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
-    await flushPromises()
-    await w.find('[data-testid="with-rules"] input').setValue(true)
-    await flushPromises()
-    expect(updateSettingsMock).toHaveBeenCalledWith({ 'airport.with_rules': 'true' })
-    expect(notifyState.open).toBe(true)
-    expect(notifyState.kind).toBe('error')
-    expect(notifyState.text).toContain('settings boom')
-    w.unmount()
-  })
-})
 
 // ---------------- 覆盖率补齐：导入弹窗 / 删除弹窗的 v-model setter ----------------
 
@@ -940,8 +918,8 @@ describe('AirportsPage 覆盖率补齐（导入弹窗）', () => {
     ;(w.vm as any).askDelete((w.vm as any).rows[0])
     await flushPromises()
     const dialogs = w.findAllComponents({ name: 'VDialog' })
-    expect(dialogs.length).toBe(3)
-    await dialogs[1].vm.$emit('update:modelValue', true)
+    expect(dialogs.length).toBe(5)
+    await dialogs[2].vm.$emit('update:modelValue', true)
     await flushPromises()
     expect((w.vm as any).confirmOpen).toBe(true)
     // 无导入目标时 confirmImportRules 直接返回，不发请求
@@ -949,6 +927,158 @@ describe('AirportsPage 覆盖率补齐（导入弹窗）', () => {
     await (w.vm as any).confirmImportRules()
     await flushPromises()
     expect(importMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+
+  it('检测时间非法时原样显示', async () => {
+    lastCheckMock.mockResolvedValueOnce({ results: [] })
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect((w.vm as any).formatCheckAt('bad-time')).toBe('bad-time')
+    w.unmount()
+  })
+
+})
+
+describe('AirportsPage 来源处理', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport({ pipeline: '' })])
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }])
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+  })
+
+  it('机场列表显示处理管线状态', async () => {
+    listMock.mockResolvedValue([makeAirport({ pipeline: 'pre' })])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="airport-pipeline-text"]').text()).toContain('pre')
+    w.unmount()
+  })
+
+  it('编辑机场可保存处理管线', async () => {
+    updateMock.mockResolvedValue(makeAirport({ pipeline: 'pre' }))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).draft.pipeline = 'pre'
+    await (w.vm as any).submit()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(1, expect.objectContaining({ pipeline: 'pre' }))
+    w.unmount()
+  })
+})
+
+describe('AirportsPage 处理管线控件', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport({ pipeline: 'legacy' })])
+    pipelinesMock.mockResolvedValue([])
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+  })
+
+  it('当前管线不在可选项里时仍作为选项显示', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'airport-pipeline')
+    expect(select).toBeTruthy()
+    expect((select!.props('items') as { value: string }[]).some((i) => i.value === 'legacy')).toBe(true)
+    w.unmount()
+  })
+
+  it('通过下拉控件选择处理管线', async () => {
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'airport-pipeline')
+    await select!.setValue('pre')
+    expect((w.vm as any).draft.pipeline).toBe('pre')
+    w.unmount()
+  })
+
+  it('管线清单加载失败时仍可打开机场弹窗', async () => {
+    pipelinesMock.mockRejectedValueOnce(new Error('pipelines boom'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).openCreate()
+    await flushPromises()
+    expect((w.vm as any).pipelineOptions).toEqual([])
+    w.unmount()
+  })
+})
+
+describe('AirportsPage 处理预览', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport({ pipeline: 'pre' })])
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }])
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+    previewProcessMock.mockResolvedValue({ name: 'HK', pipeline: 'pre', before_count: 2, after_count: 1, before: [], after: [{ name: 'P-HK', type: 'ss', server: 'hk', port: '8388' }], warnings: [] })
+  })
+
+  it('编辑机场时按当前管线预览处理结果', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    await flushPromises()
+    expect(previewProcessMock).toHaveBeenCalledWith(1, 'pre')
+    expect((w.vm as any).previewResult.after_count).toBe(1)
+    w.unmount()
+  })
+
+  it('预览失败时显示错误', async () => {
+    previewProcessMock.mockRejectedValueOnce(new Error('preview boom'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    await flushPromises()
+    expect((w.vm as any).previewError).toBe('preview boom')
+    w.unmount()
+  })
+})
+
+describe('AirportsPage 预览/导入弹窗守卫', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport()])
+    previewProcessMock.mockResolvedValue({ name: 'HK', before_count: 0, after_count: 0, before: [], after: [], warnings: [] })
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+    pipelinesMock.mockResolvedValue([])
+  })
+
+  it('新建机场未保存时预览直接返回，不打开弹窗', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    expect((w.vm as any).previewOpen).toBe(false)
+    expect(previewProcessMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('导入弹窗关闭时写回 importDialog=false', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).importDialog = true
+    await flushPromises()
+    const dialog = w.findAllComponents({ name: 'VDialog' }).find((d) => d.props('maxWidth') === '480')
+    expect(dialog).toBeTruthy()
+    dialog!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect((w.vm as any).importDialog).toBe(false)
     w.unmount()
   })
 })

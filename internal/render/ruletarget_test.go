@@ -101,6 +101,48 @@ func TestResolveRuleTargets(t *testing.T) {
 	}
 }
 
+// TestResolveRuleTargetsDirectWithoutGroup 没有「直连」分组时，直连目标必须落到
+// 内核内置 DIRECT，而不是兜底代理分组——否则私网/国内流量会被错误地代理。
+func TestResolveRuleTargetsDirectWithoutGroup(t *testing.T) {
+	groups := []string{"🚀 手动选择", "🐟 漏网之鱼"}
+	rules := []string{
+		"GEOSITE,private,🎯 全球直连",
+		"GEOIP,cn,🎯 全球直连,no-resolve",
+		"MATCH,🐟 漏网之鱼",
+	}
+	got, warns := ResolveRuleTargets(rules, groups, nil)
+	want := []string{
+		"GEOSITE,private,DIRECT",
+		"GEOIP,cn,DIRECT,no-resolve",
+		"MATCH,🐟 漏网之鱼",
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("规则 %d = %q，应为 %q", i, got[i], want[i])
+		}
+	}
+	if len(warns) == 0 {
+		t.Fatal("应产生映射警告")
+	}
+}
+
+// TestResolveRuleTargetsEnglishGroups 英文分组名也能被关键词表命中。
+func TestResolveRuleTargetsEnglishGroups(t *testing.T) {
+	groups := []string{"🍎 Apple", "🌏 Steam", "🐟 漏网之鱼"}
+	rules := []string{
+		"DOMAIN-SUFFIX,icloud.com,🍎 苹果服务",
+		"DOMAIN-SUFFIX,steampowered.com,🎮 游戏平台",
+		"MATCH,🐟 漏网之鱼",
+	}
+	got, _ := ResolveRuleTargets(rules, groups, nil)
+	if got[0] != "DOMAIN-SUFFIX,icloud.com,🍎 Apple" {
+		t.Fatalf("苹果服务 = %q，应为 🍎 Apple", got[0])
+	}
+	if got[1] != "DOMAIN-SUFFIX,steampowered.com,🌏 Steam" {
+		t.Fatalf("游戏平台 = %q，应为 🌏 Steam", got[1])
+	}
+}
+
 // TestResolveRuleTargetsEmpty 空规则直接原样返回，不产生警告。
 func TestResolveRuleTargetsEmpty(t *testing.T) {
 	got, warns := ResolveRuleTargets(nil, []string{"A"}, nil)

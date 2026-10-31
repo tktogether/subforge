@@ -53,6 +53,7 @@ interface SubscriptionsPageVm {
   expire: string
   savingStrategy: boolean
   previewHeader: string
+  previewUsage: any
   previewOk: boolean | null
   previewing: boolean
   refreshError: string
@@ -186,11 +187,11 @@ describe('SubscriptionsPage', () => {
     w.unmount()
   })
 
-  it('模板：selected 为 null 时显示「请选择一个令牌」', async () => {
+  it('模板：selected 为 null 时提示先新建令牌', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
     await flushPromises()
-    expect(w.text()).toContain('请选择一个令牌')
+    expect(w.text()).toContain('暂无订阅令牌。请先新建令牌')
     w.unmount()
   })
 
@@ -199,7 +200,7 @@ describe('SubscriptionsPage', () => {
     const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
     await flushPromises()
     expect(w.find('[data-testid="block-url"]').text()).toContain('长期重复使用')
-    expect(w.find('[data-testid="block-url"]').text()).toContain('不必每次使用都新建令牌')
+    expect(w.find('[data-testid="block-url"]').text()).toContain('同一地址可以长期重复使用')
     w.unmount()
   })
 
@@ -274,7 +275,7 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     await vm.refreshAll()
     await flushPromises()
-    expect(w.text()).toContain('刷新失败不会把下游余额清零')
+    expect(w.text()).toContain('刷新失败时保留上一次成功获取的余额')
     const errs = w.findAll('[data-testid="refresh-error"]')
     expect(errs.length).toBeGreaterThan(0)
     expect(w.text()).toContain('boom')
@@ -319,7 +320,7 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     const note = w.find('[data-testid="field-zero-note"]')
     expect(note.exists()).toBe(true)
-    expect(note.text()).toContain('跳过值为 0 的机场')
+    expect(note.text()).toContain('数值为 0 的机场不参与计算')
     w.unmount()
   })
 
@@ -430,7 +431,7 @@ describe('SubscriptionsPage', () => {
     await nextTick()
     dialogClick(w, 'token-save')
     await flushPromises()
-    expect(endpoints.createToken).toHaveBeenCalledWith({ token: 'newtok', name: 'newname', target: '', pipeline: '', config: '', include: '', exclude: '', profile_id: 0 })
+    expect(endpoints.createToken).toHaveBeenCalledWith({ token: 'newtok', name: 'newname', profile_id: 0 })
     expect(vm.tokenDialog).toBe(false)
     expect(endpoints.listTokens).toHaveBeenCalledTimes(2)
     expect(notify).toHaveBeenCalledWith('已保存', 'ok')
@@ -629,8 +630,8 @@ describe('SubscriptionsPage', () => {
     w.unmount()
   })
 
-  it('流量策略：试算展示 header 与 ok=true', async () => {
-    vi.mocked(endpoints.previewTraffic).mockResolvedValue({ usage: {} as any, header: 'X-Sub: yes', ok: true } as any)
+  it('流量策略：试算展示可读的上传/下载/总量/到期', async () => {
+    vi.mocked(endpoints.previewTraffic).mockResolvedValue({ usage: { upload: 1024, download: 2048, total: 3072, expire: 1700000000 }, header: 'X-Sub: yes', ok: true } as any)
     const w = mount(SubscriptionsPage, { global: { plugins: [vuetify], stubs: { VDialog: { template: '<div class="v-dialog-stub" v-if="modelValue"><button class="stub-close" @click="$emit(\'update:modelValue\', false)">close</button><slot/></div>', props: ['modelValue'], emits: ['update:modelValue'] } } } })
     const vm = w.vm as unknown as SubscriptionsPageVm
     await flushPromises()
@@ -638,7 +639,13 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
     expect(vm.previewHeader).toBe('X-Sub: yes')
     expect(vm.previewOk).toBe(true)
-    expect(w.find('[data-testid="preview-header"]').exists()).toBe(true)
+    const summary = w.find('[data-testid="preview-summary"]')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('上传')
+    expect(summary.text()).toContain('1.0 KB')
+    expect(summary.text()).toContain('2.0 KB')
+    expect(summary.text()).toContain('3.0 KB')
+    expect(summary.text()).toContain('2023')
     w.unmount()
   })
 
@@ -705,194 +712,11 @@ describe('SubscriptionsPage', () => {
     await flushPromises()
   }
 
-  it('令牌定制：弹窗内有 target 下拉与「高级选项」折叠区（含 4 个字段）', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1', target: 'clash.meta' }])
-    const w = mountSubsPage()
-    await flushPromises()
-    await openTokenDialog(w, 'edit')
-    const target = selectByTestId(w, 'target-select')
-    expect(target.props('clearable')).toBe(true)
-    expect(target.props('hint')).toBe('留空 = 默认 clash.meta')
-    const advanced = w.find('[data-testid="token-advanced"]')
-    expect(advanced.exists()).toBe(true)
-    expect(advanced.text()).toContain('高级选项')
-    const title = w.find('[data-testid="token-advanced"] .v-expansion-panel-title')
-    expect(title.exists()).toBe(true)
-    await title.trigger('click')
-    await flushPromises()
-    for (const id of ['token-pipeline', 'token-config', 'include-field', 'exclude-field']) {
-      expect(w.find('[data-testid="' + id + '"]').exists()).toBe(true)
-    }
-    w.unmount()
-  })
-
-  it('令牌定制：编辑弹窗回填 5 个定制字段', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([
-      { token: 'tk1', name: 'n1', target: 'clash.meta', pipeline: 'p1', config: 'c1', include: '香港', exclude: '过期' },
-    ])
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    await openTokenDialog(w, 'edit')
-    expect(vm.tokenForm).toEqual({ token: 'tk1', name: 'n1', target: 'clash.meta', pipeline: 'p1', config: 'c1', include: '香港', exclude: '过期', profile_id: 0 })
-    w.unmount()
-  })
-
-  it('令牌定制：编辑保存把 6 个字段全量发给 updateToken（空串也发）', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([
-      { token: 'tk1', name: 'n1', target: 'clash.meta', pipeline: 'p1', config: 'c1', include: '香港', exclude: '过期' },
-    ])
-    vi.mocked(endpoints.updateToken).mockResolvedValue({ token: 'tk1', name: 'n1b' })
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    await openTokenDialog(w, 'edit')
-    dialogSet(w, 'name-field', 'n1b')
-    dialogSet(w, 'token-pipeline', '')
-    dialogSet(w, 'token-config', '')
-    dialogSet(w, 'exclude-field', '')
-    await nextTick()
-    dialogClick(w, 'token-save')
-    await flushPromises()
-    expect(endpoints.updateToken).toHaveBeenCalledWith('tk1', {
-      name: 'n1b', target: 'clash.meta', pipeline: '', config: '', include: '香港', exclude: '', profile_id: 0,
-    })
-    expect(endpoints.createToken).not.toHaveBeenCalled()
-    expect(vm.tokenDialog).toBe(false)
-    expect(notify).toHaveBeenCalledWith('已保存', 'ok')
-    w.unmount()
-  })
-
-  it('令牌定制：target 下拉改值经 v-model 进入表单并随保存发出', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1' }])
-    vi.mocked(endpoints.updateToken).mockResolvedValue({ token: 'tk1', name: 'n1' })
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    await openTokenDialog(w, 'edit')
-    await selectByTestId(w, 'target-select').setValue('sing-box')
-    await nextTick()
-    expect(vm.tokenForm.target).toBe('sing-box')
-    dialogClick(w, 'token-save')
-    await flushPromises()
-    expect(endpoints.updateToken).toHaveBeenCalledWith('tk1', {
-      name: 'n1', target: 'sing-box', pipeline: '', config: '', include: '', exclude: '', profile_id: 0,
-    })
-    w.unmount()
-  })
-
-  it('令牌定制：target 被 clearable 清空（null）时按空串提交，表达「清空定制」', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1', target: 'clash.meta' }])
-    vi.mocked(endpoints.updateToken).mockResolvedValue({ token: 'tk1', name: 'n1' })
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    await openTokenDialog(w, 'edit')
-    selectByTestId(w, 'target-select').vm.$emit('update:modelValue', null)
-    await nextTick()
-    expect(vm.tokenForm.target).toBeNull()
-    dialogClick(w, 'token-save')
-    await flushPromises()
-    expect(endpoints.updateToken).toHaveBeenCalledWith('tk1', expect.objectContaining({ target: '' }))
-    w.unmount()
-  })
-
-  it('令牌定制：新建保存全量发送 token+name+5 个定制字段+profile_id（修复新建丢字段）', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([])
-    vi.mocked(endpoints.createToken).mockResolvedValue({ token: 'newtok', name: 'newname' })
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    await openTokenDialog(w, 'create')
-    expect(vm.tokenForm).toEqual({ token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '', profile_id: 0 })
-    dialogSet(w, 'token-field', 'newtok')
-    dialogSet(w, 'name-field', 'newname')
-    dialogSet(w, 'include-field', '香港')
-    await nextTick()
-    await selectByTestId(w, 'target-select').setValue('sing-box')
-    await nextTick()
-    dialogClick(w, 'token-save')
-    await flushPromises()
-    expect(endpoints.createToken).toHaveBeenCalledWith({
-      token: 'newtok', name: 'newname', target: 'sing-box', pipeline: '', config: '', include: '香港', exclude: '', profile_id: 0,
-    })
-    expect(endpoints.updateToken).not.toHaveBeenCalled()
-    w.unmount()
-  })
-
-  it('令牌定制：updateToken reject 时提示错误且弹窗保持打开', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1' }])
-    vi.mocked(endpoints.updateToken).mockRejectedValue(new Error('updfail'))
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    await openTokenDialog(w, 'edit')
-    dialogClick(w, 'token-save')
-    await flushPromises()
-    expect(notify).toHaveBeenCalledWith('updfail', 'error')
-    expect(vm.tokenDialog).toBe(true)
-    w.unmount()
-  })
-
-  it('令牌定制：targets 懒加载一次，弹窗未打开不请求、二次打开不重复请求', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1' }])
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    expect(endpoints.targets).not.toHaveBeenCalled()
-    await openTokenDialog(w, 'edit')
-    expect(endpoints.targets).toHaveBeenCalledTimes(1)
-    expect(vm.targetOptions).toEqual(['clash.meta', 'sing-box'])
-    expect(vm.loadingTargets).toBe(false)
-    await w.find('.stub-close').trigger('click')
-    await nextTick()
-    await flushPromises()
-    await openTokenDialog(w, 'create')
-    expect(endpoints.targets).toHaveBeenCalledTimes(1)
-    w.unmount()
-  })
-
-  it('令牌定制：targets 拉取失败不阻塞弹窗，失败后下次打开重试', async () => {
-    vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1' }])
-    vi.mocked(endpoints.targets).mockRejectedValue(new Error('tgfail'))
-    const w = mountSubsPage()
-    const vm = w.vm as unknown as SubscriptionsPageVm
-    await flushPromises()
-    await openTokenDialog(w, 'edit')
-    expect(vm.tokenDialog).toBe(true)
-    expect(vm.targetOptions).toEqual([])
-    expect(vm.loadingTargets).toBe(false)
-    expect(notify).not.toHaveBeenCalled()
-    await w.find('.stub-close').trigger('click')
-    await nextTick()
-    await flushPromises()
-    await openTokenDialog(w, 'create')
-    expect(endpoints.targets).toHaveBeenCalledTimes(2)
-    w.unmount()
-  })
-
-  it('打开令牌对话框后加载 pipeline/config 候选', async () => {
-    ;(endpoints.pipelines as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([{ name: 'clean' }])
-    ;(endpoints.configs as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ configs: ['http://x/a.ini'], default: 'http://x/a.ini' })
-    const w = mountSubsPage()
-    const vm = w.vm as any
-    await flushPromises()
-    vm.openCreateToken()
-    await flushPromises()
-    expect(endpoints.pipelines).toHaveBeenCalled()
-    expect(endpoints.configs).toHaveBeenCalled()
-    expect(vm.pipelineOptions).toEqual(['clean'])
-    expect(vm.configOptions).toEqual(['http://x/a.ini'])
-    w.unmount()
-  })
-
-  // ---- 方案（Profile）绑定 ----
-
-  it('方案：页面加载拉取 profiles，弹窗下拉给出「未分配 + 各方案」', async () => {
+  it('方案：页面加载拉取 profiles，弹窗下拉给出「未绑定方案 + 各方案」', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     vi.mocked(endpoints.listProfiles).mockResolvedValue([
-      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], group_layers: ['custom', 'airport', 'template'] },
-      { id: 2, name: 'B-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 2, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], group_layers: ['custom', 'airport', 'template'] },
+      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], target: '', include: '', exclude: '', rule_sources: [], airport_ids: null, self_node_ids: null, group_layers: ['custom', 'airport', 'template'] },
+      { id: 2, name: 'B-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 2, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], target: '', include: '', exclude: '', rule_sources: [], airport_ids: null, self_node_ids: null, group_layers: ['custom', 'airport', 'template'] },
     ])
     const w = mountSubsPage()
     await flushPromises()
@@ -900,15 +724,15 @@ describe('SubscriptionsPage', () => {
     await openTokenDialog(w, 'create')
     const sel = selectByTestId(w, 'token-profile')
     expect(sel.props('items')).toEqual([
-      { title: '未分配', value: 0 },
+      { title: '未绑定方案', value: 0 },
       { title: 'A-方案', value: 1 },
       { title: 'B-方案', value: 2 },
     ])
-    expect(w.find('[data-testid="token-profile-hint"]').text()).toContain('绑定方案后，订阅只使用该方案的规则与分组')
+    expect(w.find('[data-testid="token-profile-hint"]').text()).toContain('令牌只作为访问凭据')
     w.unmount()
   })
 
-  it('方案：profiles 拉取失败降级为仅未分配，令牌列表不受影响', async () => {
+  it('方案：profiles 拉取失败降级为仅未绑定方案，令牌列表不受影响', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([{ token: 'tk1', name: 'n1' }])
     vi.mocked(endpoints.listProfiles).mockRejectedValue(new Error('pfail'))
     const w = mountSubsPage()
@@ -916,11 +740,11 @@ describe('SubscriptionsPage', () => {
     expect(w.find('[data-testid="token-row"]').exists()).toBe(true)
     await openTokenDialog(w, 'create')
     const sel = selectByTestId(w, 'token-profile')
-    expect(sel.props('items')).toEqual([{ title: '未分配', value: 0 }])
+    expect(sel.props('items')).toEqual([{ title: '未绑定方案', value: 0 }])
     w.unmount()
   })
 
-  it('方案：令牌表格显示方案列，未分配显示「未分配」', async () => {
+  it('方案：令牌表格显示方案列，空方案显示「未绑定方案」', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([
       { token: 'tk1', name: 'n1', profile_id: 1, profile_name: 'A-方案' },
       { token: 'tk2', name: 'n2' },
@@ -930,14 +754,14 @@ describe('SubscriptionsPage', () => {
     const cells = w.findAll('[data-testid="token-profile-name"]')
     expect(cells.length).toBe(2)
     expect(cells[0].text()).toBe('A-方案')
-    expect(cells[1].text()).toBe('未分配')
+    expect(cells[1].text()).toBe('未绑定方案')
     w.unmount()
   })
 
   it('方案：新建令牌可绑定方案，body 带 profile_id 与全部定制字段', async () => {
     vi.mocked(endpoints.listTokens).mockResolvedValue([])
     vi.mocked(endpoints.listProfiles).mockResolvedValue([
-      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], rule_sources: [], group_layers: ['custom', 'airport', 'template'] },
+      { id: 1, name: 'A-方案', description: '', config: '', pipeline: '', enabled: true, sort_order: 1, rule_count: 0, group_count: 0, rule_layers: ['custom', 'airport', 'template'], target: '', include: '', exclude: '', rule_sources: [], airport_ids: null, self_node_ids: null, group_layers: ['custom', 'airport', 'template'] },
     ])
     vi.mocked(endpoints.createToken).mockResolvedValue({ token: 'newtok', name: 'newname' })
     const w = mountSubsPage()
@@ -945,14 +769,13 @@ describe('SubscriptionsPage', () => {
     await openTokenDialog(w, 'create')
     dialogSet(w, 'token-field', 'newtok')
     dialogSet(w, 'name-field', 'newname')
-    dialogSet(w, 'token-config', 'http://x/a.ini')
     await nextTick()
     await selectByTestId(w, 'token-profile').setValue(1)
     await nextTick()
     dialogClick(w, 'token-save')
     await flushPromises()
     expect(endpoints.createToken).toHaveBeenCalledWith({
-      token: 'newtok', name: 'newname', target: '', pipeline: '', config: 'http://x/a.ini', include: '', exclude: '', profile_id: 1,
+      token: 'newtok', name: 'newname', profile_id: 1,
     })
     w.unmount()
   })

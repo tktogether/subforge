@@ -33,6 +33,15 @@ type profileBody struct {
 	RuleLayers  *[]string `json:"rule_layers"`
 	GroupLayers *[]string `json:"group_layers"`
 	RuleSources *[]string `json:"rule_sources"`
+	// 输出定制：nil = 不修改（PUT）；显式空串 = 清空。
+	Target  *string `json:"target"`
+	Include *string `json:"include"`
+	Exclude *string `json:"exclude"`
+	// 节点来源：nil = 不限制（全部启用来源）；空数组 = 明确不使用该类来源。
+	AirportIDs  *[]int64 `json:"airport_ids"`
+	SelfNodeIDs *[]int64 `json:"self_node_ids"`
+	// AllSources=true 时清空两个限制（恢复“全部启用来源”）；PUT 里省略=保持原值。
+	AllSources bool `json:"all_sources"`
 }
 
 // 合法层键。规则层与分组层共用一套键。
@@ -142,6 +151,87 @@ func normalizeRuleSources(raw []string) []string {
 	return out
 }
 
+// normalizeIDListPtr 去重并丢掉非法 id；nil 保持 nil（未限制），空数组保持空数组（不使用）。
+func normalizeIDListPtr(ids *[]int64) *[]int64 {
+	if ids == nil {
+		return nil
+	}
+	seen := make(map[int64]bool, len(*ids))
+	out := make([]int64, 0, len(*ids))
+	for _, id := range *ids {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return &out
+}
+
+// validateProfileRuleSources 校验方案绑定的规则源存在且已有产物。
+// 只校验名字不够：源存在但没有产物时订阅仍会静默回退模板规则。
+func (s *Server) validateProfileRuleSources(ctx context.Context, m *subforge.Manager, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	statuses, err := m.ListRuleSources(ctx)
+	if err != nil {
+		return err
+	}
+	latest := make(map[string]string, len(statuses))
+	for _, st := range statuses {
+		latest[st.Name] = st.Latest
+	}
+	for _, name := range names {
+		value, ok := latest[name]
+		if !ok {
+			return fmt.Errorf("规则源 %q 不存在，请先在规则源页新增", name)
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("规则源 %q 还没有可用产物，请先在规则源页更新", name)
+		}
+	}
+	return nil
+}
+
+// validateProfileSourceIDs 校验方案选择的来源 id 存在，避免保存后订阅静默为空。
+func (s *Server) validateProfileSourceIDs(ctx context.Context, m *subforge.Manager, airportIDs, selfNodeIDs *[]int64) error {
+	if airportIDs == nil && selfNodeIDs == nil {
+		return nil
+	}
+	if airportIDs != nil {
+		airports, err := m.ListAirports(ctx)
+		if err != nil {
+			return err
+		}
+		known := make(map[int64]bool, len(airports))
+		for _, a := range airports {
+			known[a.ID] = true
+		}
+		for _, id := range *airportIDs {
+			if !known[id] {
+				return fmt.Errorf("机场 %d 不存在", id)
+			}
+		}
+	}
+	if selfNodeIDs != nil {
+		nodes, err := m.ListSelfNodes(ctx)
+		if err != nil {
+			return err
+		}
+		known := make(map[int64]bool, len(nodes))
+		for _, n := range nodes {
+			known[n.ID] = true
+		}
+		for _, id := range *selfNodeIDs {
+			if !known[id] {
+				return fmt.Errorf("自建节点 %d 不存在", id)
+			}
+		}
+	}
+	return nil
+}
+
 // normalizeProfileSourcesForJSON 保证响应里的 rule_sources 一定是数组：
 // 未绑定（nil）时输出 []，前端多选控件才能按数组统一处理，而不是 null。
 func normalizeProfileSourcesForJSON(p *subforge.Profile) {
@@ -246,6 +336,20 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 		var normalizedRuleSources []string
 		if ruleSourcesProvided {
 			normalizedRuleSources = normalizeRuleSources(*body.RuleSources)
+			if err := s.validateProfileRuleSources(r.Context(), m, normalizedRuleSources); err != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, err)
+				return
+			}
+		}
+		airportIDs := normalizeIDListPtr(body.AirportIDs)
+		selfNodeIDs := normalizeIDListPtr(body.SelfNodeIDs)
+		if body.AllSources {
+			var unlimited []int64
+			airportIDs, selfNodeIDs = &unlimited, &unlimited
+		}
+		if err := s.validateProfileSourceIDs(r.Context(), m, airportIDs, selfNodeIDs); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
 		}
 		p, err := m.AddProfile(r.Context(), name, body.Description, body.Config, body.Pipeline, enabled, body.SortOrder)
 		if err != nil {
@@ -277,7 +381,28 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if ruleLayers != nil || groupLayers != nil || ruleSourcesProvided {
+		if airportIDs != nil || selfNodeIDs != nil {
+			if err := m.SetProfileSources(r.Context(), p.ID, airportIDs, selfNodeIDs); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", p.ID))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if body.Target != nil || body.Include != nil || body.Exclude != nil {
+			if err := m.SetProfileRenderOptions(r.Context(), p.ID, body.Target, body.Include, body.Exclude); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", p.ID))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if ruleLayers != nil || groupLayers != nil || ruleSourcesProvided || airportIDs != nil || selfNodeIDs != nil ||
+			body.Target != nil || body.Include != nil || body.Exclude != nil {
 			if fresh, err := m.GetProfile(r.Context(), p.ID); err == nil {
 				p = fresh
 			}
@@ -323,10 +448,12 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// enabled 缺省 = 保持原值（契约 §4.1）：先读当前行，用它当兜底。
-		enabled := true
-		if cur, err := m.GetProfile(r.Context(), id); err == nil {
-			enabled = cur.Enabled
+		cur, curErr := m.GetProfile(r.Context(), id)
+		if curErr != nil {
+			s.writeAPIError(w, r, http.StatusNotFound, curErr)
+			return
 		}
+		enabled := cur.Enabled
 		if body.Enabled != nil {
 			enabled = *body.Enabled
 		}
@@ -335,6 +462,20 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 		var normalizedRuleSources []string
 		if ruleSourcesProvided {
 			normalizedRuleSources = normalizeRuleSources(*body.RuleSources)
+			if err := s.validateProfileRuleSources(r.Context(), m, normalizedRuleSources); err != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, err)
+				return
+			}
+		}
+		airportIDs := normalizeIDListPtr(body.AirportIDs)
+		selfNodeIDs := normalizeIDListPtr(body.SelfNodeIDs)
+		if body.AllSources {
+			var unlimited []int64
+			airportIDs, selfNodeIDs = &unlimited, &unlimited
+		}
+		if err := s.validateProfileSourceIDs(r.Context(), m, airportIDs, selfNodeIDs); err != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, err)
+			return
 		}
 		err := m.UpdateProfile(r.Context(), id, name, body.Description, body.Config, body.Pipeline, enabled, body.SortOrder)
 		if err != nil {
@@ -362,6 +503,26 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 		// 只带 rule_sources 的请求不能顺手清掉层：层有自己的 nil 语义，没给就保持原值。
 		if ruleSourcesProvided {
 			if err := m.SetProfileRuleSources(r.Context(), id, normalizedRuleSources); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if airportIDs != nil || selfNodeIDs != nil {
+			if err := m.SetProfileSources(r.Context(), id, airportIDs, selfNodeIDs); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
+					return
+				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if body.Target != nil || body.Include != nil || body.Exclude != nil {
+			if err := m.SetProfileRenderOptions(r.Context(), id, body.Target, body.Include, body.Exclude); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
 					return

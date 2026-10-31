@@ -12,35 +12,35 @@ describe('vuetify 插件', () => {
     expect(vuetify.theme.themes.value.subforgeLight.dark).toBe(false)
   })
 
-  it('subforgeLight 主题色符合 P3 浅色令牌（palette-p3-forest.html:10-25）', () => {
+  it('subforgeLight 主题色符合高对比浅色令牌', () => {
     const colors = vuetify.theme.themes.value.subforgeLight.colors
-    expect(colors.primary).toBe('#4F6E35') // --sf-accent
-    expect(colors.secondary).toBe('#405B2B') // --sf-accent-hover
-    expect(colors.success).toBe('#2b7b41') // --sf-ok
-    expect(colors.warning).toBe('#976000') // --sf-warn
-    expect(colors.error).toBe('#B3382E') // --sf-danger
-    expect(colors.info).toBe('#2B6198') // --sf-info
-    expect(colors.background).toBe('#F0F2E6') // --sf-bg
-    expect(colors.surface).toBe('#F9FAEF') // --sf-surface
-    expect(colors['surface-variant']).toBe('#FDFEF6') // --sf-surface-raised
-    expect(colors['on-surface']).toBe('#242B26') // --sf-text
-    expect(colors['on-background']).toBe('#242B26') // --sf-text
+    expect(colors.primary).toBe('#174C80') // --sf-accent
+    expect(colors.secondary).toBe('#103A63') // --sf-accent-hover
+    expect(colors.success).toBe('#15803D') // --sf-ok
+    expect(colors.warning).toBe('#9A5B00') // --sf-warn
+    expect(colors.error).toBe('#B42318') // --sf-danger
+    expect(colors.info).toBe('#0E7490') // --sf-info
+    expect(colors.background).toBe('#EEF2F7') // --sf-bg
+    expect(colors.surface).toBe('#FFFFFF') // --sf-surface
+    expect(colors['surface-variant']).toBe('#F5F8FC') // --sf-surface-raised
+    expect(colors['on-surface']).toBe('#0F172A') // --sf-text
+    expect(colors['on-background']).toBe('#0F172A') // --sf-text
   })
 
-  it('subforgeDark 主题为深色且取 P3 深色令牌（palette-p3-forest.html:31-46）', () => {
+  it('subforgeDark 主题为深色且符合高对比深色令牌', () => {
     const theme = vuetify.theme.themes.value.subforgeDark
     expect(theme.dark).toBe(true)
-    expect(theme.colors.primary).toBe('#A5C08B') // --sf-accent
-    expect(theme.colors.secondary).toBe('#B7D2A0') // --sf-accent-hover
-    expect(theme.colors.success).toBe('#93CA83') // --sf-ok
-    expect(theme.colors.warning).toBe('#DBBC7F') // --sf-warn
-    expect(theme.colors.error).toBe('#f9837a') // --sf-danger
-    expect(theme.colors.info).toBe('#7CB6C8') // --sf-info
-    expect(theme.colors.background).toBe('#232B30') // --sf-bg
-    expect(theme.colors.surface).toBe('#323C41') // --sf-surface
-    expect(theme.colors['surface-variant']).toBe('#3B474D') // --sf-surface-raised
-    expect(theme.colors['on-surface']).toBe('#D8DCC6') // --sf-text
-    expect(theme.colors['on-background']).toBe('#D8DCC6') // --sf-text
+    expect(theme.colors.primary).toBe('#8BB8FF') // --sf-accent
+    expect(theme.colors.secondary).toBe('#B3D1FF') // --sf-accent-hover
+    expect(theme.colors.success).toBe('#5BD68A') // --sf-ok
+    expect(theme.colors.warning).toBe('#F5C451') // --sf-warn
+    expect(theme.colors.error).toBe('#FF9B90') // --sf-danger
+    expect(theme.colors.info).toBe('#6FD8E8') // --sf-info
+    expect(theme.colors.background).toBe('#0B1220') // --sf-bg
+    expect(theme.colors.surface).toBe('#162033') // --sf-surface
+    expect(theme.colors['surface-variant']).toBe('#1D2A40') // --sf-surface-raised
+    expect(theme.colors['on-surface']).toBe('#F1F5F9') // --sf-text
+    expect(theme.colors['on-background']).toBe('#F1F5F9') // --sf-text
   })
 
   it('两套主题都完整声明了 P3 语义映射的 11 个键', () => {

@@ -142,7 +142,7 @@ func cmdConvert(args []string) error {
 
 	timeout := time.Duration(timeoutSeconds) * time.Second
 
-	fetcher, err := newFetcher(cacheDir, timeout)
+	fetcher, err := newFetcher(cacheDir, timeout, nil)
 	if err != nil {
 		return err
 	}
@@ -294,16 +294,21 @@ func parsePair(kind, raw string) (transform.RegexPair, error) {
 }
 
 // newFetcher 按命令行参数构造 Fetcher；cacheDir 为空时不做磁盘缓存。
-func newFetcher(cacheDir string, timeout time.Duration) (*fetch.Fetcher, error) {
+// client 非空时使用调用方提供的出站客户端（serve 传入带私网防护的客户端）。
+func newFetcher(cacheDir string, timeout time.Duration, client *http.Client) (*fetch.Fetcher, error) {
 	opts := []fetch.Option{fetch.WithConfig(fetch.Config{
-		UserAgent: fetch.DefaultUserAgent(),
-		Timeout:   timeout,
-		Parallel:  8,
-		Retries:   2,
-		Backoff:   250 * time.Millisecond,
-		MaxBody:   64 << 20,
-		Redirects: 5,
+		UserAgent:         fetch.DefaultUserAgent(),
+		FallbackUserAgent: fetch.DefaultFallbackUserAgent(),
+		Timeout:           timeout,
+		Parallel:          8,
+		Retries:           2,
+		Backoff:           250 * time.Millisecond,
+		MaxBody:           64 << 20,
+		Redirects:         5,
 	})}
+	if client != nil {
+		opts = append(opts, fetch.WithHTTPClient(client))
+	}
 	if cacheDir != "" {
 		cache, err := fetch.Open(cacheDir)
 		if err != nil {

@@ -15,7 +15,7 @@ const unavailable = ref(false)
 
 function jobNameCn(name: string): string {
   if (name === 'rule-sources') return '规则源更新'
-  if (name === 'subscheck') return '订阅测活'
+  if (name === 'subscheck') return '订阅可用性检测'
   return name
 }
 
@@ -60,23 +60,14 @@ onMounted(() => {
 <template>
   <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="tasks" />
 
-  <v-alert type="info" variant="tonal" class="mb-4">
-    <div class="mb-1"><strong>这里是什么：</strong>这里只显示<strong>调度器最近执行过的任务记录</strong>（内存态，最多保留最近若干条，<strong>进程重启即清空</strong>）。它不是任务配置页。</div>
-    <div data-testid="task-retry-note" class="mb-1"><strong>失败会怎样：</strong>调度任务失败会自动重试 3 次（指数退避），仍失败才告警。</div>
-    <div class="mb-1"><strong>任务有哪些：</strong>正好两个——
-      <ul class="mb-1">
-        <li><strong>规则源更新</strong>（rule-sources）：按 cron 拉取 manifest.yaml 里所有规则源的最新版本，失败会重试 3 次（指数退避），仍失败则触发告警通道。默认 cron <code>0 4 * * *</code>（每天 04:00），配置键 <code>rules.update_cron</code>。</li>
-        <li><strong>订阅测活</strong>（subscheck）：按 cron 对所有启用机场的订阅地址做可用性检查。默认 cron <code>*/30 * * * *</code>（每 30 分钟），配置键 <code>subscheck.cron</code>。<strong>受 <code>subscheck.enabled</code> 设置控制</strong>，关掉后该任务不执行。</li>
-      </ul>
-    </div>
-    <div class="mb-1"><strong>cron 怎么改：</strong>改 cron 表达式要写配置项，本页没有编辑入口（<strong>不许自己加端点</strong>）。</div>
-    <div><strong>手动触发的后果：</strong>本页<strong>没有</strong>手动触发按钮。想立刻跑一次规则源更新，去「规则源」页点「立即更新」；想立刻测活，去「机场」页点「测活」。<strong>两条路径都会真的发起网络请求并写库</strong>。</div>
-  </v-alert>
+  <p class="text-body-2 text-medium-emphasis mb-3">
+    任务失败后自动重试 3 次；手动触发请前往规则源页或机场页。记录保存在内存中，服务重启后清空。
+  </p>
 
   <div v-if="unavailable" data-testid="scheduler-unavailable" class="mb-4">
     <v-card class="pa-4">
       <v-card-title>调度器未启用</v-card-title>
-      <v-card-text>当前进程没有装配调度器，定时任务不会执行。通常是启动时没带数据目录。</v-card-text>
+      <v-card-text>当前进程未启用调度器，定时任务不会执行。通常是因为启动时未指定数据目录。</v-card-text>
       <v-card-actions>
         <v-btn variant="text" data-testid="scheduler-retry" @click="load">重试</v-btn>
       </v-card-actions>
@@ -86,7 +77,7 @@ onMounted(() => {
   <AsyncSection
     :loading="loading"
     :error="error"
-    :empty="tasks.length === 0 ? { title: '还没有任务执行记录', detail: '任务按 cron 到点才会执行，记录保存在内存里，进程重启后这里会重新变空。也可以去「规则源」页点「立即更新」立刻产生一条。', action: { label: '去规则源', to: '/rule-sources' } } : false"
+    :empty="tasks.length === 0 ? { title: '暂无任务记录', detail: '任务按计划执行；记录保存在内存中，服务重启后清空。也可以在规则源页立即更新一次。', action: { label: '前往规则源', to: '/rule-sources' } } : false"
     empty-text="暂无任务记录"
     @retry="load"
   >

@@ -5,6 +5,7 @@ package api
 import (
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/parse"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/store"
@@ -126,7 +128,7 @@ func validateProxyGroup(name, typ, regex string, interval int) (string, error) {
 		}
 	}
 	if interval < 0 {
-		return "", errors.New("测活间隔不能为负数")
+		return "", errors.New("检测间隔不能为负数")
 	}
 	return t, nil
 }
@@ -188,6 +190,7 @@ func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
 			SubscriptionURL string `json:"subscription_url"`
 			Remarks         string `json:"remarks"`
 			Enabled         bool   `json:"enabled"`
+			Pipeline        string `json:"pipeline"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -198,6 +201,14 @@ func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
 		}
 		a, err := m.AddAirport(r.Context(), req.Name, req.SubscriptionURL, req.Remarks, req.Enabled)
 		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := m.SetAirportPipeline(r.Context(), a.ID, req.Pipeline); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if a, err = m.GetAirport(r.Context(), a.ID); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -230,6 +241,7 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 			SubscriptionURL string `json:"subscription_url"`
 			Remarks         string `json:"remarks"`
 			Enabled         bool   `json:"enabled"`
+			Pipeline        string `json:"pipeline"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -243,13 +255,26 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
+		if err := m.SetAirportPipeline(r.Context(), id, req.Pipeline); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if a, err = m.GetAirport(r.Context(), id); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"airport": a})
 	case http.MethodDelete:
+		detached, derr := m.UnbindAirportRuleSource(r.Context(), id)
+		if derr != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, derr)
+			return
+		}
 		if err := m.DeleteAirport(r.Context(), id); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rule_source": detached})
 	default:
 		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/PUT/DELETE"))
 	}
@@ -280,13 +305,16 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
 	case http.MethodPost:
 		var req struct {
-			Name      string `json:"name"`
-			Type      string `json:"type"`
-			Regex     string `json:"regex"`
-			URL       string `json:"url"`
-			Interval  int    `json:"interval"`
-			SortOrder int    `json:"sort_order"`
-			Source    string `json:"source"`
+			Name        string `json:"name"`
+			Type        string `json:"type"`
+			Regex       string `json:"regex"`
+			URL         string `json:"url"`
+			Interval    int    `json:"interval"`
+			SortOrder   int    `json:"sort_order"`
+			Source      string `json:"source"`
+			IncludeSelf bool   `json:"include_self"`
+			// IncludeAllSources 把方案里所有机场的节点并入该组。
+			IncludeAllSources bool `json:"include_all_sources"`
 			// v2 起分组是全局库，只按来源分层；profile_id 已下线，出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
@@ -302,7 +330,7 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		g, err := m.AddProxyGroupWithSource(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder, strings.TrimSpace(req.Source))
+		g, err := m.AddProxyGroupWithMembersAndFlags(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder, strings.TrimSpace(req.Source), nil, req.IncludeSelf, req.IncludeAllSources)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -332,12 +360,15 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"group": g})
 	case http.MethodPut:
 		var req struct {
-			Name      string `json:"name"`
-			Type      string `json:"type"`
-			Regex     string `json:"regex"`
-			URL       string `json:"url"`
-			Interval  int    `json:"interval"`
-			SortOrder int    `json:"sort_order"`
+			Name        string `json:"name"`
+			Type        string `json:"type"`
+			Regex       string `json:"regex"`
+			URL         string `json:"url"`
+			Interval    int    `json:"interval"`
+			SortOrder   int    `json:"sort_order"`
+			IncludeSelf *bool  `json:"include_self"`
+			// IncludeAllSources 省略时保持原值。
+			IncludeAllSources *bool `json:"include_all_sources"`
 			// v2 起分组不再归属方案，profile_id 出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
@@ -363,6 +394,18 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
+		if req.IncludeSelf != nil {
+			if err := m.SetProxyGroupIncludeSelf(r.Context(), id, *req.IncludeSelf); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if req.IncludeAllSources != nil {
+			if err := m.SetProxyGroupIncludeAllSources(r.Context(), id, *req.IncludeAllSources); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
 		g, err := m.GetProxyGroup(r.Context(), id)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -385,8 +428,18 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 // ruleView 是 GET /api/rules 的响应视图：在 store.Rule 基础上追加
 // group_name（由 rule_config 经 ListProxyGroups 映射得到；映射不上或 rule_config=0 时为空字符串）。
 type ruleView struct {
-	subforge.Rule
-	GroupName string `json:"group_name"`
+	ID         int64  `json:"id"`
+	RuleType   string `json:"rule_type"`
+	RuleParam  string `json:"rule_param"`
+	RuleConfig int64  `json:"rule_config"`
+	ResolveDNS bool   `json:"resolve_dns"`
+	Enabled    bool   `json:"enabled"`
+	SortOrder  int    `json:"sort_order"`
+	Source     string `json:"source"`
+	GroupName  string `json:"group_name"`
+	// raw/origin_key 体积大且只有少数编辑场景需要，默认不返回。
+	Raw       string `json:"raw,omitempty"`
+	OriginKey string `json:"origin_key,omitempty"`
 }
 
 // parseSourceFilter 解析 GET /api/rules、/api/groups 的来源过滤参数：
@@ -432,6 +485,36 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		q := r.URL.Query()
+		limit := 0
+		offset := 0
+		if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+			v, perr := strconv.Atoi(raw)
+			if perr != nil || v <= 0 || v > 500 {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("limit 需要 1-500 的整数"))
+				return
+			}
+			limit = v
+		}
+		if raw := strings.TrimSpace(q.Get("offset")); raw != "" {
+			v, perr := strconv.Atoi(raw)
+			if perr != nil || v < 0 {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("offset 需要非负整数"))
+				return
+			}
+			offset = v
+		}
+		var enabledFilter *bool
+		if raw, exists := q["enabled"]; exists && strings.TrimSpace(raw[0]) != "" {
+			v, perr := strconv.ParseBool(strings.TrimSpace(raw[0]))
+			if perr != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("enabled 需要布尔值"))
+				return
+			}
+			enabledFilter = &v
+		}
+		includeRaw := isTruthyQuery(q.Get("include_raw"))
+		search := strings.ToLower(strings.TrimSpace(q.Get("q")))
 		rules, err := m.ListRulesFiltered(r.Context(), filter)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -446,12 +529,42 @@ func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
 		}
 		views := make([]ruleView, 0, len(rules))
 		for _, ru := range rules {
-			views = append(views, ruleView{
-				Rule:      ru,
-				GroupName: groupNameByID[ru.RuleConfig],
-			})
+			if enabledFilter != nil && ru.Enabled != *enabledFilter {
+				continue
+			}
+			groupName := groupNameByID[ru.RuleConfig]
+			if search != "" {
+				haystack := strings.ToLower(strings.Join([]string{ru.RuleType, ru.RuleParam, ru.Source, groupName}, " "))
+				if !strings.Contains(haystack, search) {
+					continue
+				}
+			}
+			v := ruleView{
+				ID: ru.ID, RuleType: ru.RuleType, RuleParam: ru.RuleParam,
+				RuleConfig: ru.RuleConfig, ResolveDNS: ru.ResolveDNS,
+				Enabled: ru.Enabled, SortOrder: ru.SortOrder, Source: ru.Source,
+				GroupName: groupName,
+			}
+			if includeRaw {
+				v.Raw = ru.Raw
+				v.OriginKey = ru.OriginKey
+			}
+			views = append(views, v)
 		}
-		s.writeJSON(w, http.StatusOK, map[string]any{"rules": views})
+		total := len(views)
+		if limit > 0 {
+			if offset > total {
+				offset = total
+			}
+			end := offset + limit
+			if end > total {
+				end = total
+			}
+			views = views[offset:end]
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"rules": views, "total": total, "limit": limit, "offset": offset,
+		})
 	case http.MethodPost:
 		var req struct {
 			RuleType   string `json:"rule_type"`
@@ -657,7 +770,7 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		t, err := m.GetSubToken(r.Context(), token)
 		if err != nil {
-			s.writeAPIError(w, r, http.StatusNotFound, err)
+			s.writeAPIError(w, r, http.StatusNotFound, errors.New("令牌不存在"))
 			return
 		}
 		if err := s.fillTokenProfileName(r.Context(), m, t); err != nil {
@@ -697,7 +810,7 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := m.UpdateSubToken(r.Context(), token, upd); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				s.writeAPIError(w, r, http.StatusNotFound, errors.New("令牌 "+token+" 不存在"))
+				s.writeAPIError(w, r, http.StatusNotFound, errors.New("令牌不存在"))
 				return
 			}
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -734,6 +847,37 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 // auth 中间件必须豁免 /subscribe，否则 query 上的 sub_token 会被拿去和
 // 服务端令牌比对，永远 401。
 // --- /api/self-nodes ---
+
+// handleAPISelfSourcePipeline 读取/设置自建节点集合的来源级处理管线。
+func (s *Server) handleAPISelfSourcePipeline(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		pipeline, err := m.GetSelfSourcePipeline(r.Context())
+		if err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"pipeline": pipeline})
+	case http.MethodPut:
+		var req struct {
+			Pipeline string `json:"pipeline"`
+		}
+		if !s.decodeBody(w, r, &req) {
+			return
+		}
+		if err := m.SetSelfSourcePipeline(r.Context(), req.Pipeline); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"pipeline": req.Pipeline})
+	default:
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, errors.New("仅支持 GET/PUT"))
+	}
+}
 
 func (s *Server) handleAPISelfNodes(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
@@ -835,7 +979,8 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	subTok, err := m.GetSubToken(r.Context(), token)
 	if err != nil {
-		s.writeAPIError(w, r, http.StatusNotFound, err)
+		// 不回显令牌值：订阅令牌本身就是凭据，错误文案与日志都不该二次扩散。
+		s.writeAPIError(w, r, http.StatusNotFound, errors.New("订阅令牌不存在"))
 		return
 	}
 
@@ -860,6 +1005,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
 	if target == "" {
 		target = strings.TrimSpace(subTok.Target)
+	}
+	if target == "" && profile != nil {
+		target = strings.TrimSpace(profile.Target)
 	}
 	if target == "" {
 		target = "clash.meta"
@@ -896,9 +1044,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if len(includeList) == 0 {
 		includeList = splitListQuery(subTok.Include)
 	}
+	if len(includeList) == 0 && profile != nil {
+		includeList = splitListQuery(profile.Include)
+	}
 	excludeList := splitListQuery(r.URL.Query().Get("exclude"))
 	if len(excludeList) == 0 {
 		excludeList = splitListQuery(subTok.Exclude)
+	}
+	if len(excludeList) == 0 && profile != nil {
+		excludeList = splitListQuery(profile.Exclude)
 	}
 
 	// 1. 启用的订阅源（ListAirports 已按 sort_order, id 排序）。
@@ -907,10 +1061,19 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, http.StatusInternalServerError, err)
 		return
 	}
-	var urls []string
+	// 方案可限制来源：nil = 全部启用来源；空数组 = 该类来源一个都不用。
+	airportFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.AirportIDs })
+	selfFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.SelfNodeIDs })
+
+	var sources []convert.Source
+	usedAirports := make([]subforge.Airport, 0, len(airports))
 	for _, a := range airports {
+		if airportFilter != nil && !airportFilter[a.ID] {
+			continue
+		}
 		if a.Enabled && strings.TrimSpace(a.SubscriptionURL) != "" {
-			urls = append(urls, a.SubscriptionURL)
+			sources = append(sources, convert.Source{Name: a.Name, URLs: []string{a.SubscriptionURL}, Pipeline: a.Pipeline})
+			usedAirports = append(usedAirports, a)
 		}
 	}
 
@@ -929,11 +1092,14 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 		defer os.RemoveAll(tmpDir)
 		for _, n := range selfNodes {
+			if selfFilter != nil && !selfFilter[n.ID] {
+				continue
+			}
 			if !n.Enabled || strings.TrimSpace(n.Link) == "" {
 				continue
 			}
 			fp := filepath.Join(tmpDir, fmt.Sprintf("self-%d.txt", n.ID))
-			if err := os.WriteFile(fp, []byte(n.Link), 0o600); err != nil {
+			if err := os.WriteFile(fp, []byte(applySelfNodeName(n.Link, n.Name)), 0o600); err != nil {
 				s.writeAPIError(w, r, http.StatusInternalServerError, err)
 				return
 			}
@@ -941,7 +1107,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(urls) == 0 && len(selfNodeFiles) == 0 {
+	if len(selfNodeFiles) > 0 {
+		selfPipeline, perr := m.GetSelfSourcePipeline(r.Context())
+		if perr != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, perr)
+			return
+		}
+		sources = append(sources, convert.Source{Name: "自建节点", Files: selfNodeFiles, Pipeline: selfPipeline})
+	}
+	if len(sources) == 0 {
 		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有启用的订阅或自建节点"))
 		return
 	}
@@ -960,12 +1134,18 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		groupName[g.ID] = g.Name
 		rg := render.Group{
-			Name:    g.Name,
-			Type:    g.Type,
-			Test:    g.URL,
-			Options: render.UrlTestOptions{Interval: g.Interval},
+			Name:              g.Name,
+			Type:              g.Type,
+			Test:              g.URL,
+			Options:           render.UrlTestOptions{Interval: g.Interval},
+			IncludeSelf:       g.IncludeSelf,
+			IncludeAllSources: g.IncludeAllSources,
 		}
-		if re := strings.TrimSpace(g.Regex); re != "" {
+		// 机场自带分组按成员原样渲染；成员可能是节点名，也可能是子组名，
+		// ResolveGroups 会保留已知组名、展开正则/节点名。手工分组仍走 Regex。
+		if len(g.Members) > 0 {
+			rg.Proxies = append([]string{}, g.Members...)
+		} else if re := strings.TrimSpace(g.Regex); re != "" {
 			rg.Proxies = []string{re}
 		}
 		renderGroups = append(renderGroups, rg)
@@ -1016,17 +1196,46 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 规则源产物里的 rule-providers：绑定源 + 已启用的自定义 provider 一起渲染，
+	// 否则 RULE-SET 规则找不到规则集。同名 provider 先出现的源优先。
+	var ruleProviders []model.RuleProvider
+	if profile != nil && len(profile.RuleSources) > 0 {
+		rp, rpWarns := m.RuleSourceRuleProviders(r.Context(), profile.RuleSources)
+		ruleProviders = append(ruleProviders, rp...)
+		sourceWarns = append(sourceWarns, rpWarns...)
+	}
+	if all, perr := m.DB().ListRuleProviders(r.Context()); perr == nil {
+		for _, p := range all {
+			if !p.Enabled || p.Source != "" {
+				continue
+			}
+			var raw map[string]any
+			if json.Unmarshal([]byte(p.RawJSON), &raw) == nil && len(raw) > 0 {
+				ruleProviders = append(ruleProviders, model.RuleProvider{Name: p.Name, Raw: raw})
+			}
+		}
+	}
+	uniqueProviders := make([]model.RuleProvider, 0, len(ruleProviders))
+	seenProvider := map[string]bool{}
+	for _, p := range ruleProviders {
+		if p.Name == "" || seenProvider[p.Name] {
+			continue
+		}
+		seenProvider[p.Name] = true
+		uniqueProviders = append(uniqueProviders, p)
+	}
+
 	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
 	params := convert.Params{
-		Target:   target,
-		URLs:     urls,
-		Files:    selfNodeFiles,
-		Groups:   renderGroups,
-		Rules:    renderRules,
-		Pipeline: pipeline,
-		Config:   configName,
-		Include:  includeList,
-		Exclude:  excludeList,
+		Target:        target,
+		Sources:       sources,
+		Groups:        renderGroups,
+		Rules:         renderRules,
+		RuleProviders: uniqueProviders,
+		Pipeline:      pipeline,
+		Config:        configName,
+		Include:       includeList,
+		Exclude:       excludeList,
 		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
 		// 规则源产物注入后模板规则必须整层停用，否则产物规则排在模板 MATCH 之后全成死规则。
 		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,
@@ -1050,10 +1259,10 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// 从未采集成功的机场流量是零值，混进来会把 min/max/avg 拉偏。
 	// 读策略失败（DB 故障）时静默跳过——订阅本身仍然要能生成。
 	if strat, err := m.GetTrafficStrategy(r.Context()); err == nil {
-		usages := make([]traffic.Usage, 0, len(airports))
-		nodeCounts := make([]int, 0, len(airports))
-		for _, a := range airports {
-			if !a.Enabled || strings.TrimSpace(a.SubscriptionURL) == "" || a.TrafficAt <= 0 {
+		usages := make([]traffic.Usage, 0, len(usedAirports))
+		nodeCounts := make([]int, 0, len(usedAirports))
+		for _, a := range usedAirports {
+			if a.TrafficAt <= 0 {
 				continue
 			}
 			usages = append(usages, traffic.Usage{
@@ -1069,6 +1278,83 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
+}
+
+// applySelfNodeName 把控制台填写的名称写进分享链接。
+//
+// 自建节点的「名称」是用户在界面上明确配置的输出名，链接自带的 fragment/ps
+// 只应作为兜底；直接写原始链接会让界面上的名称完全失效（VMess 链接的 ps
+// 常为空，输出甚至会出现无名字节点）。URI 类链接写 fragment，vmess 写
+// base64 JSON 的 ps 字段。
+func applySelfNodeName(link, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return link
+	}
+	if strings.HasPrefix(strings.ToLower(link), "vmess://") {
+		if out, ok := vmessWithName(link, name); ok {
+			return out
+		}
+		return link
+	}
+	base := link
+	if i := strings.IndexByte(base, '#'); i >= 0 {
+		base = base[:i]
+	}
+	escaped := strings.ReplaceAll(url.PathEscape(name), "+", "%2B")
+	return base + "#" + escaped
+}
+
+// vmessWithName 解出 vmess 链接的 Base64 JSON，写入 ps 后重新编码。
+// 链接不是合法 vmess 时返回 ok=false，由调用方保留原文（校验在入库时已完成）。
+func vmessWithName(link, name string) (string, bool) {
+	raw := strings.TrimSpace(link[len("vmess://"):])
+	if i := strings.IndexByte(raw, '#'); i >= 0 {
+		raw = raw[:i]
+	}
+	raw = strings.TrimSpace(raw)
+	encodings := []*base64.Encoding{
+		base64.StdEncoding, base64.RawStdEncoding,
+		base64.URLEncoding, base64.RawURLEncoding,
+	}
+	var decoded []byte
+	ok := false
+	for _, enc := range encodings {
+		if b, err := enc.DecodeString(raw); err == nil {
+			decoded, ok = b, true
+			break
+		}
+	}
+	if !ok {
+		return "", false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(decoded, &obj); err != nil {
+		return "", false
+	}
+	obj["ps"] = name
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return "", false
+	}
+	return "vmess://" + base64.StdEncoding.EncodeToString(b), true
+}
+
+// idFilter 把方案里的来源 id 数组转成查找表。
+// nil = 未限制（返回 nil，调用方按“全部启用来源”处理）；空数组 = 明确不使用。
+func idFilter(p *subforge.Profile, pick func(*subforge.Profile) []int64) map[int64]bool {
+	if p == nil {
+		return nil
+	}
+	ids := pick(p)
+	if ids == nil {
+		return nil
+	}
+	out := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
 }
 
 // subscribeLayers 返回订阅组装要用的分组层与规则层顺序：

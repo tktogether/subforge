@@ -39,13 +39,14 @@ chmod +x subforge-linux-amd64 && ./subforge-linux-amd64 version
 works:
 
 ```sh
-docker run -d --name subforge -p 25500:25500 -v subforge-data:/data \
+docker run -d --name subforge -p 25500:25500 -v "$(pwd)/data:/data" \
   ghcr.io/tktogether/subforge:latest
 ```
 
 No `-listen` or `-data-dir` is needed: `SUBFORGE_LISTEN=0.0.0.0:25500` makes the published port reach the
 container, and `SUBFORGE_DATA_DIR=/data` enables subscription management by default, with SQLite stored in the
-mounted `/data` volume. Add `-e SUBFORGE_TOKEN=<YOUR_TOKEN>` before exposing the service. `:latest` uses an
+host directory `./data`. To back up or migrate, copy that directory. Add `-e SUBFORGE_TOKEN=<YOUR_TOKEN>`
+before exposing the service. `:latest` uses an
 alpine runtime layer, ships both `linux/amd64` and `linux/arm64`, and carries the version string and root
 certificates; `:latest-scratch` is smaller but has no root certificates and only works with `http://` upstreams
 or local files. To build the image yourself, use
@@ -119,16 +120,23 @@ do not have to repeat flags:
 | `SUBFORGE_TOKEN` | `-token` |
 | `SUBFORGE_CONFIG` | `-config` (an INI file, not a directory) |
 | `SUBFORGE_DATA_DIR` | `-data-dir` |
+| `SUBFORGE_ALLOW_PRIVATE_NETWORK` | `-allow-private-network` (allow private/loopback outbound fetches, off by default) |
 
 Precedence, lowest first: **environment variable < command-line parameter < the matching key in the INI
 `[subforge]` section**. The Dockerfiles in this repository preset `SUBFORGE_LISTEN` and `SUBFORGE_DATA_DIR`;
+For SSRF protection the server only fetches public http/https URLs by default. Local fixtures, intranet
+subscriptions and LAN rule sources require `-allow-private-network` (or `SUBFORGE_ALLOW_PRIVATE_NETWORK=1`);
+remote templates, rulesets and alert webhooks follow the same policy.
+
 the old name `SUBFORGE_DATA` is deprecated — a wrong name raises no error, it silently falls back to
 "subscription management disabled".
 
 The User-Agent used when fetching upstream subscriptions can be overridden with `SUBFORGE_USER_AGENT`; the
-default is `mihomo/1.19.31 SubForge/<version>`. Many providers decide on the User-Agent what to return: only
-when it looks like a Clash core do they send the full configuration with `Subscription-Userinfo`, otherwise
-they hand back a bare list of share links — no traffic information, no provider-supplied rules or rulesets.
+default is `mihomo/1.19.31 SubForge/<version>`. If a response has no traffic header, SubForge retries once
+with `clash.meta/1.18.0` to request the full configuration. Many providers decide on the User-Agent what to
+return: only when it looks like a Clash core do they send the full configuration with
+`Subscription-Userinfo`, otherwise they hand back a bare list of share links — no traffic information, no
+provider-supplied rules or rulesets.
 
 ## Supported Target Formats
 

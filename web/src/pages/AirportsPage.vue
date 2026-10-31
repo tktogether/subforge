@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   endpoints,
   type Airport,
   type AirportInput,
   type ImportRulesOutcome,
+  type ImportRulesResult,
   type SubscheckResult,
+  type NodePreviewResult,
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { pageHelp, fieldHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import NodePreviewDialog from '../components/NodePreviewDialog.vue'
 import { formatBytes, formatDuration, formatExpire } from '../format'
 
 type AirportRow = Airport & {
@@ -39,53 +42,76 @@ const emptyState = computed(() => help.emptyState)
 // align:'end' 让数字列（节点数 / 流量 / 到期时间 / 操作）右对齐，并吃到 tabular-nums。
 // 操作列额外挂 sf-table__actions，供覆写层做「单行不折 + 紧凑按钮」。
 const headers = [
-  { key: 'name', title: '名称', minWidth: 88 },
+  { key: 'name', title: '名称', minWidth: 140 },
   { key: 'subscription_url', title: '订阅地址' },
   { key: 'enabled', title: '启用', minWidth: 64 },
   { key: 'node_count', title: '节点数', align: 'end' as const, minWidth: 72 },
-  { key: 'traffic', title: '流量(已用/总量)', align: 'end' as const, minWidth: 128 },
-  { key: 'expire', title: '到期时间', align: 'end' as const, minWidth: 96 },
-  { key: 'updated', title: '更新时间', minWidth: 152 },
-  { key: 'status', title: '状态', minWidth: 72 },
+  { key: 'traffic', title: '流量 / 到期', align: 'end' as const, minWidth: 152 },
+  { key: 'status', title: '采集状态', minWidth: 150 },
   {
     key: 'actions',
     title: '操作',
     align: 'end' as const,
-    minWidth: 288,
+    minWidth: 176,
     cellProps: { class: 'sf-table__actions' },
   },
 ]
 
 const dialog = ref(false)
 const editing = ref<AirportRow | null>(null)
-const draft = ref<AirportInput>({ name: '', subscription_url: '', remarks: '', enabled: true })
+const draft = ref<AirportInput>({ name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '' })
+
+const pipelineOptions = ref<{ title: string; value: string }[]>([])
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const previewError = ref('')
+const previewResult = ref<NodePreviewResult | null>(null)
+
+async function previewProcess(): Promise<void> {
+  if (editing.value === null) return
+  previewOpen.value = true
+  previewLoading.value = true
+  previewError.value = ''
+  previewResult.value = null
+  try {
+    previewResult.value = await endpoints.previewAirportProcess(editing.value.id, draft.value.pipeline ?? '')
+  } catch (err) {
+    previewError.value = errorMessage(err)
+  } finally {
+    previewLoading.value = false
+  }
+}
+const pipelineItems = computed(() => {
+  const items = [...pipelineOptions.value]
+  const current = draft.value.pipeline ?? ''
+  if (current !== '' && !items.some((i) => i.value === current)) {
+    items.unshift({ title: current, value: current })
+  }
+  return items
+})
+
+async function loadPipelineOptions(): Promise<void> {
+  try {
+    const list = await endpoints.pipelines('')
+    pipelineOptions.value = list.filter((p) => p.enabled).map((p) => ({ title: p.name, value: p.name }))
+  } catch {
+    pipelineOptions.value = []
+  }
+}
 
 const confirmOpen = ref(false)
 const pendingDelete = ref<AirportRow | null>(null)
 
-const withRules = ref(false)
+const page = ref(1)
+const itemsPerPage = ref(10)
+const pageCount = computed(() => Math.max(1, Math.ceil(rows.value.length / itemsPerPage.value)))
+watch([rows, itemsPerPage], () => {
+  page.value = Math.min(page.value, pageCount.value)
+})
 
-// D-06：该开关状态存在服务端（airport.with_rules），挂载时读一次回填，
-// 刷新页面 / 换标签页后仍保持；切换时写回服务端。
-async function loadSettings(): Promise<void> {
-  try {
-    const r = await endpoints.listSettings()
-    const item = r.settings.find((s) => s.key === 'airport.with_rules')
-    if (item) {
-      withRules.value = item.value === 'true'
-    }
-  } catch {
-    // 读设置失败（离线/权限受限）保持本地默认值，不阻塞页面
-  }
-}
-
-async function saveWithRules(value: boolean | null): Promise<void> {
-  const on = value === true
-  try {
-    await endpoints.updateSettings({ 'airport.with_rules': on ? 'true' : 'false' })
-  } catch (err) {
-    notify(errorMessage(err), 'error')
-  }
+function setPageSize(next: number): void {
+  itemsPerPage.value = next
+  page.value = 1
 }
 
 const toggling = ref<number | null>(null)
@@ -117,7 +143,12 @@ const refreshResults = ref<import('../api/endpoints').TrafficRefreshResult[]>([]
 const checking = ref(false)
 const checkResults = ref<SubscheckResult[]>([])
 const checkError = ref('')
-const checkSummary = ref<{ ok: number; fail: number; total: number } | null>(null)
+const checkAt = ref('')
+const checkSummary = computed(() => {
+  const total = checkResults.value.length
+  const ok = checkResults.value.filter((r) => r.ok).length
+  return { ok, fail: total - ok, total }
+})
 
 async function load(): Promise<void> {
   loading.value = true
@@ -132,18 +163,26 @@ async function load(): Promise<void> {
 }
 
 function blank(): AirportInput {
-  return { name: '', subscription_url: '', remarks: '', enabled: true }
+  return { name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '' }
 }
 
 function openCreate(): void {
   draft.value = blank()
   editing.value = null
+  void loadPipelineOptions()
   dialog.value = true
 }
 
 function openEdit(row: AirportRow): void {
-  draft.value = { name: row.name, subscription_url: row.subscription_url, remarks: row.remarks, enabled: row.enabled }
+  draft.value = {
+    name: row.name,
+    subscription_url: row.subscription_url,
+    remarks: row.remarks,
+    enabled: row.enabled,
+    pipeline: row.pipeline ?? '',
+  }
   editing.value = row
+  void loadPipelineOptions()
   dialog.value = true
 }
 
@@ -185,8 +224,11 @@ async function doDelete(): Promise<void> {
 
 async function refreshOne(row: AirportRow): Promise<void> {
   try {
-    const r = await endpoints.refreshAirport(row.id)
+    const r = await endpoints.refreshAirport(row.id, true)
     refreshResults.value = [r.result]
+    if (r.import) {
+      imports.value = [r.import]
+    }
     notify(r.result.ok ? '刷新成功' : r.result.err, r.result.ok ? 'ok' : 'error')
     await load()
   } catch (err) {
@@ -199,6 +241,8 @@ async function refreshOne(row: AirportRow): Promise<void> {
 const importDialog = ref(false)
 const importTarget = ref<AirportRow | null>(null)
 const importCreateGroups = ref(true)
+// 手动导入的结果保留在页面上：snackbar 会被上一条“已新增”占用/抢时间，用户可能看不到。
+const manualImport = ref<{ name: string; result: ImportRulesResult } | null>(null)
 
 function openImportDialog(row: AirportRow): void {
   importTarget.value = row
@@ -216,10 +260,13 @@ async function confirmImportRules(): Promise<void> {
     const r = await endpoints.importAirportRules(row.id, {
       create_groups: importCreateGroups.value,
     })
-    let text = '已导入规则：新增 ' + r.rules_added + '，跳过 ' + r.rules_skipped
+    let text = (r.rule_source_rules ?? 0) > 0
+      ? '规则源已更新：' + r.rule_source_rules + ' 条'
+      : '未发现可保存的规则'
     if (r.groups_created && r.groups_created > 0) {
       text += '，新建分组 ' + r.groups_created
     }
+    manualImport.value = { name: row.name, result: r }
     notify(text, 'ok')
     if (r.warnings && r.warnings.length > 0) {
       notify(r.warnings[0], 'info')
@@ -241,13 +288,10 @@ async function checkAll(): Promise<void> {
 async function runCheck(ids?: number[]): Promise<void> {
   checking.value = true
   checkError.value = ''
-  checkSummary.value = null
   try {
     const r = await endpoints.checkAirports(ids)
     checkResults.value = r.results
-    // D-24：测活结束后给出结论（全部测活与单机场测活都显示）。
-    const ok = r.results.filter((x) => x.ok).length
-    checkSummary.value = { ok, fail: r.results.length - ok, total: r.results.length }
+    checkAt.value = r.at ?? ''
   } catch (err) {
     checkError.value = errorMessage(err)
   } finally {
@@ -259,7 +303,7 @@ async function refreshAll(): Promise<void> {
   refreshing.value = true
   refreshError.value = ''
   try {
-    const r = await endpoints.refreshAllAirports(withRules.value)
+    const r = await endpoints.refreshAllAirports(true)
     refreshSummary.value = { ok: r.ok, fail: r.fail }
     imports.value = r.imports ?? []
     refreshResults.value = r.results ?? []
@@ -284,6 +328,11 @@ function expireText(row: AirportRow): string {
   return formatExpire(row.expire)
 }
 
+function formatCheckAt(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false })
+}
+
 function relativeTime(ts: number): string {
   const diffMs = Date.now() - ts * 1000
   const minutes = Math.max(0, Math.floor(diffMs / 60000))
@@ -299,7 +348,7 @@ function relativeTime(ts: number): string {
 
 onMounted(() => {
   void load()
-  void loadSettings()
+  void loadPipelineOptions()
   void restoreLastCheck()
 })
 
@@ -307,6 +356,7 @@ async function restoreLastCheck(): Promise<void> {
   try {
     const r = await endpoints.lastAirportCheck()
     checkResults.value = r.results
+    checkAt.value = r.at ?? ''
   } catch {
     // 恢复失败保持静默
   }
@@ -319,20 +369,53 @@ async function restoreLastCheck(): Promise<void> {
       <template #actions>
         <v-btn data-testid="add" color="primary" prepend-icon="mdi-plus" @click="openCreate">新增</v-btn>
         <v-btn data-testid="refresh" variant="tonal" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
-        <v-btn data-testid="refresh-traffic-all" variant="tonal" prepend-icon="mdi-traffic-light" :loading="refreshing" @click="refreshAll">刷新全部流量</v-btn>
-        <v-btn data-testid="check-all" variant="tonal" prepend-icon="mdi-pulse" :loading="checking" @click="checkAll">测活全部</v-btn>
+        <v-btn data-testid="refresh-traffic-all" variant="tonal" prepend-icon="mdi-traffic-light" :loading="refreshing" @click="refreshAll">刷新全部</v-btn>
+        <v-btn data-testid="check-all" variant="tonal" prepend-icon="mdi-pulse" :loading="checking" @click="checkAll">检测全部</v-btn>
       </template>
     </PageHeader>
 
-    <div class="airports-page__toolbar">
-        <v-switch v-model="withRules" data-testid="with-rules" label="刷新时同时导入规则" density="compact"
-          :hint="fieldHelp('airport.with_rules')?.hint ?? ''" persistent-hint class="mb-2"
-          @update:model-value="saveWithRules"></v-switch>
-    </div>
+    <v-alert v-if="manualImport" data-testid="manual-import-result" type="success" variant="tonal" closable
+      class="mb-4" @click:close="manualImport = null">
+      {{ manualImport.name }}：
+      <template v-if="(manualImport.result.rule_source_rules ?? 0) > 0">
+        规则源已更新 {{ manualImport.result.rule_source_rules }} 条
+      </template>
+      <template v-else>未发现可保存的规则</template>
+      <span v-if="(manualImport.result.groups_created ?? 0) > 0">
+        ，新建分组 {{ manualImport.result.groups_created }}
+      </span>
+    </v-alert>
 
     <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
       <template v-slot:default>
-        <v-data-table :headers="headers" :items="rows" data-testid="table" class="airports-table">
+        <div class="airports-table-bar">
+          <span class="text-caption text-medium-emphasis">共 {{ rows.length }} 条</span>
+          <v-spacer />
+          <v-select
+            :model-value="itemsPerPage"
+            :items="[10, 25, 50, 100]"
+            label="每页条数"
+            density="compact"
+            variant="outlined"
+            hide-details
+            data-testid="airport-page-size"
+            class="airports-page-size"
+            @update:model-value="setPageSize"
+          />
+        </div>
+        <v-data-table
+          :page="page"
+          :items-per-page="itemsPerPage"
+          :items-per-page-options="[10, 25, 50, 100]"
+          :headers="headers"
+          :items="rows"
+          data-testid="table"
+          class="airports-table"
+        >
+          <template #item.name="{ item }">
+            <div class="airport-name" :title="item.subscription_url">{{ item.name }}</div>
+            <div class="airport-pipeline" data-testid="airport-pipeline-text">处理：{{ item.pipeline || '不处理' }}</div>
+          </template>
           <template #item.subscription_url="{ value }">
             <span class="airport-mono airport-truncate" :title="value">{{ value }}</span>
           </template>
@@ -347,33 +430,35 @@ async function restoreLastCheck(): Promise<void> {
           <template #item.traffic="{ item }">
             <div class="airport-traffic">
               <span :data-testid="item.total <= 0 ? 'traffic-unknown' : 'traffic-value'">{{ trafficText(item) }}</span>
+              <span class="airport-expire">
+                到期：<span :data-testid="item.expire <= 0 ? 'expire-unknown' : 'expire-value'">{{ expireText(item) }}</span>
+              </span>
               <span v-if="item.traffic_err !== ''" data-testid="traffic-error" class="airport-traffic-err" :title="item.traffic_err + ' · 余额仍是上次成功值，没有被清零'">余额未更新</span>
             </div>
           </template>
-          <template #item.expire="{ item }">
-            <span :data-testid="item.expire <= 0 ? 'expire-unknown' : 'expire-value'">{{ expireText(item) }}</span>
-          </template>
-          <template #item.updated="{ item }">
-            <span v-if="item.traffic_at <= 0" data-testid="traffic-at">从未采集</span>
-            <span v-else data-testid="traffic-stale">上次成功：{{ formatExpire(item.traffic_at) }}（{{ relativeTime(item.traffic_at) }}前）</span>
-          </template>
           <template #item.status="{ item }">
-            <span v-if="item.traffic_err !== ''" data-testid="traffic-err" class="sf-status airport-status-err" :title="item.traffic_err">
-              <span class="sf-status__dot sf-status__dot--danger"></span>
-              <span>采集失败</span>
-            </span>
-            <span v-else data-testid="traffic-status-ok" class="sf-status">
-              <span class="sf-status__dot sf-status__dot--ok"></span>
-              <span>正常</span>
-            </span>
+            <div class="airport-status-cell">
+              <span v-if="item.traffic_err !== ''" data-testid="traffic-err" class="sf-status airport-status-err" :title="item.traffic_err">
+                <span class="sf-status__dot sf-status__dot--danger"></span>
+                <span>采集失败</span>
+              </span>
+              <span v-else data-testid="traffic-status-ok" class="sf-status">
+                <span class="sf-status__dot sf-status__dot--ok"></span>
+                <span>正常</span>
+              </span>
+              <span v-if="item.traffic_at <= 0" data-testid="traffic-at" class="airport-status-time">尚未采集</span>
+              <span v-else data-testid="traffic-stale" class="airport-status-time" :title="'上次成功：' + formatExpire(item.traffic_at)">
+                上次成功：{{ relativeTime(item.traffic_at) }}前
+              </span>
+            </div>
           </template>
           <template #item.actions="{ item }">
             <div class="airport-actions">
-              <v-btn size="small" variant="text" data-testid="edit" @click="openEdit(item)">编辑</v-btn>
-              <v-btn size="small" variant="text" color="error" data-testid="delete" @click="askDelete(item)">删除</v-btn>
-              <v-btn size="small" variant="text" data-testid="refresh-traffic" @click="refreshOne(item)">刷新流量</v-btn>
-              <v-btn size="small" variant="text" data-testid="import-rules" @click="openImportDialog(item)">导入规则</v-btn>
-              <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">测活</v-btn>
+              <v-btn icon="mdi-pencil" size="small" variant="text" title="编辑机场" aria-label="编辑机场" data-testid="edit" @click="openEdit(item)" />
+              <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" title="删除机场" aria-label="删除机场" data-testid="delete" @click="askDelete(item)" />
+              <v-btn icon="mdi-refresh" size="small" variant="text" title="刷新机场" aria-label="刷新机场" data-testid="refresh-traffic" @click="refreshOne(item)" />
+              <v-btn icon="mdi-file-sync-outline" size="small" variant="text" title="更新规则源" aria-label="更新规则源" data-testid="import-rules" @click="openImportDialog(item)" />
+              <v-btn icon="mdi-pulse" size="small" variant="text" title="检测订阅可用性" aria-label="检测订阅可用性" data-testid="check-one" @click="checkOne(item)" />
             </div>
           </template>
         </v-data-table>
@@ -390,9 +475,9 @@ async function restoreLastCheck(): Promise<void> {
       <div v-if="imports.length > 0" data-testid="imports" class="airports-page__imports">
         <div v-for="imp in imports" :key="imp.airport_id + '-' + imp.name" class="airports-page__import">
           <span>{{ imp.name }}</span>
-          <span>新增 {{ imp.rules_added }}</span>
-          <span>跳过 {{ imp.rules_skipped }}</span>
+          <span>规则源 {{ imp.rule_source_rules ?? 0 }} 条</span>
           <span>提供者 {{ imp.providers_added }}</span>
+          <span v-if="(imp.groups_created ?? 0) > 0">新建分组 {{ imp.groups_created }}</span>
           <span v-if="imp.err !== ''" class="text-error">{{ imp.err }}</span>
         </div>
       </div>
@@ -407,33 +492,68 @@ async function restoreLastCheck(): Promise<void> {
       </div>
 
       <div v-if="checkError !== ''" data-testid="check-error" class="text-error">{{ checkError }}</div>
-      <div v-if="checkSummary !== null" data-testid="check-summary" class="airports-page__summary">
-        测活完成：{{ checkSummary.ok }} 个可用 / {{ checkSummary.fail }} 个失败（共 {{ checkSummary.total }} 个）
-      </div>
-      <div v-if="checkResults.length > 0" data-testid="check-results" class="airports-page__checks">
-        <div v-for="res in checkResults" :key="res.url" data-testid="check-result-row" class="airports-page__check">
-          <span>{{ res.url }}</span>
-          <span v-if="res.ok" class="text-success">可用</span>
-          <span v-else class="text-error">不可用</span>
-          <span v-if="res.ok">{{ formatDuration(res.latency) }}</span>
-          <span v-if="!res.ok && res.err !== ''" class="text-error">{{ res.err }}</span>
+      <section v-if="checkResults.length > 0" data-testid="check-results" class="check-panel" aria-live="polite">
+        <header class="check-panel__head">
+          <div>
+            <div class="check-panel__title">可用性检测结果</div>
+            <div v-if="checkAt !== ''" class="check-panel__time">检测时间：{{ formatCheckAt(checkAt) }}</div>
+          </div>
+          <div data-testid="check-summary" class="check-panel__stats">
+            <span class="check-stat check-stat--ok"><span class="check-stat__dot"></span>可用 {{ checkSummary.ok }}</span>
+            <span class="check-stat check-stat--fail"><span class="check-stat__dot"></span>不可用 {{ checkSummary.fail }}</span>
+            <span class="check-stat">共 {{ checkSummary.total }}</span>
+          </div>
+        </header>
+        <div class="check-list">
+          <div
+            v-for="(res, index) in checkResults"
+            :key="res.url + '-' + index"
+            data-testid="check-result-row"
+            class="check-item"
+            :class="res.ok ? 'check-item--ok' : 'check-item--fail'"
+          >
+            <div class="check-item__line">
+              <span class="check-item__status"><span class="check-stat__dot"></span>{{ res.ok ? '可用' : '不可用' }}</span>
+              <span class="check-item__name" :title="res.url">{{ res.name || res.url }}</span>
+              <span class="check-item__meta">
+                <template v-if="res.ok">HTTP {{ res.status_code }} · {{ formatDuration(res.latency_ms ?? 0) }}</template>
+                <template v-else-if="res.status_code > 0">HTTP {{ res.status_code }}</template>
+                <template v-else>连接失败</template>
+              </span>
+            </div>
+            <div v-if="!res.ok && res.err !== ''" class="check-item__error" :title="res.err">{{ res.err }}</div>
+          </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <v-dialog v-model="dialog" max-width="520">
       <v-card>
         <v-card-title>{{ editing === null ? '新增机场' : '编辑机场' }}</v-card-title>
         <v-card-text>
-          <v-text-field v-model="draft.name" label="名称" :hint="nameHelp?.hint" :placeholder="nameHelp?.example" persistent-hint></v-text-field>
-          <v-text-field v-model="draft.subscription_url" label="订阅地址" :hint="urlHelp?.hint" :placeholder="urlHelp?.example" persistent-hint></v-text-field>
-          <v-text-field v-model="draft.remarks" label="备注" :hint="remarksHelp?.hint" :placeholder="remarksHelp?.example" persistent-hint></v-text-field>
-          <v-switch v-model="draft.enabled" label="启用"></v-switch>
+          <v-text-field v-model="draft.name" data-testid="airport-name" label="名称" :hint="nameHelp?.hint" :placeholder="nameHelp?.example" persistent-hint></v-text-field>
+          <v-text-field v-model="draft.subscription_url" data-testid="airport-url" label="订阅地址" :hint="urlHelp?.hint" :placeholder="urlHelp?.example" persistent-hint></v-text-field>
+          <v-text-field v-model="draft.remarks" data-testid="airport-remarks" label="备注" :hint="remarksHelp?.hint" :placeholder="remarksHelp?.example" persistent-hint></v-text-field>
+          <v-select
+            v-model="draft.pipeline"
+            :items="pipelineItems"
+            label="处理管线"
+            hint="机场节点先经过这条管线，再与其他来源合并；留空表示不处理。"
+            persistent-hint
+            clearable
+            data-testid="airport-pipeline"
+            class="mb-3"
+          />
+          <div class="d-flex align-center ga-2 mb-3">
+            <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-outline" :disabled="editing === null" data-testid="airport-preview-process" @click="previewProcess">预览处理</v-btn>
+            <span class="text-caption text-medium-emphasis">{{ editing === null ? '保存机场后可预览处理结果' : '按当前选择的管线预览该机场的节点' }}</span>
+          </div>
+          <v-switch v-model="draft.enabled" data-testid="airport-enabled-new" label="启用"></v-switch>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
           <v-btn variant="text" @click="dialog = false">取消</v-btn>
-          <v-btn color="primary" @click="submit">保存</v-btn>
+          <v-btn color="primary" data-testid="airport-save" @click="submit">保存</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -442,7 +562,7 @@ async function restoreLastCheck(): Promise<void> {
       <v-card>
         <v-card-title>确认删除</v-card-title>
         <v-card-text>
-          删除机场会同时删除其导入的规则关联，确定删除 {{ pendingDelete === null ? '' : pendingDelete.name }} 吗？
+          删除机场会把它从所有方案的规则源绑定里解绑；规则源作为历史快照保留在「规则源」页，可稍后删除。已创建的规则/分组不会自动删除。确定删除 {{ pendingDelete === null ? '' : pendingDelete.name }} 吗？
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
@@ -454,26 +574,168 @@ async function restoreLastCheck(): Promise<void> {
 
     <v-dialog v-model="importDialog" max-width="480">
       <v-card>
-        <v-card-title>导入规则{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
+        <v-card-title>更新规则源{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
         <v-card-text>
-          <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组（select，匹配全部节点）"
+          <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组"
             data-testid="import-rules-create-groups" density="compact"></v-checkbox>
           <div class="text-medium-emphasis" data-testid="import-rules-hint">
-            导入的规则来源固定为本机场（airport:机场名），在「规则」页按来源筛选即可查看。
+            系统会从机场订阅提取规则并保存为规则源；在方案中绑定后生效。
           </div>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
           <v-btn variant="text" data-testid="import-rules-cancel" @click="importDialog = false">取消</v-btn>
-          <v-btn color="primary" data-testid="import-rules-confirm" @click="confirmImportRules">确认导入</v-btn>
+          <v-btn color="primary" data-testid="import-rules-confirm" @click="confirmImportRules">确认更新</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <NodePreviewDialog
+      v-model="previewOpen"
+      title="机场处理预览"
+      :loading="previewLoading"
+      :error="previewError"
+      :result="previewResult"
+    />
   </div>
 </template>
 
 
 <style scoped>
+/* 可用性检测结果：摘要 + 条目列表，避免裸文本堆叠 */
+.check-panel {
+  margin-top: 16px;
+  border: 1px solid var(--sf-border);
+  border-radius: 10px;
+  background: var(--sf-surface);
+  box-shadow: var(--sf-shadow);
+  overflow: hidden;
+}
+.check-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--sf-border);
+  background: var(--sf-surface-raised);
+}
+.check-panel__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sf-text);
+}
+.check-panel__time {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+.check-panel__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.check-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--sf-border);
+  border-radius: 999px;
+  background: var(--sf-surface);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.check-stat--ok {
+  color: var(--sf-ok);
+}
+.check-stat--fail {
+  color: var(--sf-danger);
+}
+.check-stat__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.check-list {
+  display: flex;
+  flex-direction: column;
+}
+.check-item {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sf-border);
+}
+.check-item:last-child {
+  border-bottom: 0;
+}
+.check-item--ok {
+  border-left: 3px solid var(--sf-ok);
+}
+.check-item--fail {
+  border-left: 3px solid var(--sf-danger);
+}
+.check-item__line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.check-item__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 54px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.check-item--ok .check-item__status {
+  color: var(--sf-ok);
+}
+.check-item--fail .check-item__status {
+  color: var(--sf-danger);
+}
+.check-item__name {
+  flex: 1 1 180px;
+  min-width: 0;
+  color: var(--sf-text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.check-item__meta {
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.check-item__error {
+  display: -webkit-box;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--sf-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.airports-table-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.airports-page-size {
+  max-width: 132px;
+}
+.airports-table :deep(.v-data-table-footer__items-per-page) {
+  display: none;
+}
 .airports-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);
@@ -485,6 +747,16 @@ async function restoreLastCheck(): Promise<void> {
   font-weight: 600;
   position: sticky;
   top: 0;
+}
+.airport-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.airport-pipeline {
+  margin-top: 2px;
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .airport-mono {
   font-family: var(--sf-font-mono);
@@ -509,7 +781,13 @@ async function restoreLastCheck(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 2px;
+}
+@media (max-width: 1200px) {
+  .airports-table :deep(th:nth-child(2)),
+  .airports-table :deep(td:nth-child(2)) {
+    display: none;
+  }
 }
 .airports-table :deep(.text-end),
 .airports-table :deep(.text-right) {
@@ -521,6 +799,23 @@ async function restoreLastCheck(): Promise<void> {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: 1px;
+}
+.airport-expire {
+  color: var(--sf-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.airport-status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.airport-status-time {
+  color: var(--sf-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 .airport-traffic-err {
   color: var(--sf-danger);
@@ -533,34 +828,5 @@ async function restoreLastCheck(): Promise<void> {
 /* W7A：状态列异常文案用 --sf-danger，色点走全局 .sf-status__dot--danger */
 .airport-status-err {
   color: var(--sf-danger);
-}
-/* W7G：裸开关容器化——有意的工具行容器（1px 边框 + 6px 圆角 + surface 底），与页面白卡语言一致 */
-.airports-page__section {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--sf-border);
-  border-radius: 6px;
-  padding: 4px 12px 4px 4px;
-  background: var(--sf-surface);
-}
-.airports-page__section :deep(.v-label) {
-  font-size: 13px;
-  color: var(--sf-text-muted);
-}
-/* W8A：开关挪到表格上方的右对齐工具行，复用 section 容器语言 + 右对齐 */
-.airports-page__toolbar {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--sf-border);
-  border-radius: 6px;
-  padding: 4px 12px 4px 4px;
-  background: var(--sf-surface);
-  justify-content: flex-end;
-}
-.airports-page__toolbar :deep(.v-label) {
-  font-size: 13px;
-  color: var(--sf-text-muted);
 }
 </style>

@@ -51,17 +51,14 @@ function retry(): void {
     <div v-else-if="isEmptyHelp" data-testid="empty-state">
       <div data-testid="empty-state-title">{{ (props.empty as EmptyStateHelp).title }}</div>
       <div data-testid="empty-state-detail">{{ (props.empty as EmptyStateHelp).detail }}</div>
-      <router-link
-        v-if="(props.empty as EmptyStateHelp).action && (props.empty as EmptyStateHelp).action!.to"
-        :to="(props.empty as EmptyStateHelp).action!.to as string"
-        data-testid="empty-state-action"
-      >
-        {{ (props.empty as EmptyStateHelp).action!.label }}
-      </router-link>
       <v-btn
-        v-else-if="(props.empty as EmptyStateHelp).action"
+        v-if="(props.empty as EmptyStateHelp).action"
+        :to="(props.empty as EmptyStateHelp).action!.to as string | undefined"
+        color="primary"
+        variant="tonal"
+        size="small"
         data-testid="empty-state-action"
-        variant="text"
+        class="mt-2"
       >
         {{ (props.empty as EmptyStateHelp).action!.label }}
       </v-btn>

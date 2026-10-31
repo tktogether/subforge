@@ -988,16 +988,16 @@ func (r *Renderer) addBandwidth(add func(string, any), tag string, raw map[strin
 		add("up_mbps", defaultBandwidthMbps)
 		add("down_mbps", defaultBandwidthMbps)
 		r.warns = append(r.warns, fmt.Sprintf(
-			"节点 %q 没有声明 up/down 速度，hysteria 出站强制要求，已按 %d Mbps 兜底（相当于不限速）",
+			"节点 %q 没有声明 up/down 速度，hysteria 出站强制要求，已使用默认值 %d Mbps（相当于不限速）",
 			tag, defaultBandwidthMbps))
 	case !haveUp:
 		add("up_mbps", defaultBandwidthMbps)
 		r.warns = append(r.warns, fmt.Sprintf(
-			"节点 %q 缺少 up 速度，hysteria 出站强制要求，已按 %d Mbps 兜底", tag, defaultBandwidthMbps))
+			"节点 %q 缺少 up 速度，hysteria 出站强制要求，已使用默认值 %d Mbps", tag, defaultBandwidthMbps))
 	case !haveDown:
 		add("down_mbps", defaultBandwidthMbps)
 		r.warns = append(r.warns, fmt.Sprintf(
-			"节点 %q 缺少 down 速度，hysteria 出站强制要求，已按 %d Mbps 兜底", tag, defaultBandwidthMbps))
+			"节点 %q 缺少 down 速度，hysteria 出站强制要求，已使用默认值 %d Mbps", tag, defaultBandwidthMbps))
 	}
 }
 

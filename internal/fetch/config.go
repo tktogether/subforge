@@ -6,6 +6,9 @@ import "time"
 type Config struct {
 	// UserAgent 请求 User-Agent。
 	UserAgent string
+	// FallbackUserAgent 是缺少流量头时补取一次完整配置的备用 UA；
+	// 为空表示不补取。
+	FallbackUserAgent string
 	// Timeout 单次请求上限（含重定向），超时后按错误路径重试。
 	Timeout time.Duration
 	// Parallel 并发上限。
@@ -23,12 +26,13 @@ type Config struct {
 // DefaultConfig 给出保守默认值：上游是机场上游，网络抖动大，故超时与重试都偏宽。
 func DefaultConfig() Config {
 	return Config{
-		UserAgent: DefaultUserAgent(),
-		Timeout:   30 * time.Second,
-		Parallel:  8,
-		Retries:   2,
-		Backoff:   250 * time.Millisecond,
-		MaxBody:   64 << 20,
-		Redirects: 5,
+		UserAgent:         DefaultUserAgent(),
+		FallbackUserAgent: fallbackClashUserAgent,
+		Timeout:           30 * time.Second,
+		Parallel:          8,
+		Retries:           2,
+		Backoff:           250 * time.Millisecond,
+		MaxBody:           64 << 20,
+		Redirects:         5,
 	}
 }

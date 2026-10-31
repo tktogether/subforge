@@ -19,6 +19,14 @@ import (
 // 字节的完整配置，含 45 个节点、10,465 条规则与上传/下载/总量/到期四个流量字段。
 const clashCompatToken = "mihomo/1.19.31"
 
+// fallbackClashUserAgent 是部分机场只认 Clash.Meta 标识时使用的回退 UA。
+// 只在返回 Clash YAML 且缺少 Subscription-Userinfo 时尝试一次，
+// 避免对正常机场重复请求。
+const fallbackClashUserAgent = "clash.meta/1.18.0"
+
+// DefaultFallbackUserAgent 返回缺少流量头时补取完整配置的备用 UA。
+func DefaultFallbackUserAgent() string { return fallbackClashUserAgent }
+
 // UserAgentEnv 是覆盖默认 User-Agent 的环境变量名。
 //
 // 少数上游按其它客户端标识返回不同内容，或用户希望以本程序标识去请求时，

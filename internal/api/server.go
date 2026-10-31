@@ -44,6 +44,8 @@ type Config struct {
 	// DataDir 数据目录；用于订阅管理的 SQLite 数据库。
 	// 为空时不启用订阅管理。
 	DataDir string
+	// PProf 是否开放 /debug/pprof；由启动参数/环境变量决定，默认关闭。
+	PProf bool
 }
 
 // Server 是 HTTP 服务。
@@ -158,10 +160,12 @@ func (s *Server) Routes() http.Handler {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/version", s.handleAPIVersion)
+		r.Get("/overview", s.handleAPIOverview)
 		r.Get("/stats", s.handleAPIStats)
 		r.Get("/history", s.handleAPIHistory)
 		r.Get("/pipelines", s.handleAPIPipelines)
 		r.Post("/pipelines", s.handleAPIPipelinesCreate)
+		r.Post("/pipelines/test", s.handleAPIPipelineTest)
 		r.Get("/pipelines/{id}", s.handleAPIPipeline)
 		r.Put("/pipelines/{id}", s.handleAPIPipeline)
 		r.Delete("/pipelines/{id}", s.handleAPIPipeline)
@@ -185,6 +189,7 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/", s.handleAPIAirport)
 			r.Post("/refresh", s.handleAPIAirportRefreshOne)
 			r.Post("/import-rules", s.handleAPIImportRules)
+			r.Post("/preview-process", s.handleAPIAirportPreviewProcess)
 		})
 	})
 	r.Route("/api/groups", func(r chi.Router) {
@@ -210,6 +215,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/", s.handleAPIRules)
 		r.Post("/", s.handleAPIRules)
 		r.Post("/bulk", s.handleAPIRulesBulk)
+		r.Get("/sources", s.handleAPIRuleSourceCounts)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPIRule)
 			r.Put("/", s.handleAPIRule)
@@ -227,6 +233,9 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/self-nodes", func(r chi.Router) {
 		r.Get("/", s.handleAPISelfNodes)
 		r.Post("/", s.handleAPISelfNodes)
+		r.Get("/pipeline", s.handleAPISelfSourcePipeline)
+		r.Put("/pipeline", s.handleAPISelfSourcePipeline)
+		r.Post("/preview-process", s.handleAPISelfNodesPreviewProcess)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPISelfNode)
 			r.Put("/", s.handleAPISelfNode)
@@ -262,12 +271,16 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/api/suggestions/{index}/confirm", s.handleAPIConfirmSuggestion)
 	r.Post("/api/suggestions/{index}/reject", s.handleAPIRejectSuggestion)
 	r.Get("/api/rule-sources", s.handleAPIRuleSources)
+	r.Get("/api/rule-sources/rules", s.handleAPIRuleSourceRules)
+	r.Get("/api/rule-sources/conflicts", s.handleAPIRuleSourceConflicts)
+	r.Post("/api/rule-sources/import-rules", s.handleAPIRuleSourceImport)
 	r.Post("/api/rule-sources/init", s.handleAPIRuleSourcesInit)
 	r.Post("/api/rule-sources/update", s.handleAPIRuleSourcesUpdate)
 	r.Post("/api/rule-sources/rollback", s.handleAPIRuleSourcesRollback)
 	r.Post("/api/rule-sources/mrs", s.handleAPIRuleSourcesMRS)
 	r.Post("/api/rule-sources", s.handleAPIRuleSourcesAdd)
 	r.Post("/api/rule-sources/remove", s.handleAPIRuleSourcesRemove)
+	r.Post("/api/rule-sources/rename", s.handleAPIRuleSourceRename)
 	r.Post("/api/rule-sources/update-one", s.handleAPIRuleSourcesUpdateOne)
 	r.Get("/api/configs", s.handleAPIConfigs)
 	r.Route("/api/settings", func(r chi.Router) {
@@ -301,6 +314,7 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/api/metrics", s.handleMetrics)
 
 	r.NotFound(s.handleNotFound)
+	r.MethodNotAllowed(s.handleMethodNotAllowed)
 	return r
 }
 
@@ -388,9 +402,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
-// handleNotFound 统一 404 形状。
+// handleNotFound 统一 404 形状：路由未命中与业务 404 都走 JSON，
+// 用 code 区分「路由没注册」与「资源不存在」，便于前端与服务探测。
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
-	s.writeText(w, http.StatusNotFound, "text/plain; charset=utf-8", "404: 路径不存在\n")
+	s.writeJSON(w, http.StatusNotFound, map[string]any{"error": "路径不存在", "code": "route_not_found"})
+}
+
+// handleMethodNotAllowed 统一路由层 405 形状。
+func (s *Server) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	s.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "方法不允许", "code": "method_not_allowed"})
 }
 
 // writeJSON 写出 JSON 响应。

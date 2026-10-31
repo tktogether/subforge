@@ -280,6 +280,25 @@ func WithRetention(n int) UpdateOption {
 }
 
 // pruneVersions 保留最近 retention 个版本文件，删除其余。
+// SaveProduct 把调用方已生成的内容写成 source 的一个新版本。
+// 与 Update 共用版本命名、保留策略；当前版本指针由调用方写（subforge 层负责）。
+func SaveProduct(dir, name, ext string, content []byte, retention int) (UpdateResult, error) {
+	if retention <= 0 {
+		retention = DefaultRetention
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return UpdateResult{}, fmt.Errorf("创建规则输出目录 %s: %w", dir, err)
+	}
+	version := time.Now().UTC().Format("20060102-150405.000000000")
+	filename := fmt.Sprintf("%s-%s.%s", name, version, ext)
+	fullPath := filepath.Join(dir, filename)
+	if err := os.WriteFile(fullPath, content, 0o644); err != nil {
+		return UpdateResult{}, fmt.Errorf("写入 %s: %w", fullPath, err)
+	}
+	pruneVersions(dir, name, ext, retention)
+	return UpdateResult{Source: name, Version: version, Path: fullPath}, nil
+}
+
 func pruneVersions(dir, name, ext string, retention int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -29,12 +29,16 @@ func writeBareManifest(t *testing.T, m *Manager, srcs ...string) string {
 	return path
 }
 
-// TestAddRuleSource 覆盖：缺清单报错、空 URL 报错、重名报错、name 缺省推导、正常追加写回。
+// TestAddRuleSource 覆盖：缺清单自动创建、空 URL 报错、重名报错、name 缺省推导、正常追加写回。
 func TestAddRuleSource(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
-	if _, _, err := m.AddRuleSource(ctx, manifest.Source{URL: "u"}); err == nil || !strings.Contains(err.Error(), "清单不存在") {
-		t.Fatalf("缺清单应报错: %v", err)
+	p0, created0, err := m.AddRuleSource(ctx, manifest.Source{URL: "u"})
+	if err != nil || !created0 {
+		t.Fatalf("缺清单应自动创建: path=%q created=%v err=%v", p0, created0, err)
+	}
+	if _, statErr := os.Stat(p0); statErr != nil {
+		t.Fatalf("自动创建的清单不存在: %v", statErr)
 	}
 	path := writeBareManifest(t, m, "name: a\n    url: u-a")
 	if _, _, err := m.AddRuleSource(ctx, manifest.Source{URL: ""}); err == nil || !strings.Contains(err.Error(), "url 不能为空") {

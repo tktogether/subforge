@@ -29,6 +29,9 @@ type Request struct {
 	// Providers 原样透传的 mihomo proxy-provider 定义（来源 Clash YAML 里的
 	// proxy-providers）。渲染器按目标格式支持情况输出，不支持时忽略。
 	Providers []model.Provider
+	// RuleProviders 是规则源产物里的 mihomo rule-provider 定义；订阅里
+	// RULE-SET 规则依赖它，clash.meta 输出为顶层 rule-providers。
+	RuleProviders []model.RuleProvider
 	// Profile 配置元信息，用于输出注释头。
 	Profile Profile
 }
@@ -73,6 +76,10 @@ type Group struct {
 	Options UrlTestOptions
 	// Lazy 延迟加载（url-test 系）。
 	Lazy bool
+	// IncludeSelf 在成员末尾追加订阅里的自建节点。
+	IncludeSelf bool
+	// IncludeAllSources 把订阅里所有机场的节点并入成员；自建是否并入由 IncludeSelf 决定。
+	IncludeAllSources bool
 }
 
 // Renderer 把一个 Request 渲染成一种目标格式。

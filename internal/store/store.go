@@ -66,6 +66,8 @@ type Airport struct {
 	Remarks         string `json:"remarks"`
 	Enabled         bool   `json:"enabled"`
 	SortOrder       int    `json:"sort_order"`
+	// Pipeline 是该来源的预处理管线名；空串表示不处理。
+	Pipeline string `json:"pipeline"`
 	// —— 流量元数据：来自上游 subscription-userinfo 响应头 ——
 	Upload     int64     `json:"upload"`      // 已用上行字节
 	Download   int64     `json:"download"`    // 已用下行字节
@@ -96,16 +98,27 @@ type FetchAudit struct {
 // v2：分组是全局自定义库，不再归属任何订阅方案；Source 标识来源
 // （空串 = 自定义，"airport:<机场名>" = 机场导入自动创建）。
 type ProxyGroup struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Regex     string    `json:"regex"`
-	URL       string    `json:"url"`
-	Interval  int       `json:"interval"`
-	SortOrder int       `json:"sort_order"`
-	Source    string    `json:"source"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Regex     string `json:"regex"`
+	URL       string `json:"url"`
+	Interval  int    `json:"interval"`
+	SortOrder int    `json:"sort_order"`
+	Source    string `json:"source"`
+	// Members 是机场自带分组的成员（节点名/子组名）。
+	// 非空时订阅按成员原样渲染，优先于 Regex；手工分组通常为空。
+	Members []string `json:"members"`
+	// IncludeSelf 表示订阅渲染时是否把方案选中的自建节点追加到该分组成员末尾。
+	// 机场分组按显式成员渲染，自建节点不会自动出现；成员覆盖全部机场节点的组
+	// 导入时默认开启，子集组默认关闭。
+	IncludeSelf bool `json:"include_self"`
+	// IncludeAllSources 表示订阅渲染时是否把方案里所有机场的节点并入该组。
+	// 机场的「全部节点」分组（成员覆盖该机场全部节点）导入时自动开启：
+	// 组名表达的是「全部」，只保留本机场节点会在多机场方案里漏掉其他机场。
+	IncludeAllSources bool      `json:"include_all_sources"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // SelfNode 是 self_nodes 表的一行。
@@ -212,6 +225,31 @@ type Rule struct {
 	// v2：规则不再归属订阅方案（无 profile_id），只用 Source 区分来源。
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// RuleSourceCount 是规则来源及条数（轻量来源列表）。
+type RuleSourceCount struct {
+	Source string `json:"source"`
+	Count  int64  `json:"count"`
+}
+
+// ListRuleSourceCounts 按来源聚合规则条数，供规则页来源筛选使用。
+func (d *DB) ListRuleSourceCounts(ctx context.Context) ([]RuleSourceCount, error) {
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT COALESCE(source, ''), COUNT(*) FROM rules GROUP BY COALESCE(source, '') ORDER BY COALESCE(source, '')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RuleSourceCount
+	for rows.Next() {
+		var item RuleSourceCount
+		if err := rows.Scan(&item.Source, &item.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 // Script 是 scripts 表的一行：goja 脚本库。
@@ -387,9 +425,30 @@ func (d *DB) AddProxyGroup(ctx context.Context, name, gtype, regex, url string, 
 // source 为空串 = 自定义分组，"airport:<机场名>" = 机场导入自动创建的分组。
 // sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
 func (d *DB) AddProxyGroupWithSource(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string) (ProxyGroup, error) {
+	return d.AddProxyGroupWithMembers(ctx, name, gtype, regex, url, interval, sortOrder, source, nil)
+}
+
+// AddProxyGroupWithMembers 新增带来源与成员列表的代理分组。
+// members 非空时用于机场自带分组；空列表仍按 regex 展开成员。
+func (d *DB) AddProxyGroupWithMembers(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string) (ProxyGroup, error) {
+	return d.AddProxyGroupWithMembersAndIncludeSelf(ctx, name, gtype, regex, url, interval, sortOrder, source, members, false)
+}
+
+// AddProxyGroupWithMembersAndIncludeSelf 同 AddProxyGroupWithMembers，额外指定
+// 是否在订阅渲染时追加自建节点。
+func (d *DB) AddProxyGroupWithMembersAndIncludeSelf(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string, includeSelf bool) (ProxyGroup, error) {
+	return d.AddProxyGroupWithMembersAndFlags(ctx, name, gtype, regex, url, interval, sortOrder, source, members, includeSelf, false)
+}
+
+// AddProxyGroupWithMembersAndFlags 新增带成员列表的分组，并指定自建/全部来源扩展。
+func (d *DB) AddProxyGroupWithMembersAndFlags(ctx context.Context, name, gtype, regex, url string, interval, sortOrder int, source string, members []string, includeSelf, includeAllSources bool) (ProxyGroup, error) {
+	membersJSON, err := marshalLayerList(members)
+	if err != nil {
+		return ProxyGroup{}, err
+	}
 	res, err := d.db.ExecContext(ctx,
-		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source)
+		"INSERT INTO proxy_groups (name, type, regex, url, interval, sort_order, source, members, include_self, include_all_sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		name, gtype, regex, url, interval, resolveSortOrder(sortOrder), source, membersJSON, includeSelf, includeAllSources)
 	if err != nil {
 		return ProxyGroup{}, err
 	}
@@ -407,12 +466,14 @@ func (d *DB) AddProxyGroupWithSource(ctx context.Context, name, gtype, regex, ur
 // GetProxyGroup 按 id 返回代理分组；不存在时返回 sql.ErrNoRows。
 func (d *DB) GetProxyGroup(ctx context.Context, id int64) (*ProxyGroup, error) {
 	var g ProxyGroup
+	var members string
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
-		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, name, type, COALESCE(regex, ''), COALESCE(url, ''), COALESCE(interval, 0), sort_order, COALESCE(source, ''), COALESCE(members, ''), COALESCE(include_self, 0), COALESCE(include_all_sources, 0), created_at, updated_at FROM proxy_groups WHERE id = ?", id).
+		Scan(&g.ID, &g.Name, &g.Type, &g.Regex, &g.URL, &g.Interval, &g.SortOrder, &g.Source, &members, &g.IncludeSelf, &g.IncludeAllSources, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	g.Members = parseLayerList(members)
 	return &g, nil
 }
 
@@ -423,6 +484,85 @@ func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex,
 		"UPDATE proxy_groups SET name = ?, type = ?, regex = ?, url = ?, interval = ?, "+
 			"sort_order = CASE WHEN ? > 0 THEN ? ELSE sort_order END, updated_at = ? WHERE id = ?",
 		name, gtype, regex, url, interval, sortOrder, sortOrder, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetProxyGroupIncludeSelf 保存分组是否在订阅里追加自建节点。
+func (d *DB) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf bool) error {
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE proxy_groups SET include_self = ?, updated_at = ? WHERE id = ?",
+		includeSelf, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetProxyGroupIncludeAllSources 保存分组是否把方案里所有机场的节点并入。
+func (d *DB) SetProxyGroupIncludeAllSources(ctx context.Context, id int64, includeAll bool) error {
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE proxy_groups SET include_all_sources = ?, updated_at = ? WHERE id = ?",
+		includeAll, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateImportedGroupMembersFlags 刷新机场分组的成员与扩展标志。
+// 只更新上游派生字段，保留用户在分组页改过的类型、测活与排序。
+func (d *DB) UpdateImportedGroupMembersFlags(ctx context.Context, id int64, members []string, includeSelf, includeAllSources bool) error {
+	membersJSON, err := marshalLayerList(members)
+	if err != nil {
+		return err
+	}
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE proxy_groups SET members = ?, include_self = ?, include_all_sources = ?, updated_at = ? WHERE id = ?",
+		membersJSON, includeSelf, includeAllSources, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateRuleFromSource 用规则源里的新行覆盖一条自定义规则，包含 raw/origin_key。
+// 规则源更新后重复挑选时，目标可能变化（甚至变成 DIRECT），必须同时刷新 raw，
+// 否则渲染层在 rule_config=0 时会继续使用旧目标。
+func (d *DB) UpdateRuleFromSource(ctx context.Context, id int64, ruleType, ruleParam string, ruleConfig int64, resolveDNS bool, raw, originKey string) error {
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE rules SET rule_type = ?, rule_param = ?, rule_config = ?, resolve_dns = ?, raw = ?, origin_key = ?, enabled = 1, updated_at = ? WHERE id = ? AND source = ''",
+		ruleType, ruleParam, ruleConfig, resolveDNS, raw, originKey, time.Now(), id)
 	if err != nil {
 		return err
 	}
@@ -575,8 +715,11 @@ func migrate(db *sql.DB) error {
 			regex       TEXT,
 			url         TEXT,
 			interval    INTEGER,
-			sort_order  INTEGER DEFAULT 0,
-			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			sort_order   INTEGER DEFAULT 0,
+			members      TEXT NOT NULL DEFAULT '',
+			include_self INTEGER NOT NULL DEFAULT 0,
+			include_all_sources INTEGER NOT NULL DEFAULT 0,
+			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
 		// 规则管理
@@ -611,6 +754,12 @@ func migrate(db *sql.DB) error {
 			sort_order  INTEGER DEFAULT 0,
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+		);`,
+		// 来源级处理管线：机场按 airport:<id> 存，自建节点集合按 self 存。
+		`CREATE TABLE IF NOT EXISTS source_pipelines (
+			source_key TEXT PRIMARY KEY,
+			pipeline   TEXT NOT NULL DEFAULT '',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
 		// 通用配置（DNS、mixed-port 等全局设置）
 		`CREATE TABLE IF NOT EXISTS config (
@@ -705,8 +854,13 @@ func migrate(db *sql.DB) error {
 			description TEXT NOT NULL DEFAULT '',
 			config      TEXT NOT NULL DEFAULT '',
 			pipeline    TEXT NOT NULL DEFAULT '',
+			target      TEXT NOT NULL DEFAULT '',
+			include     TEXT NOT NULL DEFAULT '',
+			exclude     TEXT NOT NULL DEFAULT '',
 			enabled     INTEGER NOT NULL DEFAULT 1,
 			sort_order  INTEGER NOT NULL DEFAULT 0,
+			airport_ids TEXT NOT NULL DEFAULT '',
+			self_node_ids TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -719,6 +873,18 @@ func migrate(db *sql.DB) error {
 	// 老脚本迁移后 kind 为空串，不改变历史数据语义）。
 	if err := addColumnIfMissing(db, "scripts", "kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("迁移 scripts.kind: %w", err)
+	}
+	// profiles 来源列：老库幂等补齐。空串 = 未限制（全部启用来源）。
+	for _, c := range []struct{ col, decl string }{
+		{"target", "TEXT NOT NULL DEFAULT ''"},
+		{"include", "TEXT NOT NULL DEFAULT ''"},
+		{"exclude", "TEXT NOT NULL DEFAULT ''"},
+		{"airport_ids", "TEXT NOT NULL DEFAULT ''"},
+		{"self_node_ids", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := addColumnIfMissing(db, "profiles", c.col, c.decl); err != nil {
+			return fmt.Errorf("迁移 profiles.%s: %w", c.col, err)
+		}
 	}
 	// rules 溯源列：老库用 ALTER 幂等补齐。
 	for _, c := range []struct{ col, decl string }{
@@ -753,6 +919,15 @@ func migrate(db *sql.DB) error {
 	// v2：proxy_groups 增加 source 列（语义同 rules.source）。
 	if err := addColumnIfMissing(db, "proxy_groups", "source", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("迁移 proxy_groups.source: %w", err)
+	}
+	if err := addColumnIfMissing(db, "proxy_groups", "members", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("迁移 proxy_groups.members: %w", err)
+	}
+	if err := addColumnIfMissing(db, "proxy_groups", "include_self", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("迁移 proxy_groups.include_self: %w", err)
+	}
+	if err := addColumnIfMissing(db, "proxy_groups", "include_all_sources", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("迁移 proxy_groups.include_all_sources: %w", err)
 	}
 	// rule_providers 唯一索引：先按 (source, name) 去重，保留最小 id，避免老库重复行导致建索引失败。
 	if _, err := db.Exec("DELETE FROM rule_providers WHERE id NOT IN (SELECT MIN(id) FROM rule_providers GROUP BY source, name)"); err != nil {
@@ -1199,4 +1374,32 @@ func (d *DB) SetRuleProviderEnabled(ctx context.Context, id int64, enabled bool)
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// GetSourcePipeline 读取来源级处理管线；没有记录时返回空串。
+func (d *DB) GetSourcePipeline(ctx context.Context, sourceKey string) (string, error) {
+	var pipeline string
+	err := d.db.QueryRowContext(ctx,
+		"SELECT pipeline FROM source_pipelines WHERE source_key = ?", sourceKey).Scan(&pipeline)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return pipeline, nil
+}
+
+// SetSourcePipeline 写入来源级处理管线；空串表示删除该来源的处理配置。
+func (d *DB) SetSourcePipeline(ctx context.Context, sourceKey, pipeline string) error {
+	pipeline = strings.TrimSpace(pipeline)
+	if pipeline == "" {
+		_, err := d.db.ExecContext(ctx, "DELETE FROM source_pipelines WHERE source_key = ?", sourceKey)
+		return err
+	}
+	_, err := d.db.ExecContext(ctx,
+		"INSERT INTO source_pipelines (source_key, pipeline, updated_at) VALUES (?, ?, ?) "+
+			"ON CONFLICT(source_key) DO UPDATE SET pipeline = excluded.pipeline, updated_at = excluded.updated_at",
+		sourceKey, pipeline, time.Now())
+	return err
 }

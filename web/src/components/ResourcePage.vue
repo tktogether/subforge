@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useCrud, type CrudResource } from '../composables/useCrud'
 import { notify } from '../composables/useNotify'
 import PageHeader from './PageHeader.vue'
 import AsyncSection from './AsyncSection.vue'
+import InfoTip from './InfoTip.vue'
 import { fieldHelp, type EmptyStateHelp } from '../content/help'
 
 type Row = Record<string, any>
@@ -22,6 +23,8 @@ export interface ResourceField {
   // T10: select 字段的下拉选项（title 显示、value 承载，值类型 number/string）。
   // 不传 options 的字段行为与改动前完全一致。
   options?: { title: string; value: number | string }[]
+  // 新建表单的初始值；不传时按类型兜底（switch=true、number=0、select=首项、text=''）。
+  default?: boolean | number | string
 }
 
 const props = defineProps<{
@@ -44,6 +47,8 @@ const confirmOpen = ref(false)
 const draft = ref<Row>({})
 const editing = ref<Row | null>(null)
 const pendingDelete = ref<Row | null>(null)
+const page = ref(1)
+const itemsPerPage = ref(10)
 
 const headers = computed(() => {
   if (props.readonlyMode === true) {
@@ -93,6 +98,15 @@ function cellPropsFor(data: { column?: { key?: string | null } }): Record<string
 }
 
 const emptyText = computed(() => props.emptyText ?? '暂无数据')
+const pageCount = computed(() => Math.max(1, Math.ceil(items.value.length / itemsPerPage.value)))
+watch([items, itemsPerPage], () => {
+  page.value = Math.min(page.value, pageCount.value)
+})
+
+function setPageSize(next: number): void {
+  itemsPerPage.value = next
+  page.value = 1
+}
 
 function fieldHint(field: ResourceField): string {
   const explicit = field.hint
@@ -115,6 +129,10 @@ function fieldExample(field: ResourceField): string {
 function blank(): Row {
   const row: Row = {}
   for (const field of props.fields) {
+    if (field.default !== undefined) {
+      row[field.key] = field.default
+      continue
+    }
     // T10: select 默认取第一个选项的 value（无 options 时退回 ''）。
     // 不兜这一层时 select 会落成 ''，而 rule_config 在后端是 int64（internal/store/store.go:190、
     // internal/api/subscription.go:275-281），新增表单不改下拉就会提交 "" → 400。
@@ -187,13 +205,39 @@ reload()
   </PageHeader>
 
   <AsyncSection
-    :loading="loading"
+    :loading="loading && items.length === 0"
     :error="error"
     :empty="props.empty !== undefined && items.length === 0 ? props.empty : (items.length === 0)"
     :empty-text="emptyText"
     @retry="reload"
   >
-    <v-data-table :items="items" :headers="headers" :cell-props="cellPropsFor" density="comfortable" hover data-testid="table" class="resource-table">
+    <div class="resource-table-bar">
+      <span class="text-caption text-medium-emphasis">共 {{ items.length }} 条</span>
+      <v-spacer />
+      <v-select
+        :model-value="itemsPerPage"
+        :items="[10, 25, 50, 100]"
+        label="每页条数"
+        density="compact"
+        variant="outlined"
+        hide-details
+        data-testid="page-size"
+        class="resource-page-size"
+        @update:model-value="setPageSize"
+      />
+    </div>
+    <v-data-table
+      :page="page"
+      :items-per-page="itemsPerPage"
+      :items="items"
+      :headers="headers"
+      :items-per-page-options="[10, 25, 50, 100]"
+      :cell-props="cellPropsFor"
+      density="comfortable"
+      hover
+      data-testid="table"
+      class="resource-table"
+    >
       <template #item.enabled="{ value }">
         <span class="sf-status">
           <span class="sf-status__dot" :class="value ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
@@ -208,6 +252,9 @@ reload()
       </template>
       <template #item.token="{ value }">
         <code class="resource-mono resource-truncate" :title="value">{{ value }}</code>
+      </template>
+      <template #item.members_text="{ item, value }">
+        <slot name="members" :item="item" :value="value">{{ value }}</slot>
       </template>
       <template v-if="rankKey" #[`item.${rankKey}`]="{ item }">
         {{ rankOf(item) }}
@@ -236,11 +283,14 @@ reload()
     <v-card>
       <v-card-title>{{ editing === null ? '新增' : '编辑' }}</v-card-title>
       <v-card-text>
-        <template v-for="field in props.fields" :key="field.key">
+        <div v-for="field in props.fields" :key="field.key" class="sf-field">
+          <div class="sf-field__label">
+            <span>{{ field.label }}</span>
+            <InfoTip :text="fieldHint(field)" :example="fieldExample(field)" :label="field.label" />
+          </div>
           <v-switch
             v-if="field.type === 'switch'"
             v-model="draft[field.key]"
-            :label="field.label"
             color="primary"
             hide-details
             data-testid="field-switch"
@@ -248,11 +298,10 @@ reload()
           <v-text-field
             v-else-if="field.type === 'number'"
             v-model.number="draft[field.key]"
-            :label="field.label"
             type="number"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
             data-testid="field-number"
           />
           <v-select
@@ -261,29 +310,21 @@ reload()
             :items="field.options ?? []"
             item-title="title"
             item-value="value"
-            :label="field.label"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
             hide-details
             data-testid="field-select"
           />
           <v-text-field
             v-else
             v-model="draft[field.key]"
-            :label="field.label"
+            :placeholder="fieldExample(field)"
             variant="outlined"
             density="comfortable"
-            class="mb-2"
+            hide-details
             data-testid="field-text"
           />
-          <div v-if="fieldHint(field) !== ''" data-testid="field-hint" class="text-caption text-medium-emphasis mb-2">
-            {{ fieldHint(field) }}
-          </div>
-          <div v-if="fieldExample(field) !== ''" data-testid="field-example" class="text-caption text-medium-emphasis mb-2">
-            示例：{{ fieldExample(field) }}
-          </div>
-        </template>
+        </div>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
@@ -308,6 +349,30 @@ reload()
 
 
 <style scoped>
+.sf-field {
+  margin-bottom: 12px;
+}
+.sf-field__label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+ .resource-table-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.resource-page-size {
+  max-width: 132px;
+}
+:deep(.v-data-table-footer__items-per-page) {
+  display: none;
+}
 .resource-table {
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius);

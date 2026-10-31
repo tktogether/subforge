@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { endpoints, subscribeUrl, type Profile, type SubToken, type TrafficStrategy, type TrafficRefreshResponse } from '../api/endpoints'
+import { endpoints, subscribeUrl, type Profile, type SubToken, type TrafficStrategy, type TrafficUsage, type TrafficRefreshResponse } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { pageHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
+import InfoTip from '../components/InfoTip.vue'
+import { formatBytes, formatExpire } from '../format'
 
 const help = pageHelp('subscriptions')
 
@@ -22,7 +24,7 @@ async function loadProfiles(): Promise<void> {
 
 // 方案下拉选项：未分配(0) + 各方案（title=方案名，value=方案 id）。
 const profileOptions = computed(() => [
-  { title: '未分配', value: 0 },
+  { title: '未绑定方案', value: 0 },
   ...profiles.value.map((p) => ({ title: p.name, value: p.id })),
 ])
 
@@ -60,119 +62,43 @@ const resource = {
 interface TokenForm {
   token: string
   name: string
-  target: string
-  pipeline: string
-  config: string
-  include: string
-  exclude: string
   // 绑定的方案 id：0 = 未分配（旧的全局池）。
   profile_id: number
 }
 const tokenDialog = ref(false)
 const editingToken = ref<SubToken | null>(null)
 function emptyTokenForm(): TokenForm {
-  return { token: '', name: '', target: '', pipeline: '', config: '', include: '', exclude: '', profile_id: 0 }
+  return { token: '', name: '', profile_id: 0 }
 }
 const tokenForm = ref<TokenForm>(emptyTokenForm())
-// target 候选来自 GET /api/targets（endpoints.ts:340 现成封装）；弹窗首次打开时懒加载一次，
-// 失败不阻塞弹窗（下拉退化成「留空 = 默认 clash.meta」），失败后下次打开会重试。
-const targetOptions = ref<string[]>([])
-const targetsLoaded = ref(false)
-const loadingTargets = ref(false)
-async function loadTargets(): Promise<void> {
-  if (targetsLoaded.value || loadingTargets.value) return
-  loadingTargets.value = true
-  try {
-    targetOptions.value = await endpoints.targets()
-    targetsLoaded.value = true
-  } catch {
-    targetOptions.value = []
-  } finally {
-    loadingTargets.value = false
-  }
-}
-// pipeline / config 候选：弹窗打开时懒加载，失败退化空数组不阻塞表单（与 target 一致）。
-const pipelineOptions = ref<string[]>([])
-const loadingPipelines = ref(false)
-async function loadPipelineOptions(): Promise<void> {
-  loadingPipelines.value = true
-  try {
-    const list = await endpoints.pipelines('')
-    pipelineOptions.value = list.map((p: { name: string }) => p.name)
-  } catch {
-    pipelineOptions.value = []
-  } finally {
-    loadingPipelines.value = false
-  }
-}
-const configOptions = ref<string[]>([])
-const loadingConfigs = ref(false)
-async function loadConfigOptions(): Promise<void> {
-  loadingConfigs.value = true
-  try {
-    const r = await endpoints.configs()
-    configOptions.value = r.configs ?? []
-  } catch {
-    configOptions.value = []
-  } finally {
-    loadingConfigs.value = false
-  }
-}
 function openCreateToken(): void {
   editingToken.value = null
   tokenForm.value = emptyTokenForm()
   tokenDialog.value = true
-  void loadTargets()
-  void loadPipelineOptions()
-  void loadConfigOptions()
 }
 function openEditToken(t: SubToken): void {
   editingToken.value = t
   tokenForm.value = {
     token: t.token,
     name: t.name,
-    target: t.target ?? '',
-    pipeline: t.pipeline ?? '',
-    config: t.config ?? '',
-    include: t.include ?? '',
-    exclude: t.exclude ?? '',
     profile_id: t.profile_id ?? 0,
   }
   tokenDialog.value = true
-  void loadTargets()
-  void loadPipelineOptions()
-  void loadConfigOptions()
-}
-// v-select 带 clearable 时，清空给的是 null；后端 *string 语义里 null/缺失等于「不改动」，
-// 只有空串才是「清空该定制」。所以提交前统一归一成空串。
-function textOrEmpty(v: string | null | undefined): string {
-  return v ?? ''
 }
 async function saveToken(): Promise<void> {
   try {
+    const f = tokenForm.value
     if (editingToken.value === null) {
-      // 新建分支：全部字段原样提交（5 个定制字段 + 方案），修掉「新建令牌丢字段」。
-      const f = tokenForm.value
+      // 令牌只做凭据；输出配置（目标/模板/管线/包含/排除）在方案页维护。
       await endpoints.createToken({
         token: f.token,
         name: f.name,
-        target: textOrEmpty(f.target),
-        pipeline: textOrEmpty(f.pipeline),
-        config: textOrEmpty(f.config),
-        include: textOrEmpty(f.include),
-        exclude: textOrEmpty(f.exclude),
         profile_id: f.profile_id,
       })
     } else {
-      const f = tokenForm.value
-      // 编辑分支 6 个字段全部显式发送：空串=清空，字段缺失=不改动（后端 *string 语义）。
+      // 编辑只提交凭据字段与绑定方案；旧版令牌上的 target 等字段保持原值，避免静默清空。
       await endpoints.updateToken(f.token, {
-        name: textOrEmpty(f.name),
-        target: textOrEmpty(f.target),
-        pipeline: textOrEmpty(f.pipeline ?? ''),
-        config: textOrEmpty(f.config ?? ''),
-        include: textOrEmpty(f.include),
-        exclude: textOrEmpty(f.exclude),
+        name: f.name,
         profile_id: f.profile_id,
       })
     }
@@ -215,16 +141,16 @@ async function copyUrl(): Promise<void> {
 const FIELD_VALUES: string[] = ['sum', 'min', 'max', 'avg', 'first', 'last', 'none']
 const PRESET_VALUES = ['sum', 'min', 'max', 'avg', 'first', 'last', 'min_quota', 'max_quota', 'weighted', 'off'] as const
 const PRESET_LABELS: Record<string, string> = {
-  sum: '求和：上传/下载/总量分别把各机场加起来，到期时间取最早的。适合「多个机场额度可叠加」的场景。',
-  min: '取最小：四个字段都取各机场里最小的值。最保守。',
-  max: '取最大：四个字段都取最大的值。最乐观。',
-  avg: '取平均：四个字段都取平均值。',
-  first: '只用第一个机场的值（按排序）。',
-  last: '只用最后一个机场的值（按排序）。',
-  min_quota: '取「总量最小」的那个机场的整份快照（上传/下载/到期也跟着它）。',
-  max_quota: '取「总量最大」的那个机场的整份快照。',
+  sum: '各机场流量分别相加，到期时间取最早。',
+  min: '各字段取所有机场中的最小值。',
+  max: '各字段取所有机场中的最大值。',
+  avg: '各字段取所有机场的平均值。',
+  first: '使用排序第一的机场的数据。',
+  last: '使用排序最后的机场的数据。',
+  min_quota: '使用总流量最小的机场的完整数据。',
+  max_quota: '使用总流量最大的机场的完整数据。',
   weighted: '按各机场节点数加权平均。',
-  off: '不透传：完全不写 subscription-userinfo 响应头，客户端不显示余额。',
+  off: '不写入流量信息，客户端不显示余额。',
 }
 
 const preset = ref<string>('sum')
@@ -236,6 +162,7 @@ const expire = ref<string>('min')
 
 const savingStrategy = ref(false)
 const previewHeader = ref('')
+const previewUsage = ref<TrafficUsage | null>(null)
 const previewOk = ref<boolean | null>(null)
 const previewing = ref(false)
 
@@ -307,10 +234,12 @@ async function saveStrategy(): Promise<void> {
 async function previewStrategy(): Promise<void> {
   previewing.value = true
   previewHeader.value = ''
+  previewUsage.value = null
   previewOk.value = null
   try {
     const r = await endpoints.previewTraffic(strategyObj.value)
     previewHeader.value = r.header
+    previewUsage.value = r.usage ?? null
     previewOk.value = r.ok
   } catch (err) {
     notify(errorMessage(err), 'error')
@@ -327,7 +256,7 @@ async function refreshAll(): Promise<void> {
   refreshLoading.value = true
   refreshError.value = ''
   try {
-    const r = await endpoints.refreshAllAirports(false)
+    const r = await endpoints.refreshAllAirports(true)
     refreshResult.value = r
   } catch (err) {
     refreshError.value = errorMessage(err)
@@ -350,12 +279,12 @@ onMounted(() => {
   <v-card class="pa-4 mb-4" data-testid="block-url">
     <v-card-title>订阅地址</v-card-title>
     <v-card-text>
-      <p class="text-body-2 mb-2">订阅地址就是客户端要填的 URL；令牌是它的凭据，换令牌等于换地址。同一个地址可以长期重复使用，不必每次使用都新建令牌。</p>
+      <p class="text-body-2 mb-2">订阅地址是客户端填写的 URL；令牌是地址中的访问凭据。同一地址可以长期重复使用。</p>
       <v-select
         v-model="selectedToken"
         :items="tokens.map((t) => ({ title: t.name || t.token, value: t.token }))"
         label="选择令牌"
-        hint="令牌是订阅地址的凭据"
+        hint="选择用于生成订阅地址的令牌"
         persistent-hint
         data-testid="token-select"
       />
@@ -372,10 +301,10 @@ onMounted(() => {
         <v-btn data-testid="copy-url-btn" variant="tonal" @click="copyUrl">复制</v-btn>
       </div>
       <div v-else data-testid="no-token-empty" class="text-medium-emphasis mt-2">
-        请选择一个令牌。还没有订阅令牌。令牌是订阅地址的凭据，一个令牌对应一个订阅地址。先生成一个令牌，再把地址填进客户端。
+        暂无订阅令牌。请先新建令牌，再复制生成的订阅地址。
       </div>
       <div data-testid="risk-hint" class="text-warning mt-3">
-        任何拿到这个 URL 的人都能拉到你的节点；令牌泄露请立刻删除并重建。
+        持有该地址即可获取节点配置。如令牌泄露，请删除并重新创建。
       </div>
     </v-card-text>
   </v-card>
@@ -385,21 +314,29 @@ onMounted(() => {
     <v-card-title>令牌</v-card-title>
     <v-card-text>
       <v-btn data-testid="create-token-btn" variant="tonal" class="mb-3" @click="openCreateToken">新建令牌</v-btn>
-      <table data-testid="token-table" class="w-100">
-        <thead><tr><th>令牌</th><th>名称</th><th>方案</th><th>操作</th></tr></thead>
+      <table v-if="tokens.length > 0" data-testid="token-table" class="token-table">
+        <colgroup>
+          <col class="token-col-token" />
+          <col class="token-col-name" />
+          <col class="token-col-profile" />
+          <col class="token-col-actions" />
+        </colgroup>
+        <thead>
+          <tr><th>令牌</th><th>名称</th><th>方案</th><th class="token-actions">操作</th></tr>
+        </thead>
         <tbody>
           <tr v-for="t in tokens" :key="t.token" data-testid="token-row">
-            <td><code>{{ maskToken(t.token) }}</code></td>
-            <td>{{ t.name }}</td>
-            <td data-testid="token-profile-name">{{ t.profile_name ?? '未分配' }}</td>
-            <td>
+            <td><code class="token-value" :title="t.token">{{ maskToken(t.token) }}</code></td>
+            <td><span class="token-text" :title="t.name">{{ t.name || '—' }}</span></td>
+            <td data-testid="token-profile-name"><span class="token-text" :title="t.profile_name ?? '未绑定方案'">{{ t.profile_name ?? '未绑定方案' }}</span></td>
+            <td class="token-actions">
               <v-btn size="small" variant="text" data-testid="token-edit" @click="openEditToken(t)">编辑</v-btn>
               <v-btn size="small" variant="text" color="error" data-testid="token-delete" @click="deleteToken(t)">删除</v-btn>
             </td>
           </tr>
         </tbody>
       </table>
-      <div v-if="tokens.length === 0" class="text-medium-emphasis mt-2">还没有令牌。</div>
+      <div v-if="tokens.length === 0" class="token-empty" data-testid="token-empty">还没有令牌。点击「新建令牌」创建第一个。</div>
     </v-card-text>
   </v-card>
 
@@ -407,18 +344,8 @@ onMounted(() => {
     <v-card>
       <v-card-title>{{ editingToken ? '编辑令牌' : '新建令牌' }}</v-card-title>
       <v-card-text>
-        <v-text-field v-model="tokenForm.token" label="令牌" hint="建议留空由后端生成，或自定义（唯一）" persistent-hint data-testid="token-field" />
-        <v-text-field v-model="tokenForm.name" label="名称" hint="自己认得出的备注，例如「手机」「给朋友」" persistent-hint data-testid="name-field" />
-        <v-select
-          v-model="tokenForm.target"
-          :items="targetOptions"
-          label="目标格式"
-          hint="留空 = 默认 clash.meta"
-          persistent-hint
-          clearable
-          :loading="loadingTargets"
-          data-testid="target-select"
-        />
+        <v-text-field v-model="tokenForm.token" label="令牌" hint="留空由系统生成，或填写唯一值" persistent-hint data-testid="token-field" />
+        <v-text-field v-model="tokenForm.name" label="名称" hint="用于区分用途，例如设备名称" persistent-hint data-testid="name-field" />
         <v-select
           v-model="tokenForm.profile_id"
           :items="profileOptions"
@@ -429,37 +356,8 @@ onMounted(() => {
           data-testid="token-profile"
         />
         <div data-testid="token-profile-hint" class="text-caption text-medium-emphasis mb-2">
-          绑定方案后，订阅只使用该方案的规则与分组；方案里的模板/管线在令牌未填时兜底
+          令牌只作为访问凭据；目标格式、模板、管线与节点筛选由绑定的方案决定。
         </div>
-        <v-expansion-panels class="mt-2" data-testid="token-advanced">
-          <v-expansion-panel>
-            <v-expansion-panel-title>高级选项</v-expansion-panel-title>
-            <v-expansion-panel-text eager>
-              <v-combobox
-                data-testid="token-pipeline"
-                v-model="tokenForm.pipeline"
-                :items="pipelineOptions"
-                :loading="loadingPipelines"
-                label="处理管线"
-                clearable
-                persistent-hint
-                hint="留空用默认；可从下拉选模板里定义的命名管线"
-              />
-              <v-combobox
-                data-testid="token-config"
-                v-model="tokenForm.config"
-                :items="configOptions"
-                :loading="loadingConfigs"
-                label="配置模板"
-                clearable
-                persistent-hint
-                hint="留空用默认；可下拉选模板推荐的，也可手填远程 URL"
-              />
-              <v-text-field v-model="tokenForm.include" label="包含" hint="逗号分隔列表，例如 香港,日本；留空 = 不筛选" persistent-hint data-testid="include-field" />
-              <v-text-field v-model="tokenForm.exclude" label="排除" hint="逗号分隔列表，例如 过期,剩余；留空 = 不排除" persistent-hint data-testid="exclude-field" />
-            </v-expansion-panel-text>
-          </v-expansion-panel>
-        </v-expansion-panels>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
@@ -483,46 +381,64 @@ onMounted(() => {
         @update:model-value="onPresetChange"
       />
       <div class="text-caption text-medium-emphasis mb-2">{{ PRESET_LABELS[preset] }}</div>
-      <div v-if="ignoresFields" data-testid="preset-ignores-fields" class="text-warning mb-2">该预设直接取某个机场的整份快照，不使用字段级策略；要按字段独立聚合请改用 sum/min/max/avg/first/last。</div>
+      <div v-if="ignoresFields" data-testid="preset-ignores-fields" class="text-warning mb-2">该预设使用单个机场的完整数据，不使用字段级策略。</div>
       <div class="d-flex ga-2 flex-wrap">
-        <v-select v-model="upload" :items="FIELD_VALUES" label="上传" hint="上传字段策略" persistent-hint data-testid="upload-field" :disabled="ignoresFields" />
-        <v-select v-model="download" :items="FIELD_VALUES" label="下载" hint="下载字段策略" persistent-hint data-testid="download-field" :disabled="ignoresFields" />
-        <v-select v-model="total" :items="FIELD_VALUES" label="总量" hint="总量字段策略" persistent-hint data-testid="total-field" :disabled="ignoresFields" />
-        <v-select v-model="expire" :items="FIELD_VALUES" label="到期" hint="到期字段策略" persistent-hint data-testid="expire-field" :disabled="ignoresFields" />
+        <v-select v-model="upload" :items="FIELD_VALUES" label="上传" hint="上传流量策略" persistent-hint data-testid="upload-field" :disabled="ignoresFields" />
+        <v-select v-model="download" :items="FIELD_VALUES" label="下载" hint="下载流量策略" persistent-hint data-testid="download-field" :disabled="ignoresFields" />
+        <v-select v-model="total" :items="FIELD_VALUES" label="总量" hint="总流量策略" persistent-hint data-testid="total-field" :disabled="ignoresFields" />
+        <v-select v-model="expire" :items="FIELD_VALUES" label="到期" hint="到期时间策略" persistent-hint data-testid="expire-field" :disabled="ignoresFields" />
       </div>
-      <div data-testid="field-zero-note" class="text-caption text-medium-emphasis mb-2">跳过值为 0 的机场：没上报余额的机场不会拉低结果，但 sum 会少算它的额度。</div>
-      <div class="text-caption text-medium-emphasis mb-2">显式改过的字段优先于预设。</div>
+      <div class="d-flex align-center ga-1 mb-2">
+        <span class="text-caption text-medium-emphasis" data-testid="field-zero-note">数值为 0 的机场不参与计算。</span>
+        <InfoTip text="未获取到流量信息的机场会被跳过；求和时其额度不会计入。" label="流量字段说明" />
+      </div>
       <div class="d-flex ga-2 flex-wrap mb-2">
-        <v-btn size="small" variant="tonal" data-testid="quick-default" @click="applyQuick('sum/sum/sum/min')">默认</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-strict" @click="applyQuick('min/min/min/min')">严格</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-optimistic" @click="applyQuick('max/max/max/max')">乐观</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-independent" @click="applyQuick('avg/avg/avg/avg')">独立</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-hidden" @click="applyQuick('none/none/none/none')">隐藏</v-btn>
+        <v-btn size="small" variant="tonal" data-testid="quick-default" @click="applyQuick('sum/sum/sum/min')">求和</v-btn>
+        <v-btn size="small" variant="tonal" data-testid="quick-strict" @click="applyQuick('min/min/min/min')">最小值</v-btn>
+        <v-btn size="small" variant="tonal" data-testid="quick-optimistic" @click="applyQuick('max/max/max/max')">最大值</v-btn>
+        <v-btn size="small" variant="tonal" data-testid="quick-independent" @click="applyQuick('avg/avg/avg/avg')">平均值</v-btn>
+        <v-btn size="small" variant="tonal" data-testid="quick-hidden" @click="applyQuick('none/none/none/none')">不透传</v-btn>
       </div>
       <div class="d-flex ga-2">
         <v-btn data-testid="save-strategy-btn" :loading="savingStrategy" @click="saveStrategy">保存</v-btn>
         <v-btn data-testid="preview-btn" variant="tonal" :loading="previewing" @click="previewStrategy">试算</v-btn>
       </div>
-      <div v-if="previewHeader !== ''" data-testid="preview-header" class="mt-2"><code>{{ previewHeader }}</code></div>
+      <div v-if="previewUsage !== null" data-testid="preview-summary" class="preview-summary mt-3">
+        <div class="preview-item">
+          <span class="preview-label">上传</span>
+          <span class="preview-value">{{ formatBytes(previewUsage.upload ?? 0) }}</span>
+        </div>
+        <div class="preview-item">
+          <span class="preview-label">下载</span>
+          <span class="preview-value">{{ formatBytes(previewUsage.download ?? 0) }}</span>
+        </div>
+        <div class="preview-item">
+          <span class="preview-label">总量</span>
+          <span class="preview-value">{{ formatBytes(previewUsage.total ?? 0) }}</span>
+        </div>
+        <div class="preview-item">
+          <span class="preview-label">到期</span>
+          <span class="preview-value">{{ formatExpire(previewUsage.expire ?? 0) }}</span>
+        </div>
+      </div>
       <div v-if="previewOk === false" data-testid="preview-okfalse" class="text-medium-emphasis mt-1">
         当前策略不会写入响应头（可能是「不透传」或还没有机场余额数据）。
       </div>
       <div data-testid="strategy-risk-hint" class="text-warning mt-3">
-        策略只影响客户端显示的余额数字，不会改变各机场的真实配额；sum 在机场额度不叠加时会显示虚高的剩余量。
+        策略只影响客户端显示的余额，不会改变各机场的真实配额。
       </div>
     </v-card-text>
   </v-card>
 
   <!-- Block 4: refresh -->
   <v-card class="pa-4 mb-4" data-testid="block-refresh">
-    <v-card-title>余额刷新</v-card-title>
+    <v-card-title>刷新全部机场</v-card-title>
     <v-card-text>
-      <p class="text-body-2 mb-2">刷新会逐个机场拉取上游订阅头，慢是正常的；失败不影响已有余额。</p>
-      <p class="text-body-2 text-medium-emphasis mb-2">刷新失败不会把下游余额清零——subscription-userinfo 仍用上次成功采到的值，失败只记在 traffic_err 里。</p>
-      <v-btn data-testid="refresh-btn" variant="tonal" :loading="refreshLoading" @click="refreshAll">立即刷新全部机场余额</v-btn>
+      <p class="text-body-2 mb-2">逐个请求机场的订阅地址，更新节点、流量与规则源。刷新失败时保留上一次成功获取的余额。</p>
+      <v-btn data-testid="refresh-btn" variant="tonal" :loading="refreshLoading" @click="refreshAll">立即刷新全部机场</v-btn>
       <div v-if="refreshError !== ''" data-testid="refresh-error" class="text-error mt-2">{{ refreshError }}</div>
       <div v-if="refreshResult !== null" data-testid="refresh-summary" class="mt-2">
-        ok={{ refreshResult.ok }} / fail={{ refreshResult.fail }}
+        成功 {{ refreshResult.ok }} 个，失败 {{ refreshResult.fail }} 个
       </div>
       <table v-if="refreshResult !== null" data-testid="refresh-table" class="w-100 mt-2">
         <thead><tr><th>名称</th><th>成功</th><th>节点数</th><th>错误</th></tr></thead>
@@ -541,3 +457,89 @@ onMounted(() => {
     </v-card-text>
   </v-card>
 </template>
+<style scoped>
+.preview-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (min-width: 960px) {
+  .preview-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  background: var(--sf-surface-raised);
+}
+.preview-label {
+  color: var(--sf-text-muted);
+  font-size: 12px;
+}
+.preview-value {
+  color: var(--sf-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.token-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.token-table th,
+.token-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sf-border);
+  text-align: left;
+  vertical-align: middle;
+}
+.token-table th {
+  background: var(--sf-surface-raised);
+  color: var(--sf-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.token-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.token-table tbody tr:hover {
+  background: var(--sf-surface-raised);
+}
+.token-col-token { width: 24%; }
+.token-col-name { width: 20%; }
+.token-col-profile { width: auto; }
+.token-col-actions { width: 128px; }
+.token-value {
+  display: block;
+  overflow: hidden;
+  color: var(--sf-text);
+  font-family: var(--sf-font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-text {
+  display: block;
+  overflow: hidden;
+  color: var(--sf-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-actions {
+  text-align: right !important;
+  white-space: nowrap;
+}
+.token-empty {
+  padding: 18px 12px;
+  border: 1px dashed var(--sf-border);
+  border-radius: 8px;
+  color: var(--sf-text-muted);
+  text-align: center;
+}
+</style>

@@ -8,12 +8,15 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/tktogether/subforge/internal/manifest"
+	"github.com/tktogether/subforge/internal/model"
 )
 
 // ErrRuleManifestMissing 表示规则源清单文件不存在（区别于读取/解析失败）。
@@ -30,6 +33,17 @@ type RuleSourceStatus struct {
 	Dir      string   `json:"dir"`
 	Versions []string `json:"versions"`
 	Latest   string   `json:"latest"`
+	// Origin 是来源类型：airport（机场订阅生成）/ remote（远程清单）。
+	Origin string `json:"origin"`
+	// Label 是界面展示名：机场源去掉内部前缀，远程源等于 name。
+	Label string `json:"label"`
+	// RuleCount 是当前版本产物里的规则条数；读不到时为 0。
+	RuleCount int `json:"rule_count"`
+	// UpdatedAt 是当前版本文件的修改时间（Unix 秒）；无产物时为 0。
+	UpdatedAt int64 `json:"updated_at"`
+	// AirportMissing 表示机场源对应的机场已被删除：源不再可更新，
+	// 解绑方案后允许手动清理。
+	AirportMissing bool `json:"airport_missing"`
 }
 
 // extForRuleSourceFormat 根据输出格式推导文件扩展名（manifest.extForFormat 未导出，此处等价复刻）。
@@ -302,6 +316,102 @@ func (m *Manager) recordCurrentVersions(ctx context.Context, results []manifest.
 	}
 }
 
+// AirportRuleSourcePrefix 是机场订阅生成的规则源内部名前缀（文件名安全）。
+// 界面展示用 AirportRuleSourceLabel 去掉前缀和机场 id。
+const AirportRuleSourcePrefix = "airport-"
+
+// sanitizeSourcePart 把机场名转成可安全用于文件名的片段。
+// Windows 文件名非法字符 < > : " / \ | ? * 与控制字符统一替换为 -。
+func sanitizeSourcePart(name string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(name) {
+		switch r {
+		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
+			b.WriteRune('-')
+		default:
+			if r < 0x20 {
+				b.WriteRune('-')
+				continue
+			}
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Trim(b.String(), " .-")
+	if runes := []rune(out); len(runes) > 80 {
+		out = string(runes[:80])
+	}
+	return out
+}
+
+// AirportRuleSourceName 返回机场规则源的内部名：airport-<id>-<清洗后的机场名>。
+// 带 id 是为了机场改名后仍能稳定对应，且避免两个机场清洗后同名。
+func AirportRuleSourceName(airportName string, airportID int64) string {
+	part := sanitizeSourcePart(airportName)
+	if part == "" {
+		return fmt.Sprintf("%s%d", AirportRuleSourcePrefix, airportID)
+	}
+	return fmt.Sprintf("%s%d-%s", AirportRuleSourcePrefix, airportID, part)
+}
+
+// AirportRuleSourceLabel 从内部名还原展示名：airport-2-守候-SNTP → 守候-SNTP。
+func AirportRuleSourceLabel(name string) string {
+	if !strings.HasPrefix(name, AirportRuleSourcePrefix) {
+		return name
+	}
+	rest := strings.TrimPrefix(name, AirportRuleSourcePrefix)
+	if i := strings.IndexByte(rest, '-'); i >= 0 {
+		if _, err := strconv.ParseInt(rest[:i], 10, 64); err == nil {
+			return rest[i+1:]
+		}
+	}
+	return rest
+}
+
+// isAirportRuleSource 报告内部名是否是机场生成的规则源。
+func isAirportRuleSource(name string) bool {
+	return strings.HasPrefix(name, AirportRuleSourcePrefix)
+}
+
+// ruleSourceRuleCount 读取当前版本产物，返回规则条数与文件修改时间。
+// 读不到或格式不认识时返回 0/0；这是展示信息，不影响规则本身。
+func ruleSourceRuleCount(path string) (int, int64) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0
+	}
+	updated := int64(0)
+	if st, serr := os.Stat(path); serr == nil {
+		updated = st.ModTime().Unix()
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		var doc struct {
+			Rules []string `yaml:"rules"`
+		}
+		if yerr := yaml.Unmarshal(b, &doc); yerr != nil {
+			return 0, updated
+		}
+		n := 0
+		for _, r := range doc.Rules {
+			if strings.TrimSpace(r) != "" {
+				n++
+			}
+		}
+		return n, updated
+	case ".txt", ".text":
+		n := 0
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				n++
+			}
+		}
+		return n, updated
+	default:
+		return 0, updated
+	}
+}
+
 // ListRuleSources 列出每个源的版本状态。manifest 不存在时返回空切片 + nil error。
 // Latest 是「当前版本」：状态文件指针优先，否则最新版本。
 func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, error) {
@@ -333,8 +443,26 @@ func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, erro
 			Format:   mf.Output.Format,
 			Dir:      dir,
 			Versions: versions,
+			Label:    name,
+		}
+		if isAirportRuleSource(name) {
+			status.Origin = "airport"
+			status.Label = AirportRuleSourceLabel(name)
+			// 展示名跟随当前机场名；机场改名后内部源名保持不变。
+			if id, ok := AirportIDFromRuleSourceName(name); ok {
+				if airport, gerr := m.GetAirport(ctx, id); gerr == nil && strings.TrimSpace(airport.Name) != "" {
+					status.Label = airport.Name
+				} else {
+					status.AirportMissing = true
+				}
+			}
+		} else {
+			status.Origin = "remote"
 		}
 		status.Latest = pickCurrentVersion(dir, name, versions)
+		if status.Latest != "" {
+			status.RuleCount, status.UpdatedAt = ruleSourceRuleCount(filepath.Join(dir, status.Latest))
+		}
 		out = append(out, status)
 	}
 	return out, nil
@@ -438,6 +566,32 @@ func (m *Manager) RuleSourceRules(ctx context.Context, names []string) (rules []
 	return rules, warnings
 }
 
+// UpdateRemoteRuleSources 只更新远程清单源；机场规则源由机场刷新路径更新，
+// 避免把机场订阅的完整 YAML（含节点配置）写进规则产物。
+func (m *Manager) UpdateRemoteRuleSources(ctx context.Context) ([]manifest.UpdateResult, error) {
+	mf, err := m.LoadRuleManifest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	remote := make([]manifest.Source, 0, len(mf.Sources))
+	for _, src := range mf.Sources {
+		if !isAirportRuleSource(src.SourceName()) {
+			remote = append(remote, src)
+		}
+	}
+	if len(remote) == 0 {
+		return []manifest.UpdateResult{}, nil
+	}
+	dir, derr := m.ResolveRulesOutputDir(ctx)
+	if derr == nil && dir != "" {
+		mf.Output.Path = dir
+	}
+	mf.Sources = remote
+	results, uerr := mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	m.recordCurrentVersions(ctx, results)
+	return results, uerr
+}
+
 // UpdateRuleSources 执行一次全量更新，返回每个源的结果。
 // 成功写出的源会把「当前版本」指针指向刚生成的新版本。
 func (m *Manager) UpdateRuleSources(ctx context.Context) ([]manifest.UpdateResult, error) {
@@ -497,4 +651,88 @@ func (m *Manager) RollbackRuleSource(ctx context.Context, name string) (string, 
 		return "", fmt.Errorf("回滚规则源 %s: %w", name, err)
 	}
 	return filepath.Join(dir, prev), nil
+}
+
+// RuleSourceRuleProviders 读取给定规则源当前产物里的 rule-providers 定义。
+// 规则源产物可能是原始 Clash YAML（带 rule-providers），也可能是展开后的
+// rules-only 产物（没有 provider）。同名 provider 先出现的源优先。
+func (m *Manager) RuleSourceRuleProviders(ctx context.Context, names []string) ([]model.RuleProvider, []string) {
+	ordered := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		ordered = append(ordered, n)
+	}
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	sources, err := m.ListRuleSources(ctx)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("读取规则源清单失败：%v", err)}
+	}
+	byName := make(map[string]RuleSourceStatus, len(sources))
+	for _, st := range sources {
+		byName[st.Name] = st
+	}
+	var out []model.RuleProvider
+	var warnings []string
+	seenProvider := map[string]bool{}
+	for _, name := range ordered {
+		status, ok := byName[name]
+		if !ok || strings.TrimSpace(status.Latest) == "" {
+			continue
+		}
+		versionPath := filepath.Join(status.Dir, status.Latest)
+		b, rerr := os.ReadFile(versionPath)
+		if rerr != nil {
+			warnings = append(warnings, fmt.Sprintf("读取规则源 %s 的 provider 失败：%v", name, rerr))
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(status.Latest))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		var doc struct {
+			RuleProviders map[string]map[string]any `yaml:"rule-providers"`
+		}
+		if yerr := yaml.Unmarshal(b, &doc); yerr != nil {
+			continue
+		}
+		keys := make([]string, 0, len(doc.RuleProviders))
+		for k := range doc.RuleProviders {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			key = strings.TrimSpace(key)
+			if key == "" || seenProvider[key] {
+				continue
+			}
+			seenProvider[key] = true
+			out = append(out, model.RuleProvider{Name: key, Raw: doc.RuleProviders[key]})
+		}
+	}
+	return out, warnings
+}
+
+// AirportIDFromRuleSourceName 从 airport-<id>-<label> 里取机场 id。
+// 不是机场规则源或格式不对时返回 ok=false。
+func AirportIDFromRuleSourceName(name string) (int64, bool) {
+	if !strings.HasPrefix(name, AirportRuleSourcePrefix) {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(name, AirportRuleSourcePrefix)
+	i := strings.IndexByte(rest, '-')
+	if i < 0 {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(rest[:i], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }

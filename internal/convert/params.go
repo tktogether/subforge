@@ -10,18 +10,31 @@ import (
 	"strings"
 
 	"github.com/tktogether/subforge/internal/config"
+	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/transform"
 )
+
+// Source 是一个独立处理的节点来源。
+// 每个来源先经过自己的 Pipeline，再与其他来源合并；空 Pipeline 表示不处理。
+// URL 来源通常只有一个地址；自建节点集合可以是一组本地文件。
+type Source struct {
+	Name     string
+	URLs     []string
+	Files    []string
+	Pipeline string
+}
 
 // Params 是一次转换请求的解析结果。
 type Params struct {
 	// Target 输出格式（clash.meta / surge / v2ray …）。
 	Target string
-	// URLs 订阅地址列表。
+	// URLs 订阅地址列表（无来源级处理时使用）。
 	URLs []string
 	// Files 本地订阅或配置文件（CLI 入口使用，HTTP API 不填）。
 	Files []string
+	// Sources 是带来源级处理的来源列表；非空时优先于 URLs/Files。
+	Sources []Source
 	// Insert 额外插入的订阅地址。
 	Insert []string
 	// Include / Exclude 节点名正则。
@@ -38,6 +51,8 @@ type Params struct {
 	Groups []render.Group
 	// Rules 规则行（原样透传，如 "GEOIP,CN,DIRECT"）。
 	Rules []string
+	// RuleProviders 规则源产品里的 rule-provider 定义，随订阅一起渲染。
+	RuleProviders []model.RuleProvider
 	// List 仅输出分享链接列表。
 	List bool
 	// UDP 节点启用 udp 转发。
@@ -90,8 +105,8 @@ type Params struct {
 	Extensions map[string][]string
 }
 
-// HasSource 表示是否给出了至少一个订阅来源（URL 或本地文件）。
-func (p Params) HasSource() bool { return len(p.URLs) > 0 || len(p.Files) > 0 }
+// HasSource 表示是否给出了至少一个订阅来源。
+func (p Params) HasSource() bool { return len(p.Sources) > 0 || len(p.URLs) > 0 || len(p.Files) > 0 }
 
 func (p Params) HasURL() bool { return len(p.URLs) > 0 }
 

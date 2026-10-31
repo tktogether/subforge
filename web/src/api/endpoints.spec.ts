@@ -23,6 +23,62 @@ describe('endpoints', () => {
     }
   }
 
+  it('overview → GET /api/overview', async () => {
+    const data = { name: 'subforge', version: 'v1', startedAt: 't', uptime: '1m', counts: {} }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.overview()
+    expect(fetchMock).toHaveBeenCalledWith('/api/overview', expect.objectContaining({ method: 'GET' }))
+    expect(result).toEqual(data)
+  })
+
+  it('getSelfSourcePipeline → GET /api/self-nodes/pipeline', async () => {
+    const data = { pipeline: 'pre' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.getSelfSourcePipeline()
+    expect(fetchMock).toHaveBeenCalledWith('/api/self-nodes/pipeline', expect.objectContaining({ method: 'GET' }))
+    expect(result).toEqual(data)
+  })
+
+  it('setSelfSourcePipeline → PUT /api/self-nodes/pipeline', async () => {
+    const data = { pipeline: 'pre' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.setSelfSourcePipeline('pre')
+    expect(fetchMock).toHaveBeenCalledWith('/api/self-nodes/pipeline', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ pipeline: 'pre' }) }))
+    expect(result).toEqual(data)
+  })
+
+  it('renameRuleSource → POST /api/rule-sources/rename', async () => {
+    const data = { ok: true, name: 'renamed' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.renameRuleSource('old', 'renamed')
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/rename', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'old', new_name: 'renamed' }) }))
+    expect(result).toEqual(data)
+  })
+
+  it('testPipeline → POST /api/pipelines/test', async () => {
+    const data = { name: 'p', before_count: 1, after_count: 1, before: [], after: [], warnings: [] }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.testPipeline({ name: 'p', steps: [], nodes: [] })
+    expect(fetchMock).toHaveBeenCalledWith('/api/pipelines/test', expect.objectContaining({ method: 'POST' }))
+    expect(result).toEqual(data)
+  })
+
+  it('previewAirportProcess → POST /api/airports/1/preview-process', async () => {
+    const data = { name: 'a', before_count: 1, after_count: 1, before: [], after: [], warnings: [] }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.previewAirportProcess(1, 'pre')
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/1/preview-process', expect.objectContaining({ method: 'POST', body: JSON.stringify({ pipeline: 'pre' }) }))
+    expect(result).toEqual(data)
+  })
+
+  it('previewSelfNodesProcess → POST /api/self-nodes/preview-process', async () => {
+    const data = { name: '自建节点', before_count: 0, after_count: 0, before: [], after: [], warnings: [] }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.previewSelfNodesProcess('pre')
+    expect(fetchMock).toHaveBeenCalledWith('/api/self-nodes/preview-process', expect.objectContaining({ method: 'POST', body: JSON.stringify({ pipeline: 'pre' }) }))
+    expect(result).toEqual(data)
+  })
+
   it('stats → GET /api/stats', async () => {
     const data = { history: { total: 1, cachedHits: 0, urlTotal: 1, cacheHitRate: 0 }, logs: 2, last: null }
     fetchMock.mockResolvedValue(respond(data))
@@ -198,6 +254,36 @@ describe('endpoints', () => {
     const result = await endpoints.listRules()
     expect(fetchMock).toHaveBeenCalledWith('/api/rules', expect.objectContaining({ method: 'GET' }))
     expect(result).toEqual(rules)
+  })
+
+  it('listRulesPage 带分页/筛选参数并解包', async () => {
+    fetchMock.mockResolvedValue(respond({ rules: [], total: 3, limit: 2, offset: 1 }))
+    const r = await endpoints.listRulesPage({ source: 'manual', enabled: false, q: 'x', limit: 2, offset: 1 })
+    expect(r.total).toBe(3)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/rules?source=manual&enabled=0&q=x&limit=2&offset=1',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('listRulesPage 全来源/enabled 未设置/空 q 时不带多余参数', async () => {
+    fetchMock.mockResolvedValue(respond({ rules: [], total: 0, limit: 25, offset: 0 }))
+    await endpoints.listRulesPage({ source: null, q: '', limit: 25, offset: 0 })
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules?limit=25&offset=0', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('checkRuleSourceConflicts 传 names 并解包', async () => {
+    fetchMock.mockResolvedValue(respond({ total: 1, samples: [{ type: 'DOMAIN', param: 'dup', first: 'a', second: 'b' }] }))
+    const r = await endpoints.checkRuleSourceConflicts(['a', 'b'])
+    expect(r.total).toBe(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/conflicts?names=a%2Cb', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('listRuleSourceCounts GET /api/rules/sources 解包', async () => {
+    fetchMock.mockResolvedValue(respond({ sources: [{ source: '', count: 2 }] }))
+    const r = await endpoints.listRuleSourceCounts()
+    expect(r).toEqual([{ source: '', count: 2 }])
+    expect(fetchMock).toHaveBeenCalledWith('/api/rules/sources', expect.objectContaining({ method: 'GET' }))
   })
 
   it('createRule 解包 .rule', async () => {
@@ -436,6 +522,29 @@ it('listScripts 解包 .scripts', async () => {
     expect(r.sources).toHaveLength(1)
   })
 
+  it('listRuleSourceRules GET /api/rule-sources/rules 带 name/q/offset/limit', async () => {
+    fetchMock.mockResolvedValue(respond({ name: 's1', total: 1, offset: 0, limit: 50, rules: ['DOMAIN,a.test,DIRECT'] }))
+    const r = await endpoints.listRuleSourceRules('s1', { q: 'x', offset: 0, limit: 50 })
+    expect(r.rules).toEqual(['DOMAIN,a.test,DIRECT'])
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/rule-sources/rules?name=s1&q=x&offset=0&limit=50',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('importRuleSourceRules POST /api/rule-sources/import-rules', async () => {
+    fetchMock.mockResolvedValue(respond({ added: 1, skipped: 0, overwrote: 0, warnings: [] }))
+    const input = { name: 's1', rules: ['DOMAIN,a.test,DIRECT'], conflict: 'skip' as const }
+    const r = await endpoints.importRuleSourceRules(input)
+    expect(r.added).toBe(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/import-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: undefined,
+    })
+  })
+
   it('updateRuleSources POST /api/rule-sources/update', async () => {
     fetchMock.mockResolvedValue(respond({ ok: true, results: [{ name: 's1', status: 'ok' }] }))
     const r = await endpoints.updateRuleSources()
@@ -588,20 +697,6 @@ it('listScripts 解包 .scripts', async () => {
     const call = fetchMock.mock.calls[0]
     expect(JSON.parse(call[1].body as string)).toEqual({ index: 0 })
   })
-
-  it('initRuleManifest() POST /api/rule-sources/init', async () => {
-    fetchMock.mockResolvedValue(respond({ path: '/m', created: true }))
-    const r = await endpoints.initRuleManifest()
-    expect(r.created).toBe(true)
-    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/init', expect.objectContaining({ method: 'POST' }))
-  })
-
-  it('initRuleManifest(true) POST /api/rule-sources/init?force=1', async () => {
-    fetchMock.mockResolvedValue(respond({ path: '/m', created: false }))
-    await endpoints.initRuleManifest(true)
-    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/init?force=1', expect.objectContaining({ method: 'POST' }))
-  })
-
 
   it('createPipeline(body) → POST /api/pipelines 解出 pipeline', async () => {
     const body = { name: 'p', description: 'd', steps: [{ op: 'op.sort' }], enabled: true }

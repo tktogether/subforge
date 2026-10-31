@@ -47,3 +47,10 @@ func TestDefaultConfig_UsesDefaultUserAgent(t *testing.T) {
 		t.Fatalf("DefaultConfig().UserAgent = %q，want %q", got, want)
 	}
 }
+
+// TestDefaultConfig_UsesFallbackUserAgent 校验默认配置启用备用 UA。
+func TestDefaultConfig_UsesFallbackUserAgent(t *testing.T) {
+	if got, want := DefaultConfig().FallbackUserAgent, DefaultFallbackUserAgent(); got != want {
+		t.Fatalf("DefaultConfig().FallbackUserAgent = %q, want %q", got, want)
+	}
+}
