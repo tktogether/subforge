@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tktogether/subforge/internal/manifest"
@@ -149,4 +150,133 @@ func (m *Manager) UpdateRuleSourceOne(ctx context.Context, name string) ([]manif
 	// 单源更新也要把该源的「当前版本」指向刚写出的新版本（与全量更新一致）。
 	m.recordCurrentVersions(ctx, results)
 	return results, uerr
+}
+
+// validateRuleSourceRenameName 校验可用于文件名的新名称。
+func validateRuleSourceRenameName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("新名称不能为空")
+	}
+	if strings.ContainsAny(name, `/\:*?"<>|`) {
+		return fmt.Errorf("新名称不能包含 / \\ : * ? \" < > |")
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("新名称不合法")
+	}
+	return nil
+}
+
+// renameCurrentVersion 把当前版本指针从旧源名迁移到新源名，并同步版本文件名。
+func renameCurrentVersion(dir, oldName, newName string) {
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	currentVersionsMu.Lock()
+	defer currentVersionsMu.Unlock()
+	versions := loadCurrentVersions(dir)
+	oldVersion, ok := versions[oldName]
+	if !ok {
+		return
+	}
+	delete(versions, oldName)
+	if strings.HasPrefix(oldVersion, oldName+"-") {
+		oldVersion = newName + strings.TrimPrefix(oldVersion, oldName)
+	}
+	versions[newName] = oldVersion
+	_ = saveCurrentVersions(dir, versions)
+}
+
+// RenameRuleSource 重命名远程规则源，并迁移版本文件、当前版本指针和方案绑定。
+//
+// 机场生成的规则源名称跟随机场，不能在这里改名；请修改机场名称。
+func (m *Manager) RenameRuleSource(ctx context.Context, oldName, newName string) (string, error) {
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	if oldName == "" {
+		return "", fmt.Errorf("原名称不能为空")
+	}
+	if isAirportRuleSource(oldName) {
+		return "", fmt.Errorf("机场规则源名称跟随机场，不能单独改名；请修改机场名称")
+	}
+	if err := validateRuleSourceRenameName(newName); err != nil {
+		return "", err
+	}
+	if oldName == newName {
+		return "", fmt.Errorf("新名称不能与原名称相同")
+	}
+	path, err := m.ResolveRuleManifestPath(ctx)
+	if err != nil {
+		return "", err
+	}
+	mf, err := manifest.LoadManifestRaw(path)
+	if err != nil {
+		return "", fmt.Errorf("读取规则源清单 %s: %w", path, err)
+	}
+	found := false
+	for _, s := range mf.Sources {
+		if s.SourceName() == newName {
+			return "", fmt.Errorf("规则源 %q 已存在", newName)
+		}
+		if s.SourceName() == oldName {
+			found = true
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("规则源 %q 不存在", oldName)
+	}
+
+	ext := extForRuleSourceFormat(mf.Output.Format)
+	dir, derr := m.ResolveRulesOutputDir(ctx)
+	if derr != nil {
+		dir = mf.Output.Path
+	}
+	if strings.TrimSpace(dir) != "" {
+		versions, lerr := manifest.ListVersions(dir, oldName, ext)
+		if lerr == nil {
+			for _, oldFile := range versions {
+				newFile := newName + strings.TrimPrefix(oldFile, oldName)
+				if _, statErr := os.Stat(filepath.Join(dir, newFile)); statErr == nil {
+					return "", fmt.Errorf("目标版本文件已存在: %s", newFile)
+				}
+				if rerr := os.Rename(filepath.Join(dir, oldFile), filepath.Join(dir, newFile)); rerr != nil {
+					return "", fmt.Errorf("重命名版本文件 %s: %w", oldFile, rerr)
+				}
+			}
+		}
+		renameCurrentVersion(dir, oldName, newName)
+	}
+
+	for i := range mf.Sources {
+		if mf.Sources[i].SourceName() == oldName {
+			mf.Sources[i].Name = newName
+		}
+	}
+	if err := mf.ValidateForWrite(); err != nil {
+		return "", err
+	}
+	if err := manifest.SaveManifest(path, mf); err != nil {
+		return "", err
+	}
+
+	profiles, err := m.ListProfiles(ctx)
+	if err != nil {
+		return path, err
+	}
+	for _, p := range profiles {
+		changed := false
+		next := make([]string, 0, len(p.RuleSources))
+		for _, name := range p.RuleSources {
+			if name == oldName {
+				name = newName
+				changed = true
+			}
+			next = append(next, name)
+		}
+		if changed {
+			if err := m.SetProfileRuleSources(ctx, p.ID, next); err != nil {
+				return path, fmt.Errorf("更新方案 %q 的规则源绑定: %w", p.Name, err)
+			}
+		}
+	}
+	return path, nil
 }

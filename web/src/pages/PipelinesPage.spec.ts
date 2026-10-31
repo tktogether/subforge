@@ -18,6 +18,7 @@ vi.mock('../api/endpoints', async () => {
       createPipeline: vi.fn(),
       updatePipeline: vi.fn(),
       deletePipeline: vi.fn(),
+      testPipeline: vi.fn(),
     },
   }
 })
@@ -27,6 +28,7 @@ const scriptsMock = endpoints.listScripts as unknown as ReturnType<typeof vi.fn>
 const createMock = endpoints.createPipeline as unknown as ReturnType<typeof vi.fn>
 const updateMock = endpoints.updatePipeline as unknown as ReturnType<typeof vi.fn>
 const deleteMock = endpoints.deletePipeline as unknown as ReturnType<typeof vi.fn>
+const testPipelineMock = endpoints.testPipeline as unknown as ReturnType<typeof vi.fn>
 
 const vuetify = createVuetify({ components, directives })
 
@@ -49,6 +51,7 @@ describe('PipelinesPage', () => {
     vi.clearAllMocks()
     pipelinesMock.mockResolvedValue(samplePipelines)
     scriptsMock.mockResolvedValue(sampleScripts)
+    testPipelineMock.mockResolvedValue({ name: 'pipe-a', before_count: 3, after_count: 1, before: [], after: [{ name: 'HK-01', type: 'ss', server: 'hk.example.com', port: '8388' }], warnings: [] })
     // jsdom 缺 visualViewport，VOverlay 需要
     ;(window as any).visualViewport = { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true }
   })
@@ -811,6 +814,114 @@ describe('PipelinesPage 覆盖率补齐（D-16 守卫）', () => {
     expect(vm.scriptRefKind({ op: 'filter.script', args: {} })).toBe('')
     expect(vm.scriptRefKind({ op: 'filter.script', args: { ref: '' } })).toBe('')
     expect(vm.scriptRefKind({ op: 'op.rename', args: {} })).toBe('')
+    w.unmount()
+  })
+})
+
+describe('PipelinesPage 试运行', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    pipelinesMock.mockResolvedValue(samplePipelines)
+    scriptsMock.mockResolvedValue(sampleScripts)
+    testPipelineMock.mockResolvedValue({ name: 'pipe-a', before_count: 3, after_count: 1, before: [], after: [{ name: 'HK-01', type: 'ss', server: 'hk.example.com', port: '8388' }], warnings: [] })
+    ;(window as any).visualViewport = { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true }
+  })
+
+  it('列表行试运行使用已保存步骤并展示结果', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-test"]').trigger('click')
+    await flushPromises()
+    expect((w.vm as any).testDialog).toBe(true)
+    await (w.vm as any).runPipelineTest()
+    await flushPromises()
+    expect(testPipelineMock).toHaveBeenCalledWith(expect.objectContaining({ name: 'pipe-a', steps: expect.any(Array) }))
+    expect((w.vm as any).testResult.after_count).toBe(1)
+    w.unmount()
+  })
+
+  it('编辑中的草稿可直接试运行', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-new"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).addStep()
+    await flushPromises()
+    ;(w.vm as any).openDraftTest()
+    await flushPromises()
+    expect((w.vm as any).testSteps.length).toBe(1)
+    await (w.vm as any).runPipelineTest()
+    await flushPromises()
+    expect(testPipelineMock).toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('测试节点 JSON 非法时提示错误', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-test"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).testNodesText = 'not-json'
+    await (w.vm as any).runPipelineTest()
+    await flushPromises()
+    expect((w.vm as any).testError).toContain('JSON')
+    w.unmount()
+  })
+})
+
+describe('PipelinesPage 试运行覆盖', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    pipelinesMock.mockResolvedValue(samplePipelines)
+    scriptsMock.mockResolvedValue(sampleScripts)
+    ;(window as any).visualViewport = { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true }
+  })
+
+  it('试运行失败显示错误', async () => {
+    testPipelineMock.mockRejectedValueOnce(new Error('test boom'))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-test"]').trigger('click')
+    await flushPromises()
+    await (w.vm as any).runPipelineTest()
+    await flushPromises()
+    expect((w.vm as any).testError).toBe('test boom')
+    w.unmount()
+  })
+
+  it('试运行结果带 warnings 时渲染告警并支持关闭弹窗', async () => {
+    testPipelineMock.mockResolvedValueOnce({ name: 'pipe-a', before_count: 1, after_count: 1, before: [], after: [], warnings: ['warn-a'] })
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-test"]').trigger('click')
+    await flushPromises()
+    await (w.vm as any).runPipelineTest()
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="pipeline-test-warnings"]')).toBeTruthy()
+    const close = document.body.querySelector('[data-testid="pipeline-test-close"]') as HTMLElement | null
+    expect(close).toBeTruthy()
+    close!.click()
+    await flushPromises()
+    expect((w.vm as any).testDialog).toBe(false)
+    w.unmount()
+  })
+
+  it('测试节点文本可编辑并触发 v-model', async () => {
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="pipeline-test"]').trigger('click')
+    await flushPromises()
+    const ta = document.body.querySelector('[data-testid="pipeline-test-nodes"] textarea') as HTMLTextAreaElement | null
+    expect(ta).toBeTruthy()
+    ta!.value = '[{"name":"X","type":"ss","server":"s","port":1}]'
+    ta!.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    expect((w.vm as any).testNodesText).toContain('"X"')
+    const dialog = w.findAllComponents({ name: 'VDialog' }).find((d) => d.props('maxWidth') === '760' && d.props('modelValue') === true)
+    expect(dialog).toBeTruthy()
+    dialog!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect((w.vm as any).testDialog).toBe(false)
     w.unmount()
   })
 })

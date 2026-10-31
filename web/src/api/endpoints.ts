@@ -405,6 +405,23 @@ export interface AlertChannel {
   from?: string; to?: string; configured?: Record<string, boolean>
 }
 export interface AlertTestResult { ok: boolean; error: string; channel: string }
+export interface PreviewNode {
+  name: string
+  type: string
+  server: string
+  port: string
+}
+
+export interface NodePreviewResult {
+  name: string
+  pipeline?: string
+  before_count: number
+  after_count: number
+  before: PreviewNode[]
+  after: PreviewNode[]
+  warnings?: string[]
+}
+
 export interface RuleSourcesResponse {
   manifest_path: string
   default_manifest_path?: string
@@ -590,8 +607,16 @@ export const endpoints = {
     api.post<{ path: string; created: boolean }>('/api/rule-sources', body),
   removeRuleSource: (name: string): Promise<OkResponse> =>
     api.post<OkResponse>('/api/rule-sources/remove', { name }),
+  renameRuleSource: (name: string, newName: string): Promise<{ ok: boolean; name: string }> =>
+    api.post<{ ok: boolean; name: string }>('/api/rule-sources/rename', { name, new_name: newName }),
   updateRuleSourceOne: (name: string): Promise<{ results: RuleSourceUpdateResult[] }> =>
     api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update-one', { name }),
+  testPipeline: (body: { name: string; steps: unknown[]; nodes?: unknown[] }): Promise<NodePreviewResult> =>
+    api.post<NodePreviewResult>('/api/pipelines/test', body),
+  previewAirportProcess: (id: number | string, pipeline = ''): Promise<NodePreviewResult> =>
+    api.post<NodePreviewResult>('/api/airports/' + id + '/preview-process', { pipeline }),
+  previewSelfNodesProcess: (pipeline = ''): Promise<NodePreviewResult> =>
+    api.post<NodePreviewResult>('/api/self-nodes/preview-process', { pipeline }),
 
   listSettings: (): Promise<{ settings: SettingItem[] }> => api.get<{ settings: SettingItem[] }>('/api/settings'),
   updateSettings: (values: Record<string, string>): Promise<{ settings: SettingItem[] }> => api.put<{ settings: SettingItem[] }>('/api/settings', { settings: values }),

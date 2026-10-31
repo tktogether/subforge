@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { pageHelp } from '../content/help'
 import ResourcePage from '../components/ResourcePage.vue'
-import { endpoints } from '../api/endpoints'
+import NodePreviewDialog from '../components/NodePreviewDialog.vue'
+import { endpoints, type NodePreviewResult } from '../api/endpoints'
 import { notify } from '../composables/useNotify'
 import { errorMessage } from '../composables/useAsync'
 
@@ -11,6 +12,24 @@ const help = pageHelp('self-nodes')
 const pipeline = ref('')
 const pipelineOptions = ref<{ title: string; value: string }[]>([])
 const pipelineSaving = ref(false)
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const previewError = ref('')
+const previewResult = ref<NodePreviewResult | null>(null)
+
+async function previewProcess(): Promise<void> {
+  previewOpen.value = true
+  previewLoading.value = true
+  previewError.value = ''
+  previewResult.value = null
+  try {
+    previewResult.value = await endpoints.previewSelfNodesProcess(pipeline.value.trim())
+  } catch (err) {
+    previewError.value = errorMessage(err)
+  } finally {
+    previewLoading.value = false
+  }
+}
 const pipelineItems = computed(() => {
   const items = [...pipelineOptions.value]
   const current = pipeline.value.trim()
@@ -90,6 +109,7 @@ const resource: any = {
           class="self-source-select"
         />
         <v-btn color="primary" :loading="pipelineSaving" data-testid="self-source-save" @click="saveSourcePipeline">保存</v-btn>
+        <v-btn variant="tonal" prepend-icon="mdi-eye-outline" data-testid="self-preview-process" @click="previewProcess">预览处理</v-btn>
       </div>
     </v-card>
 
@@ -117,6 +137,13 @@ const resource: any = {
         </v-expansion-panel-text>
       </v-expansion-panel>
     </v-expansion-panels>
+    <NodePreviewDialog
+      v-model="previewOpen"
+      title="自建节点处理预览"
+      :loading="previewLoading"
+      :error="previewError"
+      :result="previewResult"
+    />
   </div>
 </template>
 

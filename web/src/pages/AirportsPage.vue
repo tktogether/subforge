@@ -7,12 +7,14 @@ import {
   type ImportRulesOutcome,
   type ImportRulesResult,
   type SubscheckResult,
+  type NodePreviewResult,
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { pageHelp, fieldHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
+import NodePreviewDialog from '../components/NodePreviewDialog.vue'
 import { formatBytes, formatDuration, formatExpire } from '../format'
 
 type AirportRow = Airport & {
@@ -60,6 +62,25 @@ const editing = ref<AirportRow | null>(null)
 const draft = ref<AirportInput>({ name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '' })
 
 const pipelineOptions = ref<{ title: string; value: string }[]>([])
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const previewError = ref('')
+const previewResult = ref<NodePreviewResult | null>(null)
+
+async function previewProcess(): Promise<void> {
+  if (editing.value === null) return
+  previewOpen.value = true
+  previewLoading.value = true
+  previewError.value = ''
+  previewResult.value = null
+  try {
+    previewResult.value = await endpoints.previewAirportProcess(editing.value.id, draft.value.pipeline ?? '')
+  } catch (err) {
+    previewError.value = errorMessage(err)
+  } finally {
+    previewLoading.value = false
+  }
+}
 const pipelineItems = computed(() => {
   const items = [...pipelineOptions.value]
   const current = draft.value.pipeline ?? ''
@@ -523,6 +544,10 @@ async function restoreLastCheck(): Promise<void> {
             data-testid="airport-pipeline"
             class="mb-3"
           />
+          <div class="d-flex align-center ga-2 mb-3">
+            <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-outline" :disabled="editing === null" data-testid="airport-preview-process" @click="previewProcess">预览处理</v-btn>
+            <span class="text-caption text-medium-emphasis">{{ editing === null ? '保存机场后可预览处理结果' : '按当前选择的管线预览该机场的节点' }}</span>
+          </div>
           <v-switch v-model="draft.enabled" data-testid="airport-enabled-new" label="启用"></v-switch>
         </v-card-text>
         <v-card-actions>
@@ -564,6 +589,14 @@ async function restoreLastCheck(): Promise<void> {
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <NodePreviewDialog
+      v-model="previewOpen"
+      title="机场处理预览"
+      :loading="previewLoading"
+      :error="previewError"
+      :result="previewResult"
+    />
   </div>
 </template>
 

@@ -165,6 +165,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/history", s.handleAPIHistory)
 		r.Get("/pipelines", s.handleAPIPipelines)
 		r.Post("/pipelines", s.handleAPIPipelinesCreate)
+		r.Post("/pipelines/test", s.handleAPIPipelineTest)
 		r.Get("/pipelines/{id}", s.handleAPIPipeline)
 		r.Put("/pipelines/{id}", s.handleAPIPipeline)
 		r.Delete("/pipelines/{id}", s.handleAPIPipeline)
@@ -188,6 +189,7 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/", s.handleAPIAirport)
 			r.Post("/refresh", s.handleAPIAirportRefreshOne)
 			r.Post("/import-rules", s.handleAPIImportRules)
+			r.Post("/preview-process", s.handleAPIAirportPreviewProcess)
 		})
 	})
 	r.Route("/api/groups", func(r chi.Router) {
@@ -233,6 +235,7 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/", s.handleAPISelfNodes)
 		r.Get("/pipeline", s.handleAPISelfSourcePipeline)
 		r.Put("/pipeline", s.handleAPISelfSourcePipeline)
+		r.Post("/preview-process", s.handleAPISelfNodesPreviewProcess)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", s.handleAPISelfNode)
 			r.Put("/", s.handleAPISelfNode)
@@ -277,6 +280,7 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/api/rule-sources/mrs", s.handleAPIRuleSourcesMRS)
 	r.Post("/api/rule-sources", s.handleAPIRuleSourcesAdd)
 	r.Post("/api/rule-sources/remove", s.handleAPIRuleSourcesRemove)
+	r.Post("/api/rule-sources/rename", s.handleAPIRuleSourceRename)
 	r.Post("/api/rule-sources/update-one", s.handleAPIRuleSourcesUpdateOne)
 	r.Get("/api/configs", s.handleAPIConfigs)
 	r.Route("/api/settings", func(r chi.Router) {

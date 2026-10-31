@@ -16,6 +16,7 @@ vi.mock('../api/endpoints', () => ({
     generateMRS: vi.fn(),
     addRuleSource: vi.fn(),
     removeRuleSource: vi.fn(),
+    renameRuleSource: vi.fn(),
     updateRuleSourceOne: vi.fn(),
     listRuleSourceRules: vi.fn(),
     importRuleSourceRules: vi.fn(),
@@ -31,6 +32,7 @@ const rollbackMock = endpoints.rollbackRuleSource as unknown as ReturnType<typeo
 const mrsMock = endpoints.generateMRS as unknown as ReturnType<typeof vi.fn>
 const addMock = endpoints.addRuleSource as unknown as ReturnType<typeof vi.fn>
 const removeMock = endpoints.removeRuleSource as unknown as ReturnType<typeof vi.fn>
+const renameMock = endpoints.renameRuleSource as unknown as ReturnType<typeof vi.fn>
 const updateOneMock = endpoints.updateRuleSourceOne as unknown as ReturnType<typeof vi.fn>
 const listRulesMock = endpoints.listRuleSourceRules as unknown as ReturnType<typeof vi.fn>
 const importRulesMock = endpoints.importRuleSourceRules as unknown as ReturnType<typeof vi.fn>
@@ -65,6 +67,7 @@ describe('RuleSourcesPage', () => {
     mrsMock.mockResolvedValue({ path: '/d/v2.mrs', bytes: 1024 })
     addMock.mockResolvedValue({ path: '/m/manifest.yaml', created: true })
     removeMock.mockResolvedValue({ ok: true })
+    renameMock.mockResolvedValue({ ok: true, name: 'renamed' })
     updateOneMock.mockResolvedValue({ results: [{ source: 'src1', version: 'v3', path: '/p/v3', from_cache: false, err: '' }] })
     listRulesMock.mockResolvedValue({ name: 'src1', total: 2, offset: 0, limit: 50, rules: ['DOMAIN-SUFFIX,a.test,DIRECT', 'IP-CIDR,1.1.1.1/32,DIRECT,no-resolve'] })
     importRulesMock.mockResolvedValue({ added: 2, skipped: 0, overwrote: 0, warnings: [] })
@@ -840,5 +843,83 @@ describe('RuleSourcesPage 覆盖率补齐（MRS 更新中守卫）', () => {
     } finally {
       w.unmount()
     }
+  })
+})
+
+describe('RuleSourcesPage 改名', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue(makeManifest())
+    renameMock.mockResolvedValue({ ok: true, name: 'renamed' })
+  })
+
+  it('远程规则源可打开改名弹窗并提交', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="source-rename"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).renameValue = 'renamed'
+    await (w.vm as any).confirmRename()
+    await flushPromises()
+    expect(renameMock).toHaveBeenCalledWith('src1', 'renamed')
+    w.unmount()
+  })
+
+  it('机场规则源禁止改名，直接调用也被守卫', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const rows = w.findAll('[data-testid="source-row"]')
+    expect(rows[1].find('[data-testid="source-rename"]').attributes('disabled')).toBeDefined()
+    ;(w.vm as any).openRename(makeSources()[1])
+    await flushPromises()
+    expect((w.vm as any).renameDialog).toBe(false)
+    w.unmount()
+  })
+})
+
+describe('RuleSourcesPage 改名覆盖', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue(makeManifest())
+    renameMock.mockResolvedValue({ ok: true, name: 'renamed' })
+  })
+
+  it('改名守卫：进行中/空名/同名都直接返回', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const vm = w.vm as any
+    vm.openRename(makeSources()[0])
+    vm.renameSaving = true
+    await vm.confirmRename()
+    expect(renameMock).not.toHaveBeenCalled()
+    vm.renameSaving = false
+    vm.renameValue = '   '
+    await vm.confirmRename()
+    expect(renameMock).not.toHaveBeenCalled()
+    vm.renameValue = 'src1'
+    await vm.confirmRename()
+    expect(renameMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('改名失败提示错误；输入 v-model 与取消按钮可写回', async () => {
+    renameMock.mockRejectedValueOnce(new Error('rename boom'))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="source-rename"]').trigger('click')
+    await flushPromises()
+    const input = document.body.querySelector('[data-testid="source-rename-input"] input') as HTMLInputElement | null
+    expect(input).toBeTruthy()
+    input!.value = 'renamed'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    await (w.vm as any).confirmRename()
+    await flushPromises()
+    expect(notifyState.kind).toBe('error')
+    const cancel = document.body.querySelector('[data-testid="source-rename-cancel"]') as HTMLElement | null
+    expect(cancel).toBeTruthy()
+    cancel!.click()
+    await flushPromises()
+    expect((w.vm as any).renameDialog).toBe(false)
+    w.unmount()
   })
 })

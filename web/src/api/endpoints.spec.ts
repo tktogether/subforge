@@ -47,6 +47,38 @@ describe('endpoints', () => {
     expect(result).toEqual(data)
   })
 
+  it('renameRuleSource → POST /api/rule-sources/rename', async () => {
+    const data = { ok: true, name: 'renamed' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.renameRuleSource('old', 'renamed')
+    expect(fetchMock).toHaveBeenCalledWith('/api/rule-sources/rename', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'old', new_name: 'renamed' }) }))
+    expect(result).toEqual(data)
+  })
+
+  it('testPipeline → POST /api/pipelines/test', async () => {
+    const data = { name: 'p', before_count: 1, after_count: 1, before: [], after: [], warnings: [] }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.testPipeline({ name: 'p', steps: [], nodes: [] })
+    expect(fetchMock).toHaveBeenCalledWith('/api/pipelines/test', expect.objectContaining({ method: 'POST' }))
+    expect(result).toEqual(data)
+  })
+
+  it('previewAirportProcess → POST /api/airports/1/preview-process', async () => {
+    const data = { name: 'a', before_count: 1, after_count: 1, before: [], after: [], warnings: [] }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.previewAirportProcess(1, 'pre')
+    expect(fetchMock).toHaveBeenCalledWith('/api/airports/1/preview-process', expect.objectContaining({ method: 'POST', body: JSON.stringify({ pipeline: 'pre' }) }))
+    expect(result).toEqual(data)
+  })
+
+  it('previewSelfNodesProcess → POST /api/self-nodes/preview-process', async () => {
+    const data = { name: '自建节点', before_count: 0, after_count: 0, before: [], after: [], warnings: [] }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.previewSelfNodesProcess('pre')
+    expect(fetchMock).toHaveBeenCalledWith('/api/self-nodes/preview-process', expect.objectContaining({ method: 'POST', body: JSON.stringify({ pipeline: 'pre' }) }))
+    expect(result).toEqual(data)
+  })
+
   it('stats → GET /api/stats', async () => {
     const data = { history: { total: 1, cachedHits: 0, urlTotal: 1, cacheHitRate: 0 }, logs: 2, last: null }
     fetchMock.mockResolvedValue(respond(data))

@@ -20,6 +20,7 @@ vi.mock('../api/endpoints', async () => {
       getSelfSourcePipeline: vi.fn(),
       setSelfSourcePipeline: vi.fn(),
       pipelines: vi.fn(),
+      previewSelfNodesProcess: vi.fn(),
     },
   }
 })
@@ -31,6 +32,7 @@ const deleteMock = endpoints.deleteSelfNode as unknown as ReturnType<typeof vi.f
 const getSourcePipelineMock = endpoints.getSelfSourcePipeline as unknown as ReturnType<typeof vi.fn>
 const setSourcePipelineMock = endpoints.setSelfSourcePipeline as unknown as ReturnType<typeof vi.fn>
 const pipelinesMock = endpoints.pipelines as unknown as ReturnType<typeof vi.fn>
+const previewProcessMock = endpoints.previewSelfNodesProcess as unknown as ReturnType<typeof vi.fn>
 const vuetify = createVuetify({ components, directives })
 
 describe('SelfNodesPage', () => {
@@ -40,6 +42,7 @@ describe('SelfNodesPage', () => {
     getSourcePipelineMock.mockResolvedValue({ pipeline: '' })
     pipelinesMock.mockResolvedValue([])
     setSourcePipelineMock.mockResolvedValue({ pipeline: '' })
+    previewProcessMock.mockResolvedValue({ name: '自建节点', pipeline: '', before_count: 0, after_count: 0, before: [], after: [], warnings: [] })
   })
 
   it('把 title/subtitle/columns/fields/resource/help-key 原样传给 ResourcePage', async () => {
@@ -218,6 +221,51 @@ describe('SelfNodesPage 来源处理当前值', () => {
     const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'self-source-pipeline')
     expect(select).toBeTruthy()
     expect((select!.props('items') as { value: string }[]).some((i) => i.value === 'legacy')).toBe(true)
+    w.unmount()
+  })
+})
+
+describe('SelfNodesPage 处理预览', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ;(window as any).visualViewport = { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true }
+    listMock.mockResolvedValue([])
+    getSourcePipelineMock.mockResolvedValue({ pipeline: 'pre' })
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }])
+    setSourcePipelineMock.mockResolvedValue({ pipeline: 'pre' })
+    previewProcessMock.mockResolvedValue({ name: '自建节点', pipeline: 'pre', before_count: 2, after_count: 2, before: [], after: [{ name: 'S-01', type: 'ss', server: 's', port: '443' }], warnings: [] })
+  })
+
+  it('按当前管线预览自建节点处理结果', async () => {
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    await flushPromises()
+    expect(previewProcessMock).toHaveBeenCalledWith('pre')
+    expect((w.vm as any).previewResult.after_count).toBe(2)
+    w.unmount()
+  })
+
+  it('预览失败时显示错误', async () => {
+    previewProcessMock.mockRejectedValueOnce(new Error('self preview boom'))
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    await flushPromises()
+    expect((w.vm as any).previewError).toBe('self preview boom')
+    w.unmount()
+  })
+
+  it('预览弹窗关闭时写回 previewOpen=false', async () => {
+    const w = mount(SelfNodesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).previewOpen = true
+    await flushPromises()
+    const dialog = w.findComponent({ name: 'NodePreviewDialog' })
+    expect(dialog.exists()).toBe(true)
+    dialog.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect((w.vm as any).previewOpen).toBe(false)
     w.unmount()
   })
 })

@@ -36,6 +36,10 @@ const addSaving = ref(false)
 const removeDialog = ref(false)
 const removeName = ref('')
 const removeSaving = ref(false)
+const renameDialog = ref(false)
+const renameName = ref('')
+const renameValue = ref('')
+const renameSaving = ref(false)
 const updatingOne = ref('')
 // updating 表示「有一条会改动版本状态的请求正在飞」：全部更新、单源更新、回滚、生成 MRS。
 // 请求期间把所有会再次发请求的按钮一起 disable —— 之前没有这个状态，双击「全部更新」
@@ -159,6 +163,30 @@ async function confirmAdd(): Promise<void> {
     notify(errorMessage(err), 'error')
   } finally {
     addSaving.value = false
+  }
+}
+
+function openRename(source: RuleSource): void {
+  if (source.origin === 'airport') return
+  renameName.value = source.name
+  renameValue.value = source.name
+  renameDialog.value = true
+}
+
+async function confirmRename(): Promise<void> {
+  if (renameSaving.value) return
+  const next = renameValue.value.trim()
+  if (next === '' || next === renameName.value) return
+  renameSaving.value = true
+  try {
+    await endpoints.renameRuleSource(renameName.value, next)
+    renameDialog.value = false
+    notify('已改名为 ' + next, 'ok')
+    await load()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    renameSaving.value = false
   }
 }
 
@@ -468,6 +496,7 @@ onMounted(() => {
           <td>{{ s.rule_count ?? 0 }}</td>
           <td>{{ updatedText(s.updated_at) }}</td>
           <td>
+            <v-btn size="small" variant="text" data-testid="source-rename" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源名称跟随机场，请修改机场名称' : '重命名规则源'" @click="openRename(s)">改名</v-btn>
             <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" :disabled="updating" @click="updateOne(s.name)">更新</v-btn>
             <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
             <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="updating || s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
@@ -546,6 +575,20 @@ onMounted(() => {
   </v-dialog>
 
   <!-- Remove rule source dialog -->
+  <v-dialog v-model="renameDialog" max-width="460">
+    <v-card>
+      <v-card-title>重命名规则源</v-card-title>
+      <v-card-text>
+        <v-text-field v-model="renameValue" label="新名称" hint="引用该规则源的方案会自动更新绑定" variant="outlined" density="comfortable" persistent-hint data-testid="source-rename-input" />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="source-rename-cancel" @click="renameDialog = false">取消</v-btn>
+        <v-btn color="primary" :loading="renameSaving" :disabled="renameValue.trim() === '' || renameValue.trim() === renameName" data-testid="source-rename-confirm" @click="confirmRename">保存</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
   <v-dialog v-model="removeDialog" max-width="420">
     <v-card data-testid="remove-dialog">
       <v-card-title>删除规则源</v-card-title>

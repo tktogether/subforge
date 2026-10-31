@@ -667,3 +667,29 @@ func (s *Server) handleAPIRuleSourceConflicts(w http.ResponseWriter, r *http.Req
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"total": total, "samples": samples})
 }
+
+// handleAPIRuleSourceRename 处理 POST /api/rule-sources/rename。
+func (s *Server) handleAPIRuleSourceRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name    string `json:"name"`
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("请求参数格式不正确: %w", err))
+		return
+	}
+	path, err := m.RenameRuleSource(r.Context(), req.Name, req.NewName)
+	if err != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "manifest_path": path, "name": strings.TrimSpace(req.NewName)})
+}

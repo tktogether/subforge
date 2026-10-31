@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { endpoints, type Pipeline, type PipelineInput, type PipelineStep, type Script } from '../api/endpoints'
+import { endpoints, type Pipeline, type PipelineInput, type PipelineStep, type NodePreviewResult, type Script } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { pageHelp } from '../content/help'
 import { PIPELINE_HELP } from '../content/help'
@@ -47,6 +47,58 @@ const saveError = ref('')
 
 const confirmOpen = ref(false)
 const pendingDelete = ref<Pipeline | null>(null)
+
+const DEFAULT_TEST_NODES = JSON.stringify([
+  { name: '香港 01', type: 'ss', server: 'hk.example.com', port: 8388 },
+  { name: '日本 01', type: 'vmess', server: 'jp.example.com', port: 443 },
+  { name: '美国 01', type: 'trojan', server: 'us.example.com', port: 443 },
+], null, 2)
+
+const testDialog = ref(false)
+const testName = ref('')
+const testSteps = ref<{ op: string; args: Record<string, string>; on_error?: string }[]>([])
+const testNodesText = ref(DEFAULT_TEST_NODES)
+const testLoading = ref(false)
+const testError = ref('')
+const testResult = ref<NodePreviewResult | null>(null)
+
+function openTest(p: Pipeline): void {
+  testName.value = p.name
+  testSteps.value = parseSteps(p.steps_json).map((s) => ({ op: s.op, args: s.args ?? {}, on_error: s.on_error ?? '' }))
+  testNodesText.value = DEFAULT_TEST_NODES
+  testError.value = ''
+  testResult.value = null
+  testDialog.value = true
+}
+
+function openDraftTest(): void {
+  testName.value = formName.value.trim() || '未命名管线'
+  testSteps.value = formSteps.value.map((s) => ({ op: s.op, args: { ...s.args }, on_error: s.on_error }))
+  testNodesText.value = DEFAULT_TEST_NODES
+  testError.value = ''
+  testResult.value = null
+  testDialog.value = true
+}
+
+async function runPipelineTest(): Promise<void> {
+  testLoading.value = true
+  testError.value = ''
+  testResult.value = null
+  try {
+    let nodes: unknown
+    try {
+      nodes = JSON.parse(testNodesText.value)
+    } catch {
+      testError.value = '测试节点不是合法 JSON'
+      return
+    }
+    testResult.value = await endpoints.testPipeline({ name: testName.value, steps: testSteps.value, nodes: nodes as unknown[] })
+  } catch (err) {
+    testError.value = errorMessage(err)
+  } finally {
+    testLoading.value = false
+  }
+}
 
 const help = pageHelp('pipelines')
 
@@ -296,6 +348,7 @@ onMounted(() => {
             </span>
           </td>
           <td class="sf-row-actions">
+            <v-btn size="small" variant="text" data-testid="pipeline-test" @click="openTest(p)">试运行</v-btn>
             <v-btn size="small" variant="text" data-testid="pipeline-edit" :disabled="p.read_only" @click="openEdit(p)">编辑</v-btn>
             <v-btn size="small" variant="text" color="error" data-testid="pipeline-delete" :disabled="p.read_only" @click="askDelete(p)">删除</v-btn>
           </td>
@@ -420,9 +473,51 @@ onMounted(() => {
         <div v-if="saveError !== ''" class="text-error mt-2" data-testid="pipeline-save-error">{{ saveError }}</div>
       </v-card-text>
       <v-card-actions>
+        <v-btn variant="tonal" prepend-icon="mdi-play" data-testid="pipeline-test-draft" @click="openDraftTest">试运行</v-btn>
         <v-spacer />
         <v-btn variant="text" data-testid="pipeline-cancel" @click="dialog = false">取消</v-btn>
         <v-btn color="primary" :loading="saving" data-testid="pipeline-save" @click="save">保存</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="testDialog" max-width="760" scrollable data-testid="pipeline-test-dialog">
+    <v-card>
+      <v-card-title>试运行管线 · {{ testName }}</v-card-title>
+      <v-card-text>
+        <div class="sf-form-section">
+          <div class="sf-form-section__head">
+            <span class="sf-form-section__title">测试节点（JSON 数组）</span>
+            <span class="sf-form-section__caption">默认提供香港/日本/美国三个样例，可直接修改</span>
+          </div>
+          <v-textarea v-model="testNodesText" rows="8" variant="outlined" density="comfortable" hide-details spellcheck="false" class="code-input" data-testid="pipeline-test-nodes" />
+          <div class="mt-3">
+            <v-btn color="primary" prepend-icon="mdi-play" :loading="testLoading" data-testid="pipeline-test-run" @click="runPipelineTest">运行</v-btn>
+          </div>
+        </div>
+        <v-alert v-if="testError !== ''" type="error" variant="tonal" class="mt-3" data-testid="pipeline-test-error">{{ testError }}</v-alert>
+        <template v-if="testResult !== null">
+          <div class="preview-summary mt-3" data-testid="pipeline-test-summary">
+            <span>处理前 <strong>{{ testResult.before_count }}</strong> 个</span>
+            <v-icon size="16" icon="mdi-arrow-right" />
+            <span>处理后 <strong>{{ testResult.after_count }}</strong> 个</span>
+          </div>
+          <v-table density="compact" class="sf-table-rows mt-2" data-testid="pipeline-test-result">
+            <thead><tr><th>名称</th><th>类型</th><th>服务器</th></tr></thead>
+            <tbody>
+              <tr v-for="(n, i) in testResult.after" :key="i">
+                <td>{{ n.name }}</td><td>{{ n.type }}</td><td>{{ n.server }}:{{ n.port }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+          <v-alert v-if="testResult.warnings && testResult.warnings.length > 0" type="warning" variant="tonal" class="mt-3" data-testid="pipeline-test-warnings">
+            <div v-for="(w, i) in testResult.warnings" :key="i">{{ w }}</div>
+          </v-alert>
+        </template>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="pipeline-test-close" @click="testDialog = false">关闭</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -441,6 +536,21 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.code-input :deep(textarea) {
+  font-family: var(--sf-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.preview-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+.preview-summary strong {
+  color: var(--sf-text);
+}
 .pipeline-table :deep(tbody td) {
   height: 48px;
 }

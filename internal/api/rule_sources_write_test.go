@@ -168,3 +168,50 @@ func TestRuleSourcesUpdateOneRoundTrip(t *testing.T) {
 		t.Fatalf("update-one missing code = %d, want 404", rec.Code)
 	}
 }
+
+// TestRuleSourceRenameMovesFilesAndBindings 改名要同时迁移版本文件、当前指针与方案绑定。
+func TestRuleSourceRenameMovesFilesAndBindings(t *testing.T) {
+	srv, mgr := newWriteTestServer(t)
+	path := seedWriteManifest(t, mgr)
+	dir := filepath.Join(filepath.Dir(path), "rules")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir rules: %v", err)
+	}
+	version := "base-20260101-000000.000000000.yaml"
+	if err := os.WriteFile(filepath.Join(dir, version), []byte("rules: []\n"), 0o644); err != nil {
+		t.Fatalf("write version: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".current-versions.json"), []byte(`{"base":"`+version+`"}`), 0o644); err != nil {
+		t.Fatalf("write current: %v", err)
+	}
+	p, err := mgr.AddProfile(t.Context(), "绑定方案", "", "", "", true, 0)
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if err := mgr.SetProfileRuleSources(t.Context(), p.ID, []string{"base"}); err != nil {
+		t.Fatalf("SetProfileRuleSources: %v", err)
+	}
+
+	rec := postJSON(t, srv, "/api/rule-sources/rename", `{"name":"base","new_name":"renamed"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "name: renamed") || strings.Contains(string(b), "name: base") {
+		t.Fatalf("manifest 未改名: %s", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "renamed-20260101-000000.000000000.yaml")); err != nil {
+		t.Fatalf("版本文件未改名: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, version)); !os.IsNotExist(err) {
+		t.Fatalf("旧版本文件仍存在: %v", err)
+	}
+	cur, _ := os.ReadFile(filepath.Join(dir, ".current-versions.json"))
+	if !strings.Contains(string(cur), `"renamed"`) || strings.Contains(string(cur), `"base"`) {
+		t.Fatalf("当前版本指针未迁移: %s", cur)
+	}
+	profiles, err := mgr.ListProfiles(t.Context())
+	if err != nil || len(profiles) != 1 || len(profiles[0].RuleSources) != 1 || profiles[0].RuleSources[0] != "renamed" {
+		t.Fatalf("方案绑定未更新: %+v err=%v", profiles, err)
+	}
+}

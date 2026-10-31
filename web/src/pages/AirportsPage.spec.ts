@@ -19,6 +19,7 @@ vi.mock('../api/endpoints', () => ({
     checkAirports: vi.fn(),
     lastAirportCheck: vi.fn(),
     pipelines: vi.fn(),
+    previewAirportProcess: vi.fn(),
   },
 }))
 
@@ -26,6 +27,7 @@ const vuetify = createVuetify({ components, directives })
 
 const listMock = endpoints.listAirports as unknown as ReturnType<typeof vi.fn>
 const pipelinesMock = endpoints.pipelines as unknown as ReturnType<typeof vi.fn>
+const previewProcessMock = endpoints.previewAirportProcess as unknown as ReturnType<typeof vi.fn>
 const createMock = endpoints.createAirport as unknown as ReturnType<typeof vi.fn>
 const updateMock = endpoints.updateAirport as unknown as ReturnType<typeof vi.fn>
 const deleteMock = endpoints.deleteAirport as unknown as ReturnType<typeof vi.fn>
@@ -80,6 +82,7 @@ beforeEach(() => {
   checkMock.mockResolvedValue({ results: [makeCheckResult()] })
   lastCheckMock.mockResolvedValue({ results: [makeCheckResult()] })
   pipelinesMock.mockResolvedValue([])
+  previewProcessMock.mockResolvedValue({ name: 'HK', pipeline: '', before_count: 1, after_count: 1, before: [], after: [], warnings: [] })
 })
 
 describe('AirportsPage', () => {
@@ -915,7 +918,7 @@ describe('AirportsPage 覆盖率补齐（导入弹窗）', () => {
     ;(w.vm as any).askDelete((w.vm as any).rows[0])
     await flushPromises()
     const dialogs = w.findAllComponents({ name: 'VDialog' })
-    expect(dialogs.length).toBe(4)
+    expect(dialogs.length).toBe(5)
     await dialogs[2].vm.$emit('update:modelValue', true)
     await flushPromises()
     expect((w.vm as any).confirmOpen).toBe(true)
@@ -1008,6 +1011,74 @@ describe('AirportsPage 处理管线控件', () => {
     await (w.vm as any).openCreate()
     await flushPromises()
     expect((w.vm as any).pipelineOptions).toEqual([])
+    w.unmount()
+  })
+})
+
+describe('AirportsPage 处理预览', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport({ pipeline: 'pre' })])
+    pipelinesMock.mockResolvedValue([{ id: 1, name: 'pre', enabled: true }])
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+    previewProcessMock.mockResolvedValue({ name: 'HK', pipeline: 'pre', before_count: 2, after_count: 1, before: [], after: [{ name: 'P-HK', type: 'ss', server: 'hk', port: '8388' }], warnings: [] })
+  })
+
+  it('编辑机场时按当前管线预览处理结果', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    await flushPromises()
+    expect(previewProcessMock).toHaveBeenCalledWith(1, 'pre')
+    expect((w.vm as any).previewResult.after_count).toBe(1)
+    w.unmount()
+  })
+
+  it('预览失败时显示错误', async () => {
+    previewProcessMock.mockRejectedValueOnce(new Error('preview boom'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    await flushPromises()
+    expect((w.vm as any).previewError).toBe('preview boom')
+    w.unmount()
+  })
+})
+
+describe('AirportsPage 预览/导入弹窗守卫', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport()])
+    previewProcessMock.mockResolvedValue({ name: 'HK', before_count: 0, after_count: 0, before: [], after: [], warnings: [] })
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+    pipelinesMock.mockResolvedValue([])
+  })
+
+  it('新建机场未保存时预览直接返回，不打开弹窗', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).previewProcess()
+    expect((w.vm as any).previewOpen).toBe(false)
+    expect(previewProcessMock).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('导入弹窗关闭时写回 importDialog=false', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).importDialog = true
+    await flushPromises()
+    const dialog = w.findAllComponents({ name: 'VDialog' }).find((d) => d.props('maxWidth') === '480')
+    expect(dialog).toBeTruthy()
+    dialog!.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect((w.vm as any).importDialog).toBe(false)
     w.unmount()
   })
 })
