@@ -337,7 +337,7 @@ func TestAPIAirportRefreshOneWithRules(t *testing.T) {
 		t.Fatalf("status=%d body=%s", status, body)
 	}
 	var got struct {
-		Result json.RawMessage `json:"result"`
+		Result json.RawMessage    `json:"result"`
 		Import *refreshImportItem `json:"import"`
 	}
 	if err := json.Unmarshal([]byte(body), &got); err != nil {

@@ -215,3 +215,25 @@ func TestRuleSourceRenameMovesFilesAndBindings(t *testing.T) {
 		t.Fatalf("方案绑定未更新: %+v err=%v", profiles, err)
 	}
 }
+
+// TestRuleSourceRenameGuards 覆盖空名称和不存在来源的校验分支。
+func TestRuleSourceRenameGuards(t *testing.T) {
+	srv, mgr := newWriteTestServer(t)
+	seedWriteManifest(t, mgr)
+	rec := postJSON(t, srv, "/api/rule-sources/rename", `{"name":"base","new_name":""}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty name = %d", rec.Code)
+	}
+	rec = postJSON(t, srv, "/api/rule-sources/rename", `{"name":"missing","new_name":"new"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing source = %d", rec.Code)
+	}
+	rec = postJSON(t, srv, "/api/rule-sources/rename", `{"name":"base","new_name":"base"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("same name = %d", rec.Code)
+	}
+	rec = postJSON(t, srv, "/api/rule-sources/rename", `{"name":"base","new_name":"bad/name"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unsafe name = %d", rec.Code)
+	}
+}
