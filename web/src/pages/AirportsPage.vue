@@ -392,7 +392,7 @@ async function restoreLastCheck(): Promise<void> {
           class="airports-table"
         >
           <template #item.name="{ item }">
-            <div class="airport-name">{{ item.name }}</div>
+            <div class="airport-name" :title="item.subscription_url">{{ item.name }}</div>
             <div class="airport-pipeline" data-testid="airport-pipeline-text">处理：{{ item.pipeline || '不处理' }}</div>
           </template>
           <template #item.subscription_url="{ value }">
@@ -749,6 +749,12 @@ async function restoreLastCheck(): Promise<void> {
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
+}
+@media (max-width: 1200px) {
+  .airports-table :deep(th:nth-child(2)),
+  .airports-table :deep(td:nth-child(2)) {
+    display: none;
+  }
 }
 .airports-table :deep(.text-end),
 .airports-table :deep(.text-right) {
