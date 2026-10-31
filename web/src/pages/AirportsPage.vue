@@ -40,19 +40,17 @@ const emptyState = computed(() => help.emptyState)
 // align:'end' 让数字列（节点数 / 流量 / 到期时间 / 操作）右对齐，并吃到 tabular-nums。
 // 操作列额外挂 sf-table__actions，供覆写层做「单行不折 + 紧凑按钮」。
 const headers = [
-  { key: 'name', title: '名称', minWidth: 150 },
+  { key: 'name', title: '名称', minWidth: 140 },
   { key: 'subscription_url', title: '订阅地址' },
   { key: 'enabled', title: '启用', minWidth: 64 },
   { key: 'node_count', title: '节点数', align: 'end' as const, minWidth: 72 },
-  { key: 'traffic', title: '流量(已用/总量)', align: 'end' as const, minWidth: 128 },
-  { key: 'expire', title: '到期时间', align: 'end' as const, minWidth: 96 },
-  { key: 'updated', title: '更新时间', minWidth: 152 },
-  { key: 'status', title: '状态', minWidth: 72 },
+  { key: 'traffic', title: '流量 / 到期', align: 'end' as const, minWidth: 152 },
+  { key: 'status', title: '采集状态', minWidth: 150 },
   {
     key: 'actions',
     title: '操作',
     align: 'end' as const,
-    minWidth: 288,
+    minWidth: 176,
     cellProps: { class: 'sf-table__actions' },
   },
 ]
@@ -411,33 +409,35 @@ async function restoreLastCheck(): Promise<void> {
           <template #item.traffic="{ item }">
             <div class="airport-traffic">
               <span :data-testid="item.total <= 0 ? 'traffic-unknown' : 'traffic-value'">{{ trafficText(item) }}</span>
+              <span class="airport-expire">
+                到期：<span :data-testid="item.expire <= 0 ? 'expire-unknown' : 'expire-value'">{{ expireText(item) }}</span>
+              </span>
               <span v-if="item.traffic_err !== ''" data-testid="traffic-error" class="airport-traffic-err" :title="item.traffic_err + ' · 余额仍是上次成功值，没有被清零'">余额未更新</span>
             </div>
           </template>
-          <template #item.expire="{ item }">
-            <span :data-testid="item.expire <= 0 ? 'expire-unknown' : 'expire-value'">{{ expireText(item) }}</span>
-          </template>
-          <template #item.updated="{ item }">
-            <span v-if="item.traffic_at <= 0" data-testid="traffic-at">尚未采集</span>
-            <span v-else data-testid="traffic-stale">上次成功：{{ formatExpire(item.traffic_at) }}（{{ relativeTime(item.traffic_at) }}前）</span>
-          </template>
           <template #item.status="{ item }">
-            <span v-if="item.traffic_err !== ''" data-testid="traffic-err" class="sf-status airport-status-err" :title="item.traffic_err">
-              <span class="sf-status__dot sf-status__dot--danger"></span>
-              <span>采集失败</span>
-            </span>
-            <span v-else data-testid="traffic-status-ok" class="sf-status">
-              <span class="sf-status__dot sf-status__dot--ok"></span>
-              <span>正常</span>
-            </span>
+            <div class="airport-status-cell">
+              <span v-if="item.traffic_err !== ''" data-testid="traffic-err" class="sf-status airport-status-err" :title="item.traffic_err">
+                <span class="sf-status__dot sf-status__dot--danger"></span>
+                <span>采集失败</span>
+              </span>
+              <span v-else data-testid="traffic-status-ok" class="sf-status">
+                <span class="sf-status__dot sf-status__dot--ok"></span>
+                <span>正常</span>
+              </span>
+              <span v-if="item.traffic_at <= 0" data-testid="traffic-at" class="airport-status-time">尚未采集</span>
+              <span v-else data-testid="traffic-stale" class="airport-status-time" :title="'上次成功：' + formatExpire(item.traffic_at)">
+                上次成功：{{ relativeTime(item.traffic_at) }}前
+              </span>
+            </div>
           </template>
           <template #item.actions="{ item }">
             <div class="airport-actions">
-              <v-btn size="small" variant="text" data-testid="edit" @click="openEdit(item)">编辑</v-btn>
-              <v-btn size="small" variant="text" color="error" data-testid="delete" @click="askDelete(item)">删除</v-btn>
-              <v-btn size="small" variant="text" data-testid="refresh-traffic" @click="refreshOne(item)">刷新</v-btn>
-              <v-btn size="small" variant="text" data-testid="import-rules" @click="openImportDialog(item)">更新规则源</v-btn>
-              <v-btn size="small" variant="text" data-testid="check-one" @click="checkOne(item)">检测</v-btn>
+              <v-btn icon="mdi-pencil" size="small" variant="text" title="编辑机场" aria-label="编辑机场" data-testid="edit" @click="openEdit(item)" />
+              <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" title="删除机场" aria-label="删除机场" data-testid="delete" @click="askDelete(item)" />
+              <v-btn icon="mdi-refresh" size="small" variant="text" title="刷新机场" aria-label="刷新机场" data-testid="refresh-traffic" @click="refreshOne(item)" />
+              <v-btn icon="mdi-file-sync-outline" size="small" variant="text" title="更新规则源" aria-label="更新规则源" data-testid="import-rules" @click="openImportDialog(item)" />
+              <v-btn icon="mdi-pulse" size="small" variant="text" title="检测订阅可用性" aria-label="检测订阅可用性" data-testid="check-one" @click="checkOne(item)" />
             </div>
           </template>
         </v-data-table>
@@ -748,7 +748,7 @@ async function restoreLastCheck(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 2px;
 }
 .airports-table :deep(.text-end),
 .airports-table :deep(.text-right) {
@@ -760,6 +760,23 @@ async function restoreLastCheck(): Promise<void> {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: 1px;
+}
+.airport-expire {
+  color: var(--sf-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.airport-status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.airport-status-time {
+  color: var(--sf-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 .airport-traffic-err {
   color: var(--sf-danger);
