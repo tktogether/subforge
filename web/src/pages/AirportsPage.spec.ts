@@ -1015,6 +1015,52 @@ describe('AirportsPage 失败策略', () => {
     w.unmount()
   })
 
+  it('出网节点为强制直连时显示直连', async () => {
+    listMock.mockResolvedValue([makeAirport({ outbound_node: 'direct' })])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="airport-outbound-text"]').text()).toContain('直连')
+    w.unmount()
+  })
+
+  it('自建节点加载失败时仍可打开机场弹窗', async () => {
+    selfNodesMock.mockRejectedValue(new Error('nodes boom'))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await (w.vm as any).openCreate()
+    await flushPromises()
+    expect((w.vm as any).selfNodeOptions).toEqual([])
+    expect((w.vm as any).dialog).toBe(true)
+    w.unmount()
+  })
+
+  it('出网节点引用不存在节点时仍显示标签与选项', async () => {
+    listMock.mockResolvedValue([makeAirport({ outbound_node: '999' })])
+    selfNodesMock.mockResolvedValue([])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    expect(w.find('[data-testid="airport-outbound-text"]').text()).toContain('节点 999')
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'airport-outbound')
+    expect(select).toBeTruthy()
+    const titles = (select!.props('items') as { title: string }[]).map((i) => i.title)
+    expect(titles).toContain('节点 999（不存在）')
+    w.unmount()
+  })
+
+  it('通过下拉选择出网节点', async () => {
+    listMock.mockResolvedValue([makeAirport({ outbound_node: '' })])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'airport-outbound')
+    await select!.setValue('3')
+    expect((w.vm as any).draft.outbound_node).toBe('3')
+    w.unmount()
+  })
+
   it('编辑机场可保存出网节点', async () => {
     listMock.mockResolvedValue([makeAirport({ outbound_node: '' })])
     updateMock.mockResolvedValue(makeAirport({ outbound_node: '3' }))

@@ -507,6 +507,90 @@ describe('RuleSourcesPage', () => {
     w.unmount()
   })
 
+  it('出网节点为强制直连时显示直连', async () => {
+    const sources = makeSources()
+    sources[0] = { ...sources[0], outbound_node: 'direct' }
+    listMock.mockResolvedValue(makeManifest({ sources }))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="source-outbound"]').text()).toContain('直连')
+    w.unmount()
+  })
+
+  it('出网弹窗：机场源不打开、可取消，保存中不重复请求', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    const vm = w.vm as any
+    vm.openOutbound(vm.sources[1])
+    expect(vm.outboundDialog).toBe(false)
+
+    vm.openOutbound(vm.sources[0])
+    await flushPromises()
+    expect(vm.outboundDialog).toBe(true)
+    const cancel = document.body.querySelector('[data-testid="source-outbound-cancel"]') as HTMLElement | null
+    expect(cancel).toBeTruthy()
+    cancel!.click()
+    await flushPromises()
+    expect(vm.outboundDialog).toBe(false)
+
+    vm.openOutbound(vm.sources[0])
+    vm.outboundSaving = true
+    const before = setOutboundMock.mock.calls.length
+    await vm.confirmOutbound()
+    expect(setOutboundMock.mock.calls.length).toBe(before)
+    w.unmount()
+  })
+
+  it('新增规则源可单独指定出网节点', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="source-add"]').trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'add-outbound')
+    expect(select).toBeTruthy()
+    await select!.setValue('3')
+    expect((w.vm as any).addOutbound).toBe('3')
+    ;(w.vm as any).addUrl = 'http://example.com/x.yaml'
+    await (w.vm as any).confirmAdd()
+    await flushPromises()
+    expect(addMock).toHaveBeenCalledWith(expect.objectContaining({ outbound_node: '3' }))
+    w.unmount()
+  })
+
+  it('出网节点不存在时仍显示节点编号', async () => {
+    const sources = makeSources()
+    sources[0] = { ...sources[0], outbound_node: '999' }
+    listMock.mockResolvedValue(makeManifest({ sources }))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="source-outbound"]').text()).toContain('节点 999')
+    w.unmount()
+  })
+
+  it('自建节点加载失败时仍可打开新增弹窗', async () => {
+    selfNodesMock.mockRejectedValueOnce(new Error('nodes boom'))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect((w.vm as any).selfNodes).toEqual([])
+    await (w.vm as any).openAdd()
+    await flushPromises()
+    expect((w.vm as any).addDialog).toBe(true)
+    w.unmount()
+  })
+
+  it('保存规则源出网节点失败时提示错误', async () => {
+    setOutboundMock.mockRejectedValueOnce(new Error('save boom'))
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    ;(w.vm as any).openOutbound((w.vm as any).sources[0])
+    await flushPromises()
+    await (w.vm as any).confirmOutbound()
+    await flushPromises()
+    expect(notifyState.text).toBe('save boom')
+    expect((w.vm as any).outboundSaving).toBe(false)
+    w.unmount()
+  })
+
   it('规则源显示单独出网节点，并可通过对话框修改', async () => {
     const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
     await flushPromises()

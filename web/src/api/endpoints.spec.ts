@@ -55,6 +55,17 @@ describe('endpoints', () => {
     expect(result).toEqual(data)
   })
 
+  it('setRuleSourceOutbound → POST /api/rule-sources/outbound', async () => {
+    const data = { path: '/m/manifest.yaml', outbound_node: 'direct' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.setRuleSourceOutbound('src', 'direct')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/rule-sources/outbound',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'src', outbound_node: 'direct' }) }),
+    )
+    expect(result).toEqual(data)
+  })
+
   it('testPipeline → POST /api/pipelines/test', async () => {
     const data = { name: 'p', before_count: 1, after_count: 1, before: [], after: [], warnings: [] }
     fetchMock.mockResolvedValue(respond(data))
