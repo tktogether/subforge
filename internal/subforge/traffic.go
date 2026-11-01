@@ -122,7 +122,9 @@ func (m *Manager) RefreshAirportTraffic(ctx context.Context, f *fetch.Fetcher) (
 func (m *Manager) refreshOneAirport(ctx context.Context, f *fetch.Fetcher, a Airport) TrafficRefreshResult {
 	out := TrafficRefreshResult{AirportID: a.ID, Name: a.Name}
 	start := time.Now()
-	res := f.FetchFrom(ctx, fetch.Source{Name: a.Name, URL: a.SubscriptionURL})
+	// 刷新余额与订阅拉取走同一出口：机场单独指定了出网节点时也必须生效，
+	// 否则被墙机场的余额采集会一直直连超时。
+	res := f.FetchFrom(ctx, fetch.Source{Name: a.Name, URL: a.SubscriptionURL, Outbound: a.OutboundNode})
 	audit := store.FetchAudit{
 		AirportID:  a.ID,
 		URL:        a.SubscriptionURL,

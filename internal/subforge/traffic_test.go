@@ -289,6 +289,39 @@ func TestRefreshAirportTrafficHappy(t *testing.T) {
 	}
 }
 
+// TestRefreshAirportTrafficUsesOutboundNode 余额刷新必须沿用地机场的出网节点。
+func TestRefreshAirportTrafficUsesOutboundNode(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	fixture := readFixture(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=10; download=20; total=100; expire=1700000000")
+		_, _ = w.Write(fixture)
+	}))
+	t.Cleanup(srv.Close)
+
+	fetcher := fetch.New(fetch.WithConfig(fetch.Config{UserAgent: "subforge-test", Timeout: 5 * time.Second, Parallel: 4, Retries: 0, Backoff: 0, MaxBody: 64 << 20, Redirects: 3}))
+	var gotOutbound string
+	fetcher.ClientFor = func(_ context.Context, outbound string) (*http.Client, error) {
+		gotOutbound = outbound
+		return http.DefaultClient, nil
+	}
+	a, err := m.AddAirport(ctx, "机场A", srv.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	if err := m.SetAirportOutboundNode(ctx, a.ID, "3"); err != nil {
+		t.Fatalf("SetAirportOutboundNode: %v", err)
+	}
+	res, err := m.RefreshAirportTrafficByID(ctx, fetcher, a.ID)
+	if err != nil || !res.OK {
+		t.Fatalf("RefreshAirportTrafficByID: ok=%v err=%v", res.OK, err)
+	}
+	if gotOutbound != "3" {
+		t.Fatalf("刷新出网选择 = %q, want 3", gotOutbound)
+	}
+}
+
 func TestRefreshAirportTrafficUpstreamErrorKeepsTraffic(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)
