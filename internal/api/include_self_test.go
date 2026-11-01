@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/tktogether/subforge/internal/subforge"
 )
 
 type renderedGroup struct {
@@ -55,11 +57,24 @@ func TestSubscribeIncludeSelfInGroups(t *testing.T) {
 	if _, err := mgr.AddSelfNode(ctx, "trojan://pass@127.0.0.1:30001?allowInsecure=1#orig", "SELF-A", true, 1); err != nil {
 		t.Fatalf("AddSelfNode: %v", err)
 	}
-	if _, err := mgr.AddProxyGroupWithMembersAndIncludeSelf(ctx, "ALL", "select", "", "", 0, 0, "airport:fx", []string{"AIR-1"}, true); err != nil {
+	allGroup, err := mgr.AddProxyGroupWithMembersAndIncludeSelf(ctx, "ALL", "select", "", "", 0, 0, "airport:fx", []string{"AIR-1"}, true)
+	if err != nil {
 		t.Fatalf("AddProxyGroupWithMembersAndIncludeSelf(ALL): %v", err)
 	}
-	if _, err := mgr.AddProxyGroupWithMembersAndIncludeSelf(ctx, "OFF", "select", "", "", 0, 0, "airport:fx", []string{"AIR-1"}, false); err != nil {
+	offGroup, err := mgr.AddProxyGroupWithMembersAndIncludeSelf(ctx, "OFF", "select", "", "", 0, 0, "airport:fx", []string{"AIR-1"}, false)
+	if err != nil {
 		t.Fatalf("AddProxyGroupWithMembersAndIncludeSelf(OFF): %v", err)
+	}
+	// 订阅会剪掉没有规则引用的分组，这两个组各挂一条规则以保留。
+	for _, g := range []struct {
+		id   int64
+		rule string
+	}{{allGroup.ID, "all.test"}, {offGroup.ID, "off.test"}} {
+		if _, err := mgr.AddRuleWithSource(ctx, subforge.Rule{
+			RuleType: "DOMAIN-SUFFIX", RuleParam: g.rule, RuleConfig: g.id, Enabled: true,
+		}); err != nil {
+			t.Fatalf("AddRuleWithSource(%s): %v", g.rule, err)
+		}
 	}
 	mustToken(t, ts, "t-inc", 0)
 	st, body := subscribe(t, ts, "t-inc")
@@ -180,8 +195,15 @@ func TestSubscribeAllSourcesGroupSpansProfile(t *testing.T) {
 		{"A_ONLY", []string{"A-1"}, false, false},
 	}
 	for _, g := range groups {
-		if _, err := mgr.AddProxyGroupWithMembersAndFlags(ctx, g.name, "select", "", "", 0, 0, "airport:A", g.members, g.includeSelf, g.includeAll); err != nil {
+		pg, err := mgr.AddProxyGroupWithMembersAndFlags(ctx, g.name, "select", "", "", 0, 0, "airport:A", g.members, g.includeSelf, g.includeAll)
+		if err != nil {
 			t.Fatalf("AddProxyGroupWithMembersAndFlags(%s): %v", g.name, err)
+		}
+		// 订阅会剪掉没有规则引用的分组，每个组挂一条规则以保留。
+		if _, err := mgr.AddRuleWithSource(ctx, subforge.Rule{
+			RuleType: "DOMAIN-SUFFIX", RuleParam: g.name + ".test", RuleConfig: pg.ID, Enabled: true,
+		}); err != nil {
+			t.Fatalf("AddRuleWithSource(%s): %v", g.name, err)
 		}
 	}
 	mustToken(t, ts, "t-all-sources", 0)

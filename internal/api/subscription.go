@@ -1318,6 +1318,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,
 		DisableTemplateGroups: !hasLayer(groupLayers, "template"),
 		TemplateWarnings:      sourceWarns,
+		// 方案选了部分规则源时，模板/其他来源的分组可能没有任何规则指向；
+		// 订阅只保留规则实际引用的分组（含成员闭包），避免客户端出现无效分组。
+		PruneUnusedGroups: true,
 	}
 	// 机场原文缓存：间隔内直接复用，超过后本次重新拉取（后台任务也会按间隔刷新）。
 	if ttl, terr := m.SourceRefreshInterval(r.Context()); terr == nil && ttl > 0 {

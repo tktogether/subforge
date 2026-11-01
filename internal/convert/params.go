@@ -54,6 +54,8 @@ type Params struct {
 	// 两者任一为空/非正数时不启用缓存。
 	SourceCache    SourceCache
 	SourceCacheTTL time.Duration
+	// PruneUnusedGroups 让 Clash 输出只保留被最终规则（含分组成员闭包）引用的分组。
+	PruneUnusedGroups bool
 	// Insert 额外插入的订阅地址。
 	Insert []string
 	// Include / Exclude 节点名正则。

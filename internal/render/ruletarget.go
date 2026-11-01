@@ -83,23 +83,12 @@ func ResolveRuleTargets(rules []string, valid []string, validSet map[string]bool
 			continue
 		}
 		typ := strings.ToUpper(strings.TrimSpace(fields[0]))
-		idx := -1
-		switch {
-		case typ == "MATCH" || typ == "FINAL":
-			idx = 1
-			// FINAL 是旧语法，mihomo v1.19.31 的 parser 里没有这个类型，
-			// 写 FINAL 会报 format invalid，统一改写成 MATCH。
-			if typ == "FINAL" {
-				fields[0] = "MATCH"
-			}
-		case typ == "AND" || typ == "OR" || typ == "NOT" || typ == "SUB-RULE":
-			idx = len(fields) - 1
-		default:
-			// 标准形态：TYPE,payload,target[,params...]
-			if len(fields) >= 3 {
-				idx = 2
-			}
+		// FINAL 是旧语法，mihomo v1.19.31 的 parser 里没有这个类型，
+		// 写 FINAL 会报 format invalid，统一改写成 MATCH。
+		if typ == "FINAL" {
+			fields[0] = "MATCH"
 		}
+		idx := ruleTargetIndex(fields)
 		if idx < 0 || idx >= len(fields) {
 			out = append(out, line)
 			continue
@@ -285,4 +274,24 @@ func splitRuleFields(line string) []string {
 // joinRuleFields 是 splitRuleFields 的逆操作。
 func joinRuleFields(fields []string) string {
 	return strings.Join(fields, ",")
+}
+
+// ruleTargetIndex 返回规则行里「出站目标」所在字段下标；无法判断时返回 -1。
+// ResolveRuleTargets 与分组剪枝共用，避免两处对规则语法的理解漂移。
+func ruleTargetIndex(fields []string) int {
+	if len(fields) < 2 {
+		return -1
+	}
+	typ := strings.ToUpper(strings.TrimSpace(fields[0]))
+	switch {
+	case typ == "MATCH" || typ == "FINAL":
+		return 1
+	case typ == "AND" || typ == "OR" || typ == "NOT" || typ == "SUB-RULE":
+		return len(fields) - 1
+	default:
+		if len(fields) >= 3 {
+			return 2
+		}
+	}
+	return -1
 }

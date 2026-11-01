@@ -266,12 +266,13 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	groups := expandGroupExtras(eff.Groups, nodes, fileSources)
 	groups = ResolveGroups(groups, nodes.Names())
 	body, err := renderer.Render(render.Request{
-		Nodes:         nodes,
-		Groups:        groups,
-		Rules:         eff.Rules,
-		Providers:     providers,
-		RuleProviders: p.RuleProviders,
-		Profile:       profile,
+		Nodes:             nodes,
+		Groups:            groups,
+		Rules:             eff.Rules,
+		PruneUnusedGroups: p.PruneUnusedGroups,
+		Providers:         providers,
+		RuleProviders:     p.RuleProviders,
+		Profile:           profile,
 	})
 	if err != nil {
 		return Result{}, err

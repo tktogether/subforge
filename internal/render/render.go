@@ -26,6 +26,9 @@ type Request struct {
 	Groups []Group
 	// Rules 规则行（原样透传，如 "GEOIP,CN,DIRECT"）；为空时用最小可用默认规则。
 	Rules []string
+	// PruneUnusedGroups 让 Clash 系渲染器删掉没有被最终规则或保留分组成员引用的分组。
+	// 订阅输出启用，/sub 与 CLI 保持全量分组。
+	PruneUnusedGroups bool
 	// Providers 原样透传的 mihomo proxy-provider 定义（来源 Clash YAML 里的
 	// proxy-providers）。渲染器按目标格式支持情况输出，不支持时忽略。
 	Providers []model.Provider

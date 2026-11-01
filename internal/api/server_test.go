@@ -1265,6 +1265,41 @@ func TestAirportFailurePolicyAPI(t *testing.T) {
 	}
 }
 
+// TestSubscribePrunesUnusedGroups 订阅按最终规则剪枝：没被任何规则或成员引用的分组不输出。
+func TestSubscribePrunesUnusedGroups(t *testing.T) {
+	ts, mgr := uiSubServer(t)
+	ctx := context.Background()
+	if _, err := mgr.AddAirport(ctx, "a", fixtureURL(t), "", true); err != nil {
+		t.Fatalf("插入机场: %v", err)
+	}
+	used, err := mgr.AddProxyGroupWithMembersAndFlags(ctx, "used-group", "select", "", "", 0, 0, "", nil, false, false)
+	if err != nil {
+		t.Fatalf("插入 used-group: %v", err)
+	}
+	if _, err := mgr.AddProxyGroupWithMembersAndFlags(ctx, "unused-group", "select", "", "", 0, 0, "", nil, false, false); err != nil {
+		t.Fatalf("插入 unused-group: %v", err)
+	}
+	if _, err := mgr.AddRuleWithSource(ctx, subforge.Rule{
+		RuleType: "DOMAIN-SUFFIX", RuleParam: "a.test", RuleConfig: used.ID, Enabled: true,
+	}); err != nil {
+		t.Fatalf("插入规则: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "tok-prune", "测试", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入 sub token: %v", err)
+	}
+
+	status, _, body := uiGet(t, ts, "/subscribe?token=tok-prune&target=clash.meta")
+	if status != http.StatusOK {
+		t.Fatalf("状态 = %d，body=%s", status, body)
+	}
+	if !strings.Contains(body, "name: used-group") {
+		t.Fatalf("被规则引用的分组应保留:\n%s", body)
+	}
+	if strings.Contains(body, "unused-group") {
+		t.Fatalf("未被引用的分组应删除:\n%s", body)
+	}
+}
+
 // TestSubscribeUsesSourceCache 间隔内 /subscribe 直接用缓存，不再请求上游；间隔 0 时恢复实时拉取。
 func TestSubscribeUsesSourceCache(t *testing.T) {
 	buf, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "mixed-subscription.txt"))

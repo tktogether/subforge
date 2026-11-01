@@ -279,6 +279,36 @@ func TestRender_CatchAllWithOnlyUrlTestGroup(t *testing.T) {
 	}
 }
 
+// TestRender_PruneUnusedGroups 订阅剪枝：只保留规则引用（含成员闭包）的分组。
+func TestRender_PruneUnusedGroups(t *testing.T) {
+	req := render.Request{
+		Nodes: testNodes(),
+		Groups: []render.Group{
+			{Name: "used", Type: "select", Proxies: []string{"HK-香港-01"}},
+			{Name: "unused", Type: "select", Proxies: []string{"HK-香港-01"}},
+		},
+		Rules:             []string{"DOMAIN-SUFFIX,example.com,used"},
+		PruneUnusedGroups: true,
+	}
+	text := string(renderTest(t, req))
+	if !strings.Contains(text, "name: used") {
+		t.Fatalf("被规则引用的分组应保留:\n%s", text)
+	}
+	if strings.Contains(text, "name: unused") {
+		t.Fatalf("未被引用的分组应删除:\n%s", text)
+	}
+	if !strings.Contains(text, "MATCH,used") {
+		t.Fatalf("兜底 MATCH 应保留其目标分组:\n%s", text)
+	}
+
+	// 不启用剪枝时保持全量，CLI/`/sub` 行为不变。
+	req.PruneUnusedGroups = false
+	text = string(renderTest(t, req))
+	if !strings.Contains(text, "name: unused") {
+		t.Fatalf("未启用剪枝时不应删除分组:\n%s", text)
+	}
+}
+
 func TestRender_CustomGroupsAndRules(t *testing.T) {
 	body := renderTest(t, render.Request{
 		Nodes: testNodes(),

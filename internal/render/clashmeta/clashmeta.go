@@ -150,6 +150,11 @@ func (r *Renderer) Render(req render.Request) ([]byte, error) {
 	// 规则与分组来自不同上游，目标名对不上时内核会拒绝加载整份配置。
 	// 这里按「同义分组 → MATCH 兜底分组」的顺序校正，并把结果记进警告。
 	rules = r.resolveRuleTargets(groups, req.Nodes.Names(), rules)
+	// 订阅只保留规则实际引用的分组：先完成目标校正，再按最终规则剪枝，
+	// 这样兜底 MATCH 与同名映射产生的引用都不会被误删。
+	if req.PruneUnusedGroups {
+		groups = render.PruneUnusedGroups(groups, rules)
+	}
 	entries := make([]any, 0, 20)
 	add := func(k string, v any) {
 		entries = append(entries, k, v)
