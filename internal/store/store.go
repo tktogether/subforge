@@ -68,6 +68,12 @@ type Airport struct {
 	SortOrder       int    `json:"sort_order"`
 	// Pipeline 是该来源的预处理管线名；空串表示不处理。
 	Pipeline string `json:"pipeline"`
+	// FailurePolicy 是该来源拉取失败时的订阅语义：ignore=跳过该来源继续出配置，
+	// error=整份订阅返回错误（客户端保留旧配置）。空串按 ignore 处理。
+	FailurePolicy string `json:"failure_policy"`
+	// OutboundNode 是该来源拉取时使用的出网节点：空串=跟随设置页默认，
+	// "direct"=强制直连，数字=自建节点 ID。
+	OutboundNode string `json:"outbound_node"`
 	// —— 流量元数据：来自上游 subscription-userinfo 响应头 ——
 	Upload     int64     `json:"upload"`      // 已用上行字节
 	Download   int64     `json:"download"`    // 已用下行字节
@@ -767,6 +773,13 @@ func migrate(db *sql.DB) error {
 			value       TEXT NOT NULL,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		);`,
+		// 机场上游原文缓存：订阅在间隔内直接使用，后台任务按间隔刷新。
+		// 以订阅 URL 为键，机场改地址后旧条目不再被读取。
+		`CREATE TABLE IF NOT EXISTS source_cache (
+			url        TEXT PRIMARY KEY,
+			content    BLOB NOT NULL,
+			fetched_at INTEGER NOT NULL
+		);`,
 		// 订阅令牌（生成 /subscribe?token=xxx）
 		`CREATE TABLE IF NOT EXISTS sub_tokens (
 			token       TEXT PRIMARY KEY,
@@ -817,6 +830,8 @@ func migrate(db *sql.DB) error {
 		{"node_count", "INTEGER NOT NULL DEFAULT 0"},
 		{"traffic_at", "INTEGER NOT NULL DEFAULT 0"},
 		{"traffic_err", "TEXT NOT NULL DEFAULT ''"},
+		{"failure_policy", "TEXT NOT NULL DEFAULT 'ignore'"},
+		{"outbound_node", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := addColumnIfMissing(db, "airports", c.col, c.decl); err != nil {
 			return fmt.Errorf("迁移 airports.%s: %w", c.col, err)
@@ -1401,5 +1416,29 @@ func (d *DB) SetSourcePipeline(ctx context.Context, sourceKey, pipeline string) 
 		"INSERT INTO source_pipelines (source_key, pipeline, updated_at) VALUES (?, ?, ?) "+
 			"ON CONFLICT(source_key) DO UPDATE SET pipeline = excluded.pipeline, updated_at = excluded.updated_at",
 		sourceKey, pipeline, time.Now())
+	return err
+}
+
+// GetSourceCache 读取机场原文缓存；没有记录时 ok=false。
+func (d *DB) GetSourceCache(ctx context.Context, url string) ([]byte, time.Time, bool, error) {
+	var content []byte
+	var fetchedAt int64
+	err := d.db.QueryRowContext(ctx,
+		"SELECT content, fetched_at FROM source_cache WHERE url = ?", url).Scan(&content, &fetchedAt)
+	if err == sql.ErrNoRows {
+		return nil, time.Time{}, false, nil
+	}
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	return content, time.Unix(fetchedAt, 0), true, nil
+}
+
+// PutSourceCache 写入机场原文缓存并刷新拉取时间。
+func (d *DB) PutSourceCache(ctx context.Context, url string, content []byte) error {
+	_, err := d.db.ExecContext(ctx,
+		"INSERT INTO source_cache (url, content, fetched_at) VALUES (?, ?, ?) "+
+			"ON CONFLICT(url) DO UPDATE SET content = excluded.content, fetched_at = excluded.fetched_at",
+		url, content, time.Now().Unix())
 	return err
 }

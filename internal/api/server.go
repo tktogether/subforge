@@ -29,6 +29,10 @@ type Config struct {
 	Token func() string
 	// Timeout 单次请求上限（含上游拉取）。默认 60s。
 	Timeout time.Duration
+	// SubscribeTimeout 是 /subscribe 拉取上游的时间上限，默认 20s。
+	// 主流客户端（OpenClash、mihomo）在 30 秒收不到首字节就会中断并反复重试，
+	// 死源不能吃满请求总超时，否则整份订阅永远下不下来。
+	SubscribeTimeout time.Duration
 	// HTTPClient 拉取远程规则文件用（/getruleset 的 url 参数）；为空时按 Timeout 造一个。
 	HTTPClient *http.Client
 	// Logger 日志目标；为空时用 log.Default()。
@@ -64,6 +68,9 @@ type Server struct {
 // 默认请求超时：上游订阅偶尔很慢，但一个请求不该挂住连接池。
 const defaultTimeout = 60 * time.Second
 
+// 默认订阅拉取超时：必须明显小于客户端 30 秒的零字节容忍度。
+const defaultSubscribeTimeout = 20 * time.Second
+
 // New 构造 Server；Engine 缺失直接 panic，因为缺了它 Server 什么都做不了。
 func New(cfg Config) *Server {
 	if cfg.Engine == nil {
@@ -71,6 +78,9 @@ func New(cfg Config) *Server {
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
+	}
+	if cfg.SubscribeTimeout <= 0 {
+		cfg.SubscribeTimeout = defaultSubscribeTimeout
 	}
 	if cfg.LogBuffer == nil {
 		cfg.LogBuffer = NewLogBuffer(0)
@@ -280,6 +290,7 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/api/rule-sources/mrs", s.handleAPIRuleSourcesMRS)
 	r.Post("/api/rule-sources", s.handleAPIRuleSourcesAdd)
 	r.Post("/api/rule-sources/remove", s.handleAPIRuleSourcesRemove)
+	r.Post("/api/rule-sources/outbound", s.handleAPIRuleSourceOutbound)
 	r.Post("/api/rule-sources/rename", s.handleAPIRuleSourceRename)
 	r.Post("/api/rule-sources/update-one", s.handleAPIRuleSourcesUpdateOne)
 	r.Get("/api/configs", s.handleAPIConfigs)

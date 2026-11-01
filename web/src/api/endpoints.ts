@@ -8,6 +8,10 @@ export interface Airport {
   enabled: boolean
   sort_order: number
   pipeline?: string
+  // 拉取失败时的订阅语义：ignore=跳过该来源继续出配置，error=整份订阅报错。
+  failure_policy?: string
+  // 拉取出网：空=跟随设置页默认，direct=直连，数字=自建节点 ID。
+  outbound_node?: string
   // 流量字段（可选，后端 internal/store/store.go Airport 返回）
   upload?: number // 字节
   download?: number // 字节
@@ -227,6 +231,8 @@ export interface AirportInput {
   remarks: string
   enabled: boolean
   pipeline?: string
+  failure_policy?: string
+  outbound_node?: string
 }
 
 export interface GroupInput {
@@ -316,6 +322,11 @@ export interface Suggestion {
   AutoApply: boolean
 }
 
+export interface SettingOption {
+  value: string
+  label: string
+}
+
 export interface SettingItem {
   key: string
   value: string
@@ -323,6 +334,7 @@ export interface SettingItem {
   label: string
   description: string
   placeholder?: string
+  options?: SettingOption[]
   is_default?: boolean
 }
 
@@ -342,6 +354,8 @@ export interface RuleSourceStatus {
   updated_at?: number
   /** 机场源对应的机场已删除 */
   airport_missing?: boolean
+  /** 拉取出网：空=跟随默认，direct=直连，数字=自建节点 ID */
+  outbound_node?: string
 }
 export type RuleSource = RuleSourceStatus
 
@@ -601,9 +615,11 @@ export const endpoints = {
     api.post<{ results: RuleSourceUpdateResult[] }>('/api/rule-sources/update', {}),
   rollbackRuleSource: (name: string): Promise<{ path: string }> =>
     api.post<{ path: string }>('/api/rule-sources/rollback', { name }),
+  setRuleSourceOutbound: (name: string, outbound_node: string): Promise<{ path: string; outbound_node: string }> =>
+    api.post<{ path: string; outbound_node: string }>('/api/rule-sources/outbound', { name, outbound_node }),
   generateMRS: (name: string, behavior: string): Promise<{ path: string; bytes: number }> =>
     api.post<{ path: string; bytes: number }>('/api/rule-sources/mrs', { name, behavior }),
-  addRuleSource: (body: { name?: string; url: string; input_format?: string }): Promise<{ path: string; created: boolean }> =>
+  addRuleSource: (body: { name?: string; url: string; input_format?: string; outbound_node?: string }): Promise<{ path: string; created: boolean }> =>
     api.post<{ path: string; created: boolean }>('/api/rule-sources', body),
   removeRuleSource: (name: string): Promise<OkResponse> =>
     api.post<OkResponse>('/api/rule-sources/remove', { name }),

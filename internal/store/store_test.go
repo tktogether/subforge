@@ -1740,6 +1740,36 @@ func TestProxyGroupIncludeAllSourcesRoundTrip(t *testing.T) {
 }
 
 // TestSourcePipelineCRUD 覆盖来源级处理管线的写入、读取与清空。
+func TestSourceCacheRoundTrip(t *testing.T) {
+	d, ctx := newTestDB(t)
+	url := "https://example.com/sub"
+	if err := d.PutSourceCache(ctx, url, []byte("v1")); err != nil {
+		t.Fatalf("PutSourceCache: %v", err)
+	}
+	content, at, ok, err := d.GetSourceCache(ctx, url)
+	if err != nil || !ok {
+		t.Fatalf("GetSourceCache: ok=%v err=%v", ok, err)
+	}
+	if string(content) != "v1" {
+		t.Fatalf("content = %q", content)
+	}
+	if time.Since(at) > time.Minute {
+		t.Fatalf("fetched_at 不合理: %v", at)
+	}
+
+	if err := d.PutSourceCache(ctx, url, []byte("v2")); err != nil {
+		t.Fatalf("PutSourceCache 更新: %v", err)
+	}
+	content, _, _, err = d.GetSourceCache(ctx, url)
+	if err != nil || string(content) != "v2" {
+		t.Fatalf("更新后 content = %q err=%v", content, err)
+	}
+
+	if _, _, ok, err := d.GetSourceCache(ctx, "https://missing.example/sub"); err != nil || ok {
+		t.Fatalf("未命中应 ok=false: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestSourcePipelineCRUD(t *testing.T) {
 	d, ctx := newTestDB(t)
 	if v, err := d.GetSourcePipeline(ctx, "airport:1"); err != nil || v != "" {

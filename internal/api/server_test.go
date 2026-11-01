@@ -25,6 +25,7 @@ import (
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/render/clashmeta"
 	"github.com/tktogether/subforge/internal/render/registry"
+	"github.com/tktogether/subforge/internal/subforge"
 )
 
 // quietLogger 让测试输出只留断言。
@@ -1104,6 +1105,252 @@ func TestTimeout_ReturnsQuickly(t *testing.T) {
 	}
 	if elapsed > 2*time.Second {
 		t.Errorf("超时未生效，耗时 %v", elapsed)
+	}
+}
+
+// TestSubscribeTimeout_DeadSourceDoesNotBlock 订阅端点必须在客户端容忍度内返回：
+// 死源在拉取预算内被截断，健康来源照常进产物。线上 OpenClash 的 curl 在 30 秒
+// 零字节后中断并无限重试，如果死源吃满请求总超时，订阅就永远下不下来。
+func TestSubscribeTimeout_DeadSourceDoesNotBlock(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(5 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(dead.Close)
+
+	ts, mgr := uiSubServerCfg(t, func(c *Config) {
+		c.Timeout = 5 * time.Second
+		c.SubscribeTimeout = 300 * time.Millisecond
+	})
+	ctx := context.Background()
+	// 死源先入库：sort_order 按入库时间递增，它排在健康来源前面，复现线上顺序。
+	if _, err := mgr.AddAirport(ctx, "dead", dead.URL+"/sub", "", true); err != nil {
+		t.Fatalf("插入机场: %v", err)
+	}
+	if _, err := mgr.AddAirport(ctx, "ok", fixtureURL(t), "", true); err != nil {
+		t.Fatalf("插入机场: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "tok-budget", "测试", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入 sub token: %v", err)
+	}
+
+	start := time.Now()
+	status, _, body := uiGet(t, ts, "/subscribe?token=tok-budget&target=clash.meta")
+	elapsed := time.Since(start)
+	if status != http.StatusOK {
+		t.Fatalf("状态 = %d，body=%s", status, body)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("订阅被死源拖住，耗时 %v", elapsed)
+	}
+	if !strings.Contains(body, "proxies:") {
+		t.Error("健康来源的产物缺失")
+	}
+}
+
+// TestSubscribeFailurePolicy 机场失败策略：error 时整份订阅报错（客户端保留旧配置），
+// ignore 时跳过失败来源继续产出。
+func TestSubscribeFailurePolicy(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	t.Cleanup(bad.Close)
+
+	ts, mgr := uiSubServer(t)
+	ctx := context.Background()
+	critical, err := mgr.AddAirport(ctx, "关键机场", bad.URL+"/sub", "", true)
+	if err != nil {
+		t.Fatalf("插入机场: %v", err)
+	}
+	if err := mgr.SetAirportFailurePolicy(ctx, critical.ID, subforge.AirportFailureError); err != nil {
+		t.Fatalf("设置失败策略: %v", err)
+	}
+	if _, err := mgr.AddAirport(ctx, "正常机场", fixtureURL(t), "", true); err != nil {
+		t.Fatalf("插入机场: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "tok-policy", "测试", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入 sub token: %v", err)
+	}
+
+	status, _, body := uiGet(t, ts, "/subscribe?token=tok-policy&target=clash.meta")
+	if status != http.StatusBadGateway {
+		t.Fatalf("error 策略下状态 = %d，body=%s", status, body)
+	}
+	if !strings.Contains(body, "关键机场") {
+		t.Errorf("错误信息应点名失败机场: %s", body)
+	}
+
+	if err := mgr.SetAirportFailurePolicy(ctx, critical.ID, subforge.AirportFailureIgnore); err != nil {
+		t.Fatalf("切回 ignore: %v", err)
+	}
+	status, _, body = uiGet(t, ts, "/subscribe?token=tok-policy&target=clash.meta")
+	if status != http.StatusOK {
+		t.Fatalf("ignore 策略下状态 = %d，body=%s", status, body)
+	}
+	if !strings.Contains(body, "proxies:") {
+		t.Error("ignore 策略应照常产出健康来源的配置")
+	}
+}
+
+// TestAirportFailurePolicyAPI 机场 CRUD 的 failure_policy：创建可带、更新省略时保持原值、
+// 非法值 400。
+func TestAirportFailurePolicyAPI(t *testing.T) {
+	ts, mgr := uiSubServer(t)
+	sub := fixtureURL(t)
+	node, err := mgr.AddSelfNode(context.Background(), "socks5://user:pass@127.0.0.1:1080", "节点A", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+
+	st, _, body := uiPostJSON(t, ts, "/api/airports", fmt.Sprintf(
+		`{"name":"A","subscription_url":%q,"remarks":"","enabled":true,"failure_policy":"error","outbound_node":%q}`,
+		sub, fmt.Sprint(node.ID)))
+	if st != http.StatusCreated {
+		t.Fatalf("创建状态 = %d，body=%s", st, body)
+	}
+	var created struct {
+		Airport struct {
+			ID            int64  `json:"id"`
+			FailurePolicy string `json:"failure_policy"`
+			OutboundNode  string `json:"outbound_node"`
+		} `json:"airport"`
+	}
+	mustJSON(t, body, &created)
+	if created.Airport.FailurePolicy != "error" {
+		t.Fatalf("创建后 failure_policy = %q", created.Airport.FailurePolicy)
+	}
+	if created.Airport.OutboundNode != fmt.Sprint(node.ID) {
+		t.Fatalf("创建后 outbound_node = %q", created.Airport.OutboundNode)
+	}
+	path := fmt.Sprintf("/api/airports/%d", created.Airport.ID)
+
+	// 省略 failure_policy 的更新不能把策略重置回 ignore。
+	st, _, body = uiDoJSON(t, ts, "PUT", path, fmt.Sprintf(
+		`{"name":"A2","subscription_url":%q,"remarks":"","enabled":true}`, sub))
+	if st != http.StatusOK {
+		t.Fatalf("更新状态 = %d，body=%s", st, body)
+	}
+	_, _, body = uiGet(t, ts, path)
+	if !strings.Contains(body, `"failure_policy":"error"`) {
+		t.Fatalf("省略字段后策略被重置: %s", body)
+	}
+
+	st, _, _ = uiDoJSON(t, ts, "PUT", path, fmt.Sprintf(
+		`{"name":"A2","subscription_url":%q,"remarks":"","enabled":true,"failure_policy":"boom"}`, sub))
+	if st != http.StatusBadRequest {
+		t.Fatalf("非法策略应 400，得到 %d", st)
+	}
+
+	st, _, _ = uiDoJSON(t, ts, "PUT", path, fmt.Sprintf(
+		`{"name":"A2","subscription_url":%q,"remarks":"","enabled":true,"outbound_node":"direct"}`, sub))
+	if st != http.StatusOK {
+		t.Fatalf("设置直连状态 = %d", st)
+	}
+	_, _, body = uiGet(t, ts, path)
+	if !strings.Contains(body, `"outbound_node":"direct"`) {
+		t.Fatalf("出网节点未更新: %s", body)
+	}
+
+	st, _, _ = uiDoJSON(t, ts, "PUT", path, fmt.Sprintf(
+		`{"name":"A2","subscription_url":%q,"remarks":"","enabled":true,"outbound_node":"9999"}`, sub))
+	if st != http.StatusBadRequest {
+		t.Fatalf("不存在的节点应 400，得到 %d", st)
+	}
+	st, _, _ = uiPostJSON(t, ts, "/api/airports", fmt.Sprintf(
+		`{"name":"B","subscription_url":%q,"remarks":"","enabled":true,"outbound_node":"9999"}`, sub))
+	if st != http.StatusBadRequest {
+		t.Fatalf("创建时非法节点应 400，得到 %d", st)
+	}
+}
+
+// TestSubscribeUsesSourceCache 间隔内 /subscribe 直接用缓存，不再请求上游；间隔 0 时恢复实时拉取。
+func TestSubscribeUsesSourceCache(t *testing.T) {
+	buf, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "mixed-subscription.txt"))
+	if err != nil {
+		t.Fatalf("读取 fixture: %v", err)
+	}
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write(buf)
+	}))
+	t.Cleanup(up.Close)
+
+	ts, mgr := uiSubServer(t)
+	ctx := context.Background()
+	if err := mgr.SetSettings(ctx, map[string]string{subforge.SourceRefreshKey: "30"}); err != nil {
+		t.Fatalf("设置刷新间隔: %v", err)
+	}
+	a, err := mgr.AddAirport(ctx, "缓存机场", up.URL+"/sub.txt", "", true)
+	if err != nil {
+		t.Fatalf("插入机场: %v", err)
+	}
+	if err := mgr.PutSourceCache(ctx, a.SubscriptionURL, buf); err != nil {
+		t.Fatalf("写缓存: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "tok-cache", "测试", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入 sub token: %v", err)
+	}
+
+	status, _, body := uiGet(t, ts, "/subscribe?token=tok-cache&target=clash.meta")
+	if status != http.StatusOK {
+		t.Fatalf("状态 = %d，body=%s", status, body)
+	}
+	if !strings.Contains(body, "proxies:") {
+		t.Error("缓存内容未产出配置")
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Fatalf("间隔内不应拉取上游，hits=%d", got)
+	}
+
+	if err := mgr.SetSettings(ctx, map[string]string{subforge.SourceRefreshKey: "0"}); err != nil {
+		t.Fatalf("关闭缓存: %v", err)
+	}
+	status, _, _ = uiGet(t, ts, "/subscribe?token=tok-cache&target=clash.meta")
+	if status != http.StatusOK {
+		t.Fatalf("关闭缓存后状态 = %d", status)
+	}
+	if atomic.LoadInt32(&hits) == 0 {
+		t.Fatal("关闭缓存后应重新拉取上游")
+	}
+}
+
+// TestRuleSourceOutboundAPI 规则源的新增/设置出网节点接口。
+func TestRuleSourceOutboundAPI(t *testing.T) {
+	ts, mgr := uiSubServer(t)
+	ctx := context.Background()
+	if err := mgr.SetRuleManifestPath(ctx, filepath.Join(t.TempDir(), "manifest.yaml")); err != nil {
+		t.Fatalf("SetRuleManifestPath: %v", err)
+	}
+	n, err := mgr.AddSelfNode(ctx, "socks5://user:pass@127.0.0.1:1080", "节点A", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+
+	st, _, body := uiPostJSON(t, ts, "/api/rule-sources", fmt.Sprintf(
+		`{"name":"src","url":"https://example.com/rules.yaml","outbound_node":%q}`, fmt.Sprint(n.ID)))
+	if st != http.StatusOK {
+		t.Fatalf("新增规则源状态 = %d，body=%s", st, body)
+	}
+	_, _, listBody := uiGet(t, ts, "/api/rule-sources")
+	if !strings.Contains(listBody, `"outbound_node":"`+fmt.Sprint(n.ID)+`"`) {
+		t.Fatalf("列表未带出网节点: %s", listBody)
+	}
+
+	st, _, body = uiPostJSON(t, ts, "/api/rule-sources/outbound", `{"name":"src","outbound_node":"direct"}`)
+	if st != http.StatusOK {
+		t.Fatalf("设置出网状态 = %d，body=%s", st, body)
+	}
+	_, _, listBody = uiGet(t, ts, "/api/rule-sources")
+	if !strings.Contains(listBody, `"outbound_node":"direct"`) {
+		t.Fatalf("出网节点未更新: %s", listBody)
+	}
+
+	st, _, _ = uiPostJSON(t, ts, "/api/rule-sources/outbound", `{"name":"src","outbound_node":"9999"}`)
+	if st != http.StatusBadRequest {
+		t.Fatalf("不存在的节点应 400，得到 %d", st)
 	}
 }
 

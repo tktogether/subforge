@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { endpoints, type RuleSource, type RuleSourceUpdateResult, type RuleSourcesResponse } from '../api/endpoints'
+import { endpoints, type RuleSource, type RuleSourceUpdateResult, type RuleSourcesResponse, type SelfNode } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
-import { pageHelp } from '../content/help'
+import { pageHelp, fieldHelp } from '../content/help'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
 import InfoTip from '../components/InfoTip.vue'
@@ -32,7 +32,29 @@ const addDialog = ref(false)
 const addName = ref('')
 const addUrl = ref('')
 const addFormat = ref('')
+const addOutbound = ref('')
 const addSaving = ref(false)
+
+const selfNodes = ref<SelfNode[]>([])
+const outboundHelp = fieldHelp('ruleSource.outbound_node')
+const outboundItems = computed(() => [
+  { title: '跟随默认出网节点', value: '' },
+  { title: '强制直连', value: 'direct' },
+  ...selfNodes.value.map((n) => ({
+    title: (n.name || `节点 ${n.id}`) + (n.enabled ? '' : '（已停用）'),
+    value: String(n.id),
+  })),
+])
+const outboundNames = computed(() => new Map(selfNodes.value.map((n) => [String(n.id), n.name || `节点 ${n.id}`])))
+function outboundLabel(value: string): string {
+  if (value === 'direct') return '直连'
+  return outboundNames.value.get(value) ?? `节点 ${value}`
+}
+
+const outboundDialog = ref(false)
+const outboundName = ref('')
+const outboundValue = ref('')
+const outboundSaving = ref(false)
 const removeDialog = ref(false)
 const removeName = ref('')
 const removeSaving = ref(false)
@@ -52,6 +74,14 @@ const updateResults = ref<RuleSourceUpdateResult[]>([])
 const showUpdateResults = ref(false)
 
 const emptyState = computed(() => help.emptyState)
+
+async function loadSelfNodes(): Promise<void> {
+  try {
+    selfNodes.value = await endpoints.listSelfNodes()
+  } catch {
+    selfNodes.value = []
+  }
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -144,6 +174,7 @@ function openAdd(): void {
   addName.value = ''
   addUrl.value = ''
   addFormat.value = ''
+  addOutbound.value = ''
   addDialog.value = true
 }
 
@@ -155,6 +186,7 @@ async function confirmAdd(): Promise<void> {
       name: addName.value.trim() || undefined,
       url: addUrl.value.trim(),
       input_format: addFormat.value.trim() || undefined,
+      outbound_node: addOutbound.value,
     })
     addDialog.value = false
     notify('已添加: ' + (addName.value.trim() || addUrl.value.trim()), 'ok')
@@ -163,6 +195,28 @@ async function confirmAdd(): Promise<void> {
     notify(errorMessage(err), 'error')
   } finally {
     addSaving.value = false
+  }
+}
+
+function openOutbound(source: RuleSource): void {
+  if (source.origin === 'airport') return
+  outboundName.value = source.name
+  outboundValue.value = source.outbound_node ?? ''
+  outboundDialog.value = true
+}
+
+async function confirmOutbound(): Promise<void> {
+  if (outboundSaving.value) return
+  outboundSaving.value = true
+  try {
+    await endpoints.setRuleSourceOutbound(outboundName.value, outboundValue.value)
+    outboundDialog.value = false
+    notify('出网节点已保存', 'ok')
+    await load()
+  } catch (err) {
+    notify(errorMessage(err), 'error')
+  } finally {
+    outboundSaving.value = false
   }
 }
 
@@ -382,6 +436,7 @@ async function importSelectedRules(): Promise<void> {
 
 onMounted(() => {
   void load()
+  void loadSelfNodes()
 })
 </script>
 
@@ -492,10 +547,14 @@ onMounted(() => {
             <v-btn variant="text" size="small" data-testid="source-rules" @click="openRules(s)">{{ s.label || s.name }}</v-btn>
             <span v-if="s.airport_missing" class="text-warning text-caption ml-1" data-testid="source-airport-missing">机场已删除</span>
           </td>
-          <td>{{ originText(s) }}</td>
+          <td>
+            <div>{{ originText(s) }}</div>
+            <div v-if="s.outbound_node" class="text-caption text-medium-emphasis" data-testid="source-outbound">出网：{{ outboundLabel(s.outbound_node) }}</div>
+          </td>
           <td>{{ s.rule_count ?? 0 }}</td>
           <td>{{ updatedText(s.updated_at) }}</td>
           <td>
+            <v-btn size="small" variant="text" data-testid="source-outbound-btn" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源的出网跟随机场设置' : '设置该规则源的出网节点'" @click="openOutbound(s)">出网</v-btn>
             <v-btn size="small" variant="text" data-testid="source-rename" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源名称跟随机场，请修改机场名称' : '重命名规则源'" @click="openRename(s)">改名</v-btn>
             <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" :disabled="updating" @click="updateOne(s.name)">更新</v-btn>
             <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
@@ -564,12 +623,45 @@ onMounted(() => {
         <div class="sf-form-label">订阅地址 <InfoTip text="规则文件的 http 或 https 地址。" example="https://example.com/rules.yaml" label="订阅地址" /></div>
         <v-text-field data-testid="add-url" v-model="addUrl" hide-details class="mb-3" />
         <div class="sf-form-label">输入格式 <InfoTip text="可选 ini、clash 或 auto；留空时自动识别。" label="输入格式" /></div>
-        <v-text-field data-testid="add-format" v-model="addFormat" hide-details />
+        <v-text-field data-testid="add-format" v-model="addFormat" hide-details class="mb-3" />
+        <div class="sf-form-label">出网节点 <InfoTip :text="outboundHelp?.hint ?? ''" label="出网节点" /></div>
+        <v-select
+          v-model="addOutbound"
+          :items="outboundItems"
+          item-title="title"
+          item-value="value"
+          data-testid="add-outbound"
+          hide-details
+        />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
         <v-btn data-testid="add-cancel" variant="text" @click="addDialog = false">取消</v-btn>
         <v-btn data-testid="add-confirm" :loading="addSaving" @click="confirmAdd">添加</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- 出网节点 dialog -->
+  <v-dialog v-model="outboundDialog" max-width="460">
+    <v-card data-testid="source-outbound-dialog">
+      <v-card-title>设置出网节点 - {{ outboundName }}</v-card-title>
+      <v-card-text>
+        <v-select
+          v-model="outboundValue"
+          :items="outboundItems"
+          item-title="title"
+          item-value="value"
+          label="出网节点"
+          :hint="outboundHelp?.hint"
+          persistent-hint
+          data-testid="source-outbound-select"
+        />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" data-testid="source-outbound-cancel" @click="outboundDialog = false">取消</v-btn>
+        <v-btn color="primary" :loading="outboundSaving" data-testid="source-outbound-confirm" @click="confirmOutbound">保存</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

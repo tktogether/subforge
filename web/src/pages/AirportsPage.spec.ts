@@ -20,6 +20,7 @@ vi.mock('../api/endpoints', () => ({
     lastAirportCheck: vi.fn(),
     pipelines: vi.fn(),
     previewAirportProcess: vi.fn(),
+    listSelfNodes: vi.fn(),
   },
 }))
 
@@ -36,6 +37,7 @@ const importMock = endpoints.importAirportRules as unknown as ReturnType<typeof 
 const refreshAllMock = endpoints.refreshAllAirports as unknown as ReturnType<typeof vi.fn>
 const checkMock = endpoints.checkAirports as unknown as ReturnType<typeof vi.fn>
 const lastCheckMock = endpoints.lastAirportCheck as unknown as ReturnType<typeof vi.fn>
+const selfNodesMock = endpoints.listSelfNodes as unknown as ReturnType<typeof vi.fn>
 
 function makeAirport(overrides: Record<string, unknown> = {}) {
   return {
@@ -52,6 +54,8 @@ function makeAirport(overrides: Record<string, unknown> = {}) {
     node_count: 5,
     traffic_at: 1700000000,
     traffic_err: '',
+    failure_policy: 'ignore',
+    outbound_node: '',
     ...overrides,
   }
 }
@@ -73,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   Object.defineProperty(window, 'visualViewport', { value: { width: 1024, height: 768, scale: 1, offsetLeft: 0, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() }, writable: true, configurable: true })
   listMock.mockResolvedValue([makeAirport()])
+  selfNodesMock.mockResolvedValue([{ id: 3, link: 'socks5://x', name: '香港节点', enabled: true, sort_order: 0 }])
   createMock.mockResolvedValue(makeAirport({ id: 2, name: 'new' }))
   updateMock.mockResolvedValue(makeAirport())
   deleteMock.mockResolvedValue({ ok: true })
@@ -968,6 +973,72 @@ describe('AirportsPage 来源处理', () => {
     await (w.vm as any).submit()
     await flushPromises()
     expect(updateMock).toHaveBeenCalledWith(1, expect.objectContaining({ pipeline: 'pre' }))
+    w.unmount()
+  })
+})
+
+describe('AirportsPage 失败策略', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listMock.mockResolvedValue([makeAirport({ failure_policy: 'error' })])
+    pipelinesMock.mockResolvedValue([])
+    lastCheckMock.mockResolvedValue({ results: [] })
+    checkMock.mockResolvedValue({ results: [] })
+  })
+
+  it('列表标记失败时报错的机场', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    expect(w.find('[data-testid="airport-pipeline-text"]').text()).toContain('失败时报错')
+    w.unmount()
+  })
+
+  it('编辑机场可保存失败策略', async () => {
+    updateMock.mockResolvedValue(makeAirport({ failure_policy: 'error' }))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).draft.failure_policy = 'error'
+    await (w.vm as any).submit()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(1, expect.objectContaining({ failure_policy: 'error' }))
+    w.unmount()
+  })
+
+  it('列表显示单独出网节点', async () => {
+    listMock.mockResolvedValue([makeAirport({ outbound_node: '3' })])
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    await flushPromises()
+    expect(w.find('[data-testid="airport-outbound-text"]').text()).toContain('香港节点')
+    w.unmount()
+  })
+
+  it('编辑机场可保存出网节点', async () => {
+    listMock.mockResolvedValue([makeAirport({ outbound_node: '' })])
+    updateMock.mockResolvedValue(makeAirport({ outbound_node: '3' }))
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    ;(w.vm as any).draft.outbound_node = '3'
+    await (w.vm as any).submit()
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(1, expect.objectContaining({ outbound_node: '3' }))
+    w.unmount()
+  })
+
+  it('新增机场默认忽略失败来源，并可从下拉切换', async () => {
+    const w = mount(AirportsPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await (w.vm as any).openCreate()
+    await flushPromises()
+    expect((w.vm as any).draft.failure_policy).toBe('ignore')
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'airport-failure-policy')
+    expect(select).toBeTruthy()
+    await select!.setValue('error')
+    expect((w.vm as any).draft.failure_policy).toBe('error')
     w.unmount()
   })
 })

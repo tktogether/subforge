@@ -478,9 +478,10 @@ func (s *Server) handleAPIRuleSourcesAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		URL         string `json:"url"`
-		InputFormat string `json:"input_format"`
+		Name         string `json:"name"`
+		URL          string `json:"url"`
+		InputFormat  string `json:"input_format"`
+		OutboundNode string `json:"outbound_node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeAPIError(w, r, http.StatusBadRequest, err)
@@ -490,7 +491,14 @@ func (s *Server) handleAPIRuleSourcesAdd(w http.ResponseWriter, r *http.Request)
 		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("url 不能为空"))
 		return
 	}
-	path, created, err := m.AddRuleSource(r.Context(), manifest.Source{Name: req.Name, URL: req.URL, InputFormat: req.InputFormat})
+	outbound, oerr := validateOutboundNode(r.Context(), m, req.OutboundNode)
+	if oerr != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, oerr)
+		return
+	}
+	path, created, err := m.AddRuleSource(r.Context(), manifest.Source{
+		Name: req.Name, URL: req.URL, InputFormat: req.InputFormat, OutboundNode: outbound,
+	})
 	if err != nil {
 		if strings.Contains(err.Error(), "已存在") {
 			s.writeAPIError(w, r, http.StatusConflict, err)
@@ -504,6 +512,45 @@ func (s *Server) handleAPIRuleSourcesAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"path": path, "created": created})
+}
+
+// handleAPIRuleSourceOutbound 处理 POST /api/rule-sources/outbound（设置单个规则源的出网节点）。
+func (s *Server) handleAPIRuleSourceOutbound(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 POST"))
+		return
+	}
+	m, ok := s.subManagerOr503(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name         string `json:"name"`
+		OutboundNode string `json:"outbound_node"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("name 不能为空"))
+		return
+	}
+	outbound, oerr := validateOutboundNode(r.Context(), m, req.OutboundNode)
+	if oerr != nil {
+		s.writeAPIError(w, r, http.StatusBadRequest, oerr)
+		return
+	}
+	path, err := m.SetRuleSourceOutbound(r.Context(), req.Name, outbound)
+	if err != nil {
+		if strings.Contains(err.Error(), "不存在") {
+			s.writeAPIError(w, r, http.StatusNotFound, err)
+			return
+		}
+		s.writeAPIError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"path": path, "outbound_node": outbound})
 }
 
 // handleAPIRuleSourcesRemove 处理 POST /api/rule-sources/remove（删除规则源）。

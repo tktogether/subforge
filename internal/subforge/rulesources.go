@@ -44,6 +44,8 @@ type RuleSourceStatus struct {
 	// AirportMissing 表示机场源对应的机场已被删除：源不再可更新，
 	// 解绑方案后允许手动清理。
 	AirportMissing bool `json:"airport_missing"`
+	// OutboundNode 是该源拉取时的出网选择：空=跟随默认，direct=直连，数字=自建节点 ID。
+	OutboundNode string `json:"outbound_node"`
 }
 
 // extForRuleSourceFormat 根据输出格式推导文件扩展名（manifest.extForFormat 未导出，此处等价复刻）。
@@ -438,12 +440,13 @@ func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, erro
 			versions = []string{}
 		}
 		status := RuleSourceStatus{
-			Name:     name,
-			URL:      s.URL,
-			Format:   mf.Output.Format,
-			Dir:      dir,
-			Versions: versions,
-			Label:    name,
+			Name:         name,
+			URL:          s.URL,
+			Format:       mf.Output.Format,
+			Dir:          dir,
+			Versions:     versions,
+			Label:        name,
+			OutboundNode: s.OutboundNode,
 		}
 		if isAirportRuleSource(name) {
 			status.Origin = "airport"
@@ -587,7 +590,7 @@ func (m *Manager) UpdateRemoteRuleSources(ctx context.Context) ([]manifest.Updat
 		mf.Output.Path = dir
 	}
 	mf.Sources = remote
-	results, uerr := mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	results, uerr := mf.Update(ctx, m.manifestUpdateOptions()...)
 	m.recordCurrentVersions(ctx, results)
 	return results, uerr
 }
@@ -603,7 +606,7 @@ func (m *Manager) UpdateRuleSources(ctx context.Context) ([]manifest.UpdateResul
 	if err == nil && dir != "" {
 		mf.Output.Path = dir
 	}
-	results, uerr := mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	results, uerr := mf.Update(ctx, m.manifestUpdateOptions()...)
 	m.recordCurrentVersions(ctx, results)
 	return results, uerr
 }

@@ -21,6 +21,8 @@ vi.mock('../api/endpoints', () => ({
     listRuleSourceRules: vi.fn(),
     importRuleSourceRules: vi.fn(),
     rulesets: vi.fn(),
+    listSelfNodes: vi.fn(),
+    setRuleSourceOutbound: vi.fn(),
   },
 }))
 
@@ -36,10 +38,12 @@ const renameMock = endpoints.renameRuleSource as unknown as ReturnType<typeof vi
 const updateOneMock = endpoints.updateRuleSourceOne as unknown as ReturnType<typeof vi.fn>
 const listRulesMock = endpoints.listRuleSourceRules as unknown as ReturnType<typeof vi.fn>
 const importRulesMock = endpoints.importRuleSourceRules as unknown as ReturnType<typeof vi.fn>
+const selfNodesMock = endpoints.listSelfNodes as unknown as ReturnType<typeof vi.fn>
+const setOutboundMock = endpoints.setRuleSourceOutbound as unknown as ReturnType<typeof vi.fn>
 
 function makeSources() {
   return [
-    { name: 'src1', url: 'http://x', format: 'mrs', dir: '/d', versions: ['v1', 'v2'], latest: 'v2', origin: 'remote', label: 'src1', rule_count: 12, updated_at: 1700000000 },
+    { name: 'src1', url: 'http://x', format: 'mrs', dir: '/d', versions: ['v1', 'v2'], latest: 'v2', origin: 'remote', label: 'src1', rule_count: 12, updated_at: 1700000000, outbound_node: '3' },
     { name: 'src2', url: 'http://y', format: 'text', dir: '/e', versions: [], latest: '', origin: 'airport', label: '守候-SNTP', rule_count: 0, updated_at: 0 },
   ]
 }
@@ -71,6 +75,8 @@ describe('RuleSourcesPage', () => {
     updateOneMock.mockResolvedValue({ results: [{ source: 'src1', version: 'v3', path: '/p/v3', from_cache: false, err: '' }] })
     listRulesMock.mockResolvedValue({ name: 'src1', total: 2, offset: 0, limit: 50, rules: ['DOMAIN-SUFFIX,a.test,DIRECT', 'IP-CIDR,1.1.1.1/32,DIRECT,no-resolve'] })
     importRulesMock.mockResolvedValue({ added: 2, skipped: 0, overwrote: 0, warnings: [] })
+    selfNodesMock.mockResolvedValue([{ id: 3, link: 'socks5://x', name: '香港节点', enabled: true, sort_order: 0 }])
+    setOutboundMock.mockResolvedValue({ path: '/m/manifest.yaml', outbound_node: 'direct' })
   })
 
   it('onMounted 加载 listRuleSources 渲染列表与 testids', async () => {
@@ -496,8 +502,27 @@ describe('RuleSourcesPage', () => {
     ;(w.vm as any).addName = 'new'
     await (w.vm as any).confirmAdd()
     await flushPromises()
-    expect(addMock).toHaveBeenCalledWith({ name: 'new', url: 'http://example.com/new.yaml', input_format: undefined })
+    expect(addMock).toHaveBeenCalledWith({ name: 'new', url: 'http://example.com/new.yaml', input_format: undefined, outbound_node: '' })
     expect((w.vm as any).addDialog).toBe(false)
+    w.unmount()
+  })
+
+  it('规则源显示单独出网节点，并可通过对话框修改', async () => {
+    const w = mount(RuleSourcesPage, { global: { plugins: [vuetify] }, attachTo: document.body })
+    await flushPromises()
+    await flushPromises()
+    expect(w.find('[data-testid="source-outbound"]').text()).toContain('香港节点')
+
+    const buttons = w.findAll('[data-testid="source-outbound-btn"]')
+    expect(buttons.length).toBe(2)
+    await buttons[0].trigger('click')
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'source-outbound-select')
+    expect(select).toBeTruthy()
+    await select!.setValue('direct')
+    await (w.vm as any).confirmOutbound()
+    await flushPromises()
+    expect(setOutboundMock).toHaveBeenCalledWith('src1', 'direct')
     w.unmount()
   })
 

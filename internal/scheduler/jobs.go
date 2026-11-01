@@ -10,6 +10,9 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/tktogether/subforge/internal/fetch"
 	"github.com/tktogether/subforge/internal/subforge"
@@ -22,6 +25,8 @@ const (
 	DefaultRuleSourceCron = "0 4 * * *"
 	// DefaultSubscheckCron 是订阅测活的默认调度周期（每 30 分钟）。
 	DefaultSubscheckCron = "*/30 * * * *"
+	// DefaultSourceRefreshCron 每分钟扫描一次过期缓存；实际刷新间隔由设置项决定。
+	DefaultSourceRefreshCron = "* * * * *"
 )
 
 // cron 表达式在 subforge 的 config 表里的键名。
@@ -73,6 +78,103 @@ func CronSpecFromConfig(ctx context.Context, mgr *subforge.Manager, key, def str
 		return "", fmt.Errorf("读取配置 %s: %w", key, err)
 	}
 	return val, nil
+}
+
+// SourceRefreshJob 按设置间隔在后台刷新机场原文缓存。
+// 每分钟检查一次：缓存年龄达到间隔的机场才真正拉取；0 表示关闭。
+type SourceRefreshJob struct {
+	mgr     *subforge.Manager
+	fetcher *fetch.Fetcher
+	logger  *log.Logger
+	spec    string
+	running atomic.Bool
+}
+
+// NewSourceRefreshJob 创建机场缓存刷新任务。
+func NewSourceRefreshJob(mgr *subforge.Manager, fetcher *fetch.Fetcher, logger *log.Logger) *SourceRefreshJob {
+	if logger == nil {
+		logger = log.Default()
+	}
+	return &SourceRefreshJob{mgr: mgr, fetcher: fetcher, logger: logger, spec: DefaultSourceRefreshCron}
+}
+
+// WithSpec 覆盖 cron 表达式。
+func (j *SourceRefreshJob) WithSpec(spec string) *SourceRefreshJob {
+	j.spec = spec
+	return j
+}
+
+// Name 返回任务名。
+func (j *SourceRefreshJob) Name() string { return "source-refresh" }
+
+// Spec 返回 cron 表达式。
+func (j *SourceRefreshJob) Spec() string { return j.spec }
+
+// Run 刷新过期缓存；单源失败只记日志，不触发整任务告警。
+func (j *SourceRefreshJob) Run(ctx context.Context) error {
+	if !j.running.CompareAndSwap(false, true) {
+		return nil // 上一轮还没结束，跳过本轮，避免失败源叠加并发
+	}
+	defer j.running.Store(false)
+
+	ttl, err := j.mgr.SourceRefreshInterval(ctx)
+	if err != nil {
+		return fmt.Errorf("读取缓存刷新间隔: %w", err)
+	}
+	if ttl <= 0 {
+		return nil
+	}
+	airports, err := j.mgr.ListAirports(ctx)
+	if err != nil {
+		return fmt.Errorf("读取机场: %w", err)
+	}
+
+	now := time.Now()
+	var (
+		wg                         sync.WaitGroup
+		mu                         sync.Mutex
+		refreshed, skipped, failed int
+	)
+	sem := make(chan struct{}, 4)
+	for _, a := range airports {
+		if !a.Enabled || strings.TrimSpace(a.SubscriptionURL) == "" {
+			continue
+		}
+		if _, at, ok, cerr := j.mgr.GetSourceCache(ctx, a.SubscriptionURL); cerr == nil && ok && now.Sub(at) < ttl {
+			skipped++
+			continue
+		}
+		wg.Add(1)
+		go func(a subforge.Airport) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			res := j.fetcher.FetchFrom(ctx, fetch.Source{Name: a.Name, URL: a.SubscriptionURL, Outbound: a.OutboundNode})
+			if res.Err != nil {
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				j.logger.Printf("[scheduler] source-refresh: %s 刷新失败: %v", a.Name, res.Err)
+				return
+			}
+			if perr := j.mgr.PutSourceCache(ctx, a.SubscriptionURL, res.Content); perr != nil {
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				j.logger.Printf("[scheduler] source-refresh: %s 写缓存失败: %v", a.Name, perr)
+				return
+			}
+			mu.Lock()
+			refreshed++
+			mu.Unlock()
+		}(a)
+	}
+	wg.Wait()
+	if refreshed+failed > 0 {
+		j.logger.Printf("[scheduler] source-refresh: 刷新 %d / 跳过 %d / 失败 %d（间隔 %s）",
+			refreshed, skipped, failed, ttl)
+	}
+	return nil
 }
 
 // RuleSourceUpdateJob 定时更新规则源（按 manifest 拉取并落盘）。

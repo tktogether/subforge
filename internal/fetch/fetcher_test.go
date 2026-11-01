@@ -38,6 +38,42 @@ func fastCfg() Config {
 	}
 }
 
+// TestFetchFrom_ClientFor 按来源出网选择取客户端；取客户端失败与返回 nil 都要正确处理。
+func TestFetchFrom_ClientFor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(readFixture(t, "mixed-subscription.txt"))
+	}))
+	t.Cleanup(srv.Close)
+
+	f := New(WithConfig(fastCfg()))
+	var got []string
+	f.ClientFor = func(_ context.Context, outbound string) (*http.Client, error) {
+		got = append(got, outbound)
+		return http.DefaultClient, nil
+	}
+	res := f.FetchFrom(context.Background(), Source{URL: srv.URL, Outbound: "direct"})
+	if res.Err != nil {
+		t.Fatalf("FetchFrom: %v", res.Err)
+	}
+	if len(got) == 0 || got[0] != "direct" {
+		t.Fatalf("ClientFor 入参 = %v", got)
+	}
+
+	f.ClientFor = func(context.Context, string) (*http.Client, error) {
+		return nil, errors.New("没有可用节点")
+	}
+	res = f.FetchFrom(context.Background(), Source{URL: srv.URL, Outbound: "1"})
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "没有可用节点") {
+		t.Fatalf("应返回取客户端错误: %v", res.Err)
+	}
+
+	f.ClientFor = func(context.Context, string) (*http.Client, error) { return nil, nil }
+	res = f.FetchFrom(context.Background(), Source{URL: srv.URL})
+	if res.Err != nil {
+		t.Fatalf("ClientFor 返回 nil 应回落到默认客户端: %v", res.Err)
+	}
+}
+
 func TestFetchFrom_LinksFormat(t *testing.T) {
 	body := readFixture(t, "mixed-subscription.txt")
 	fixed := time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)

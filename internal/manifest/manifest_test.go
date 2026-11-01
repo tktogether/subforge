@@ -68,6 +68,37 @@ func TestLoadManifest_MissingURL(t *testing.T) {
 	}
 }
 
+// TestUpdate_PassesSourceOutbound 规则源自带的出网选择要传给 ClientFor。
+func TestUpdate_PassesSourceOutbound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("rules:\n  - DOMAIN,example.com,PROXY\n"))
+	}))
+	defer srv.Close()
+
+	m := Manifest{
+		Sources: []Source{{Name: "src1", URL: srv.URL + "/a.yaml", Type: "clash", OutboundNode: "direct"}},
+		Output:  Output{Format: "clash-meta", Path: filepath.Join(t.TempDir(), "rules")},
+	}
+	m.applyDefaults()
+
+	var keys []string
+	_, err := m.Update(context.Background(), WithClientFor(func(_ context.Context, outbound string) (*http.Client, error) {
+		keys = append(keys, outbound)
+		return http.DefaultClient, nil
+	}))
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(keys) == 0 {
+		t.Fatal("ClientFor 未被调用")
+	}
+	for _, k := range keys {
+		if k != "direct" {
+			t.Fatalf("出网选择 = %q, want direct（全部 %v）", k, keys)
+		}
+	}
+}
+
 func TestUpdate_WritesVersionedFiles(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("rules:\n  - DOMAIN,example.com,PROXY\n"))

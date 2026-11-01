@@ -10,10 +10,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tktogether/subforge/internal/manifest"
 	"github.com/tktogether/subforge/internal/store"
 	"github.com/tktogether/subforge/internal/traffic"
 )
@@ -22,6 +25,22 @@ import (
 type Manager struct {
 	db      *store.DB
 	dataDir string
+	// outboundClientFor 按来源的出网选择返回 HTTP 客户端；控制台启动时注入。
+	outboundClientFor func(ctx context.Context, outbound string) (*http.Client, error)
+}
+
+// manifestUpdateOptions 让规则源更新沿用当前默认出网节点与清单里按源指定的选择。
+func (m *Manager) manifestUpdateOptions() []manifest.UpdateOption {
+	opts := []manifest.UpdateOption{manifest.WithRetention(manifest.DefaultRetention)}
+	if m.outboundClientFor != nil {
+		opts = append(opts, manifest.WithClientFor(m.outboundClientFor))
+	}
+	return opts
+}
+
+// SetOutboundClientFor 注入出网客户端工厂（规则源等后台拉取使用）。
+func (m *Manager) SetOutboundClientFor(f func(ctx context.Context, outbound string) (*http.Client, error)) {
+	m.outboundClientFor = f
 }
 
 // defaultDataDirFromDSN 从 DSN 推导数据根目录；无法推导时返回 ""（表示落 cwd）。
@@ -76,6 +95,7 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
 			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
 			"COALESCE((SELECT pipeline FROM source_pipelines WHERE source_key = 'airport:' || airports.id), ''), "+
+			"COALESCE(failure_policy, 'ignore'), COALESCE(outbound_node, ''), "+
 			"created_at, updated_at FROM airports ORDER BY sort_order, id")
 	if err != nil {
 		return nil, err
@@ -86,7 +106,7 @@ func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
 		var a Airport
 		if err := rows.Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
 			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr, &a.Pipeline,
-			&a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.FailurePolicy, &a.OutboundNode, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -101,10 +121,11 @@ func (m *Manager) GetAirport(ctx context.Context, id int64) (*Airport, error) {
 		"SELECT id, name, subscription_url, COALESCE(remarks, ''), enabled, sort_order, "+
 			"upload, download, total, expire, node_count, traffic_at, COALESCE(traffic_err, ''), "+
 			"COALESCE((SELECT pipeline FROM source_pipelines WHERE source_key = 'airport:' || airports.id), ''), "+
+			"COALESCE(failure_policy, 'ignore'), COALESCE(outbound_node, ''), "+
 			"created_at, updated_at FROM airports WHERE id = ?", id).
 		Scan(&a.ID, &a.Name, &a.SubscriptionURL, &a.Remarks, &a.Enabled, &a.SortOrder,
 			&a.Upload, &a.Download, &a.Total, &a.Expire, &a.NodeCount, &a.TrafficAt, &a.TrafficErr, &a.Pipeline,
-			&a.CreatedAt, &a.UpdatedAt)
+			&a.FailurePolicy, &a.OutboundNode, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("订阅 %d 不存在", id)
 	}
@@ -139,6 +160,62 @@ func (m *Manager) UpdateAirport(ctx context.Context, id int64, name, subscriptio
 
 // AirportSourceKey 是机场在 source_pipelines 里的键。
 func AirportSourceKey(id int64) string { return fmt.Sprintf("airport:%d", id) }
+
+// 机场拉取失败时的订阅语义。
+const (
+	// AirportFailureIgnore 跳过失败来源，用其余来源照常生成订阅（现状行为）。
+	AirportFailureIgnore = "ignore"
+	// AirportFailureError 整份订阅返回错误，客户端保留上一版可用配置。
+	AirportFailureError = "error"
+)
+
+// NormalizeAirportFailurePolicy 校验并归一化机场失败策略；空串等同 ignore。
+func NormalizeAirportFailurePolicy(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", AirportFailureIgnore:
+		return AirportFailureIgnore, nil
+	case AirportFailureError:
+		return AirportFailureError, nil
+	default:
+		return "", fmt.Errorf("失败策略必须是 %s 或 %s", AirportFailureIgnore, AirportFailureError)
+	}
+}
+
+// NormalizeOutboundNode 校验来源出网节点：空=跟随默认，direct=强制直连，
+// 数字=自建节点 ID。存在性由调用方按库校验。
+func NormalizeOutboundNode(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" || v == "direct" {
+		return v, nil
+	}
+	id, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || id <= 0 {
+		return "", fmt.Errorf("出网节点必须是空、direct 或自建节点 ID")
+	}
+	return strconv.FormatInt(id, 10), nil
+}
+
+// SetAirportOutboundNode 设置机场拉取时使用的出网节点。
+func (m *Manager) SetAirportOutboundNode(ctx context.Context, id int64, outbound string) error {
+	v, err := NormalizeOutboundNode(outbound)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.Raw().ExecContext(ctx,
+		"UPDATE airports SET outbound_node = ?, updated_at = ? WHERE id = ?", v, time.Now(), id)
+	return err
+}
+
+// SetAirportFailurePolicy 设置机场拉取失败时的订阅语义。
+func (m *Manager) SetAirportFailurePolicy(ctx context.Context, id int64, policy string) error {
+	p, err := NormalizeAirportFailurePolicy(policy)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.Raw().ExecContext(ctx,
+		"UPDATE airports SET failure_policy = ?, updated_at = ? WHERE id = ?", p, time.Now(), id)
+	return err
+}
 
 // SetAirportPipeline 设置机场的来源级处理管线；空串表示不处理。
 func (m *Manager) SetAirportPipeline(ctx context.Context, id int64, pipeline string) error {

@@ -3,10 +3,12 @@ package convert
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -125,6 +127,234 @@ func TestEngine_PartialFailure(t *testing.T) {
 	}
 	if !strings.Contains(string(res.Body), "OK-03") {
 		t.Error("失败来源不应拖垮成功来源的产物")
+	}
+}
+
+type memSourceCache struct {
+	entries map[string]memCacheEntry
+}
+
+type memCacheEntry struct {
+	content []byte
+	at      time.Time
+}
+
+func newMemSourceCache() *memSourceCache {
+	return &memSourceCache{entries: map[string]memCacheEntry{}}
+}
+
+func (c *memSourceCache) GetSourceCache(_ context.Context, url string) ([]byte, time.Time, bool, error) {
+	e, ok := c.entries[url]
+	return e.content, e.at, ok, nil
+}
+
+func (c *memSourceCache) PutSourceCache(_ context.Context, url string, content []byte) error {
+	c.entries[url] = memCacheEntry{content: append([]byte(nil), content...), at: time.Now()}
+	return nil
+}
+
+// TestEngine_FreshSourceCacheSkipsFetch 缓存年龄在间隔内：不发上游请求，直接用缓存。
+func TestEngine_FreshSourceCacheSkipsFetch(t *testing.T) {
+	var hits int32
+	body := ssLink("10.5.0.1", 8388, "CACHE-01") + "\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	cache := newMemSourceCache()
+	cache.entries[srv.URL] = memCacheEntry{content: []byte(body), at: time.Now()}
+	e := newEngine(t)
+	res, err := e.Run(context.Background(), Params{
+		Target: "clash.meta", URLs: []string{srv.URL}, Raw: map[string][]string{},
+		SourceCache: cache, SourceCacheTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Nodes != 1 || !strings.Contains(string(res.Body), "CACHE-01") {
+		t.Fatalf("缓存内容未生效: Nodes=%d", res.Nodes)
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Fatalf("间隔内不应拉取上游，hits=%d", got)
+	}
+	if len(res.Cached) != 1 || !res.Cached[0] {
+		t.Fatalf("Cached = %v, want [true]", res.Cached)
+	}
+}
+
+// TestEngine_StaleSourceCacheRefetches 缓存过期：重新拉取并覆盖缓存。
+func TestEngine_StaleSourceCacheRefetches(t *testing.T) {
+	var hits int32
+	fresh := ssLink("10.6.0.1", 8388, "NEW-01") + "\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(fresh))
+	}))
+	t.Cleanup(srv.Close)
+
+	cache := newMemSourceCache()
+	cache.entries[srv.URL] = memCacheEntry{
+		content: []byte(ssLink("10.6.0.2", 8388, "OLD-01") + "\n"),
+		at:      time.Now().Add(-2 * time.Minute),
+	}
+	e := newEngine(t)
+	res, err := e.Run(context.Background(), Params{
+		Target: "clash.meta", URLs: []string{srv.URL}, Raw: map[string][]string{},
+		SourceCache: cache, SourceCacheTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if atomic.LoadInt32(&hits) == 0 {
+		t.Fatal("过期后应重新拉取上游")
+	}
+	if !strings.Contains(string(res.Body), "NEW-01") || strings.Contains(string(res.Body), "OLD-01") {
+		t.Fatalf("产物应使用新内容")
+	}
+	content, _, ok, _ := cache.GetSourceCache(context.Background(), srv.URL)
+	if !ok || !strings.Contains(string(content), "NEW-01") {
+		t.Fatalf("拉取成功后应覆盖缓存")
+	}
+}
+
+// errorSourceCache 模拟缓存不可用：读/写都报错，转换仍应继续走上游。
+type errorSourceCache struct{}
+
+func (errorSourceCache) GetSourceCache(context.Context, string) ([]byte, time.Time, bool, error) {
+	return nil, time.Time{}, false, errors.New("cache down")
+}
+
+func (errorSourceCache) PutSourceCache(context.Context, string, []byte) error {
+	return errors.New("cache down")
+}
+
+// TestEngine_EmptySourceCacheFetchesAndStores 缓存未命中：正常拉取并把新内容写回缓存。
+func TestEngine_EmptySourceCacheFetchesAndStores(t *testing.T) {
+	var hits int32
+	body := ssLink("10.7.0.1", 8388, "EMPTY-01") + "\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	cache := newMemSourceCache()
+	e := newEngine(t)
+	res, err := e.Run(context.Background(), Params{
+		Target: "clash.meta", URLs: []string{srv.URL}, Raw: map[string][]string{},
+		SourceCache: cache, SourceCacheTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if atomic.LoadInt32(&hits) == 0 || res.Nodes != 1 {
+		t.Fatalf("未命中应拉取: hits=%d nodes=%d", hits, res.Nodes)
+	}
+	content, _, ok, _ := cache.GetSourceCache(context.Background(), srv.URL)
+	if !ok || !strings.Contains(string(content), "EMPTY-01") {
+		t.Fatal("拉取成功后应写回缓存")
+	}
+}
+
+// TestEngine_SourceCacheErrorsIgnored 缓存读失败按未命中处理，写失败不阻断转换。
+func TestEngine_SourceCacheErrorsIgnored(t *testing.T) {
+	srv := subServer(t, ssLink("10.8.0.1", 8388, "CACHE-ERR"))
+	e := newEngine(t)
+	res, err := e.Run(context.Background(), Params{
+		Target: "clash.meta", URLs: []string{srv.URL}, Raw: map[string][]string{},
+		SourceCache: errorSourceCache{}, SourceCacheTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("缓存故障不应阻断转换: %v", err)
+	}
+	if res.Nodes != 1 {
+		t.Fatalf("Nodes = %d", res.Nodes)
+	}
+}
+
+// TestEngine_SourceCacheDisabledByTTL TTL=0 时即使传了缓存也不读不写。
+func TestEngine_SourceCacheDisabledByTTL(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(ssLink("10.9.0.1", 8388, "TTL0") + "\n"))
+	}))
+	t.Cleanup(srv.Close)
+	cache := newMemSourceCache()
+	e := newEngine(t)
+	res, err := e.Run(context.Background(), Params{
+		Target: "clash.meta", URLs: []string{srv.URL}, Raw: map[string][]string{},
+		SourceCache: cache, SourceCacheTTL: 0,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Nodes != 1 || atomic.LoadInt32(&hits) == 0 {
+		t.Fatalf("TTL=0 应实时拉取: nodes=%d hits=%d", res.Nodes, hits)
+	}
+	if _, _, ok, _ := cache.GetSourceCache(context.Background(), srv.URL); ok {
+		t.Fatal("TTL=0 不应写缓存")
+	}
+}
+
+// TestEngine_SourceCacheSkipsFailedSource 开启缓存时失败源照样报错且不写缓存。
+func TestEngine_SourceCacheSkipsFailedSource(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	t.Cleanup(bad.Close)
+	cache := newMemSourceCache()
+	e := newEngine(t)
+	_, err := e.Run(context.Background(), Params{
+		Target: "clash.meta", URLs: []string{bad.URL}, Raw: map[string][]string{},
+		SourceCache: cache, SourceCacheTTL: time.Minute,
+	})
+	if err == nil {
+		t.Fatal("全部失败时应报错")
+	}
+	if _, _, ok, _ := cache.GetSourceCache(context.Background(), bad.URL); ok {
+		t.Fatal("失败源不应写缓存")
+	}
+}
+
+// TestEngine_DeadSourceDoesNotStarveOthers 死源不能吃光请求预算：
+// 来源拉取必须并发，否则排在挂死来源后面的健康来源只能看到已取消的 context。
+// 线上表现是 /subscribe 挂满 30 秒、客户端零字节中断——排第一的机场 TLS 握手
+// 卡死，排在后面的正常机场全被连带取消。
+func TestEngine_DeadSourceDoesNotStarveOthers(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(3 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(dead.Close)
+	ok := subServer(t, ssLink("10.3.0.1", 8388, "OK-behind-dead"))
+
+	e := newEngine(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	res, err := e.Run(ctx, Params{
+		Target: "clash.meta",
+		URLs:   []string{dead.URL + "/sub", ok.URL},
+		Raw:    map[string][]string{},
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("死源不应让整次转换失败: %v", err)
+	}
+	if res.Nodes != 1 || !strings.Contains(string(res.Body), "OK-behind-dead") {
+		t.Errorf("健康来源的节点应保留，Nodes=%d", res.Nodes)
+	}
+	if len(res.Failures) != 1 {
+		t.Errorf("Failures = %v, want 1 条（死源）", res.Failures)
+	}
+	if elapsed > time.Second {
+		t.Errorf("拉取被死源串行拖住，耗时 %v", elapsed)
 	}
 }
 

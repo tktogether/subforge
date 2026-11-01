@@ -75,6 +75,11 @@ function setSwitch(item: SettingItem, value: boolean): void {
   item.value = value ? 'true' : 'false'
 }
 
+// 数字输入框在部分浏览器会把值转成 number；统一回字符串，后端设置项只接受字符串。
+function setNumber(item: SettingItem, value: unknown): void {
+  item.value = value == null ? '' : String(value)
+}
+
 function resetDefaults(): void {
   for (const it of settings.value) {
     it.value = ''
@@ -127,6 +132,30 @@ onMounted(() => {
             color="primary"
             hide-details
             @update:model-value="setSwitch(item, $event as boolean)"
+          />
+          <v-select
+            v-else-if="item.kind === 'select'"
+            data-testid="setting-select"
+            :model-value="item.value"
+            :items="item.options ?? []"
+            item-title="label"
+            item-value="value"
+            variant="outlined"
+            density="comfortable"
+            hide-details
+            @update:model-value="item.value = ($event as string | null) ?? ''"
+          />
+          <v-text-field
+            v-else-if="item.kind === 'number'"
+            data-testid="setting-number"
+            :model-value="item.value"
+            type="number"
+            min="0"
+            :placeholder="item.placeholder"
+            variant="outlined"
+            density="comfortable"
+            hide-details
+            @update:model-value="setNumber(item, $event)"
           />
           <v-text-field
             v-else

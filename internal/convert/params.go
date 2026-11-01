@@ -5,9 +5,11 @@
 package convert
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/model"
@@ -19,10 +21,23 @@ import (
 // 每个来源先经过自己的 Pipeline，再与其他来源合并；空 Pipeline 表示不处理。
 // URL 来源通常只有一个地址；自建节点集合可以是一组本地文件。
 type Source struct {
-	Name     string
+	Name string
+	// Key 是调用方给来源的稳定标识（如 airport:3），只用于失败归因；
+	// 为空时引擎用展示名归因。
+	Key string
+	// Outbound 是该来源拉取时的出网选择：空=默认，direct=直连，数字=自建节点 ID。
+	// 引擎原样交给 Fetcher.ClientFor 解析。
+	Outbound string
 	URLs     []string
 	Files    []string
 	Pipeline string
+}
+
+// SourceCache 是机场原文缓存。TTL 内直接使用缓存，避免重复拉取；
+// 由控制台注入（SQLite 实现），CLI 不设置时行为不变。
+type SourceCache interface {
+	GetSourceCache(ctx context.Context, url string) (content []byte, fetchedAt time.Time, ok bool, err error)
+	PutSourceCache(ctx context.Context, url string, content []byte) error
 }
 
 // Params 是一次转换请求的解析结果。
@@ -35,6 +50,10 @@ type Params struct {
 	Files []string
 	// Sources 是带来源级处理的来源列表；非空时优先于 URLs/Files。
 	Sources []Source
+	// SourceCache 是机场原文缓存；SourceCacheTTL 内的内容直接复用。
+	// 两者任一为空/非正数时不启用缓存。
+	SourceCache    SourceCache
+	SourceCacheTTL time.Duration
 	// Insert 额外插入的订阅地址。
 	Insert []string
 	// Include / Exclude 节点名正则。

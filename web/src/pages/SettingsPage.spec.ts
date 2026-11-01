@@ -130,6 +130,53 @@ describe('SettingsPage', () => {
     w.unmount()
   })
 
+  it('数字设置项：渲染数字输入并写回字符串', async () => {
+    vi.mocked(endpoints.listSettings).mockResolvedValueOnce({
+      settings: [
+        { key: 'fetch.refresh_minutes', kind: 'number', label: '刷新间隔', description: '分钟', value: '30', placeholder: '30', is_default: false },
+      ],
+    } as any)
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const input = w.find('[data-testid="setting-number"] input')
+    expect(input.exists()).toBe(true)
+    await input.setValue('10')
+    expect((w.vm as any).settings[0].value).toBe('10')
+    await w.find('[data-testid="settings-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.updateSettings).toHaveBeenCalledWith({ 'fetch.refresh_minutes': '10' })
+    w.unmount()
+  })
+
+  it('下拉设置项：渲染候选并写回选中值', async () => {
+    vi.mocked(endpoints.listSettings).mockResolvedValueOnce({
+      settings: [
+        {
+          key: 'fetch.outbound_node',
+          kind: 'select',
+          label: '出网节点',
+          description: '拉取出口',
+          value: '',
+          is_default: true,
+          options: [
+            { value: '', label: '直连（默认）' },
+            { value: '3', label: '香港节点' },
+          ],
+        },
+      ],
+    } as any)
+    const w = mount(SettingsPage, { global: { plugins: [vuetify] } })
+    await flushPromises()
+    const select = w.findAllComponents({ name: 'VSelect' }).find((s) => s.attributes('data-testid') === 'setting-select')
+    expect(select).toBeTruthy()
+    await select!.setValue('3')
+    expect((w.vm as any).settings[0].value).toBe('3')
+    await w.find('[data-testid="settings-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.updateSettings).toHaveBeenCalledWith({ 'fetch.outbound_node': '3' })
+    w.unmount()
+  })
+
   it('setSwitch：true/false 两个分支', async () => {
     vi.mocked(endpoints.targets).mockResolvedValue([])
     vi.mocked(endpoints.stats).mockResolvedValue(sampleStats)

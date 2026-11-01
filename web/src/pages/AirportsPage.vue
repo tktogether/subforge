@@ -31,6 +31,44 @@ const help = pageHelp('airports')
 const nameHelp = fieldHelp('airport.name')
 const urlHelp = fieldHelp('airport.subscription_url')
 const remarksHelp = fieldHelp('airport.remarks')
+const failurePolicyHelp = fieldHelp('airport.failure_policy')
+const outboundHelp = fieldHelp('airport.outbound_node')
+
+const failurePolicyItems = [
+  { title: '忽略该来源，继续生成订阅', value: 'ignore' },
+  { title: '整份订阅报错，客户端保留旧配置', value: 'error' },
+]
+
+const selfNodeOptions = ref<{ title: string; value: string }[]>([])
+const outboundItems = computed(() => {
+  const items = [
+    { title: '跟随默认出网节点', value: '' },
+    { title: '强制直连', value: 'direct' },
+    ...selfNodeOptions.value,
+  ]
+  const current = draft.value.outbound_node ?? ''
+  if (current !== '' && current !== 'direct' && !items.some((i) => i.value === current)) {
+    items.push({ title: `节点 ${current}（不存在）`, value: current })
+  }
+  return items
+})
+const selfNodeNames = computed(() => new Map(selfNodeOptions.value.map((o) => [o.value, o.title])))
+function outboundLabel(value: string): string {
+  if (value === 'direct') return '直连'
+  return selfNodeNames.value.get(value) ?? `节点 ${value}`
+}
+
+async function loadSelfNodeOptions(): Promise<void> {
+  try {
+    const list = await endpoints.listSelfNodes()
+    selfNodeOptions.value = list.map((n) => ({
+      title: (n.name || `节点 ${n.id}`) + (n.enabled ? '' : '（已停用）'),
+      value: String(n.id),
+    }))
+  } catch {
+    selfNodeOptions.value = []
+  }
+}
 
 const loading = ref(false)
 const error = ref('')
@@ -59,7 +97,7 @@ const headers = [
 
 const dialog = ref(false)
 const editing = ref<AirportRow | null>(null)
-const draft = ref<AirportInput>({ name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '' })
+const draft = ref<AirportInput>({ name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '', failure_policy: 'ignore', outbound_node: '' })
 
 const pipelineOptions = ref<{ title: string; value: string }[]>([])
 const previewOpen = ref(false)
@@ -163,13 +201,14 @@ async function load(): Promise<void> {
 }
 
 function blank(): AirportInput {
-  return { name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '' }
+  return { name: '', subscription_url: '', remarks: '', enabled: true, pipeline: '', failure_policy: 'ignore', outbound_node: '' }
 }
 
 function openCreate(): void {
   draft.value = blank()
   editing.value = null
   void loadPipelineOptions()
+  void loadSelfNodeOptions()
   dialog.value = true
 }
 
@@ -180,9 +219,12 @@ function openEdit(row: AirportRow): void {
     remarks: row.remarks,
     enabled: row.enabled,
     pipeline: row.pipeline ?? '',
+    failure_policy: row.failure_policy ?? 'ignore',
+    outbound_node: row.outbound_node ?? '',
   }
   editing.value = row
   void loadPipelineOptions()
+  void loadSelfNodeOptions()
   dialog.value = true
 }
 
@@ -349,6 +391,7 @@ function relativeTime(ts: number): string {
 onMounted(() => {
   void load()
   void loadPipelineOptions()
+  void loadSelfNodeOptions()
   void restoreLastCheck()
 })
 
@@ -414,7 +457,7 @@ async function restoreLastCheck(): Promise<void> {
         >
           <template #item.name="{ item }">
             <div class="airport-name" :title="item.subscription_url">{{ item.name }}</div>
-            <div class="airport-pipeline" data-testid="airport-pipeline-text">处理：{{ item.pipeline || '不处理' }}</div>
+            <div class="airport-pipeline" data-testid="airport-pipeline-text">处理：{{ item.pipeline || '不处理' }}<span v-if="item.failure_policy === 'error'"> · 失败时报错</span><span v-if="item.outbound_node" data-testid="airport-outbound-text"> · 出网：{{ outboundLabel(item.outbound_node) }}</span></div>
           </template>
           <template #item.subscription_url="{ value }">
             <span class="airport-mono airport-truncate" :title="value">{{ value }}</span>
@@ -534,6 +577,24 @@ async function restoreLastCheck(): Promise<void> {
           <v-text-field v-model="draft.name" data-testid="airport-name" label="名称" :hint="nameHelp?.hint" :placeholder="nameHelp?.example" persistent-hint></v-text-field>
           <v-text-field v-model="draft.subscription_url" data-testid="airport-url" label="订阅地址" :hint="urlHelp?.hint" :placeholder="urlHelp?.example" persistent-hint></v-text-field>
           <v-text-field v-model="draft.remarks" data-testid="airport-remarks" label="备注" :hint="remarksHelp?.hint" :placeholder="remarksHelp?.example" persistent-hint></v-text-field>
+          <v-select
+            v-model="draft.failure_policy"
+            :items="failurePolicyItems"
+            label="拉取失败时"
+            :hint="failurePolicyHelp?.hint"
+            persistent-hint
+            data-testid="airport-failure-policy"
+            class="mb-3"
+          />
+          <v-select
+            v-model="draft.outbound_node"
+            :items="outboundItems"
+            label="出网节点"
+            :hint="outboundHelp?.hint"
+            persistent-hint
+            data-testid="airport-outbound"
+            class="mb-3"
+          />
           <v-select
             v-model="draft.pipeline"
             :items="pipelineItems"

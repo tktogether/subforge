@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -19,6 +20,111 @@ func newTestManager(t *testing.T) *Manager {
 	}
 	t.Cleanup(func() { _ = m.Close() })
 	return m
+}
+
+// TestAirportFailurePolicyAndOutbound 机场失败策略与出网节点字段的写入/校验。
+func TestAirportFailurePolicyAndOutbound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	a, err := m.AddAirport(ctx, "a", "https://example.com/sub", "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	got, err := m.GetAirport(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetAirport: %v", err)
+	}
+	if got.FailurePolicy != AirportFailureIgnore || got.OutboundNode != "" {
+		t.Fatalf("默认值 = %+v", got)
+	}
+
+	if err := m.SetAirportFailurePolicy(ctx, a.ID, "error"); err != nil {
+		t.Fatalf("SetAirportFailurePolicy: %v", err)
+	}
+	if err := m.SetAirportOutboundNode(ctx, a.ID, "direct"); err != nil {
+		t.Fatalf("SetAirportOutboundNode: %v", err)
+	}
+	got, _ = m.GetAirport(ctx, a.ID)
+	if got.FailurePolicy != AirportFailureError || got.OutboundNode != "direct" {
+		t.Fatalf("写入后 = %+v", got)
+	}
+
+	n, err := m.AddSelfNode(ctx, "socks5://user:pass@127.0.0.1:1080", "节点A", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+	if err := m.SetAirportOutboundNode(ctx, a.ID, fmt.Sprint(n.ID)); err != nil {
+		t.Fatalf("SetAirportOutboundNode 节点: %v", err)
+	}
+	got, _ = m.GetAirport(ctx, a.ID)
+	if got.OutboundNode != fmt.Sprint(n.ID) {
+		t.Fatalf("节点出网 = %q", got.OutboundNode)
+	}
+
+	if err := m.SetAirportFailurePolicy(ctx, a.ID, "bogus"); err == nil {
+		t.Fatal("非法失败策略应报错")
+	}
+	if err := m.SetAirportOutboundNode(ctx, a.ID, "bogus"); err == nil {
+		t.Fatal("非法出网节点应报错")
+	}
+	if v, err := NormalizeAirportFailurePolicy(""); err != nil || v != AirportFailureIgnore {
+		t.Fatalf("NormalizeAirportFailurePolicy 空串 = %q err=%v", v, err)
+	}
+	if _, err := NormalizeAirportFailurePolicy("x"); err == nil {
+		t.Fatal("非法失败策略应报错")
+	}
+}
+
+// TestOutboundNodeFor 来源级出网解析：空=默认、direct=直连、ID=节点，失效回落默认。
+func TestOutboundNodeFor(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	n1, err := m.AddSelfNode(ctx, "socks5://user:pass@127.0.0.1:1080", "节点1", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+	n2, err := m.AddSelfNode(ctx, "socks5://user:pass@127.0.0.1:1081", "节点2", false, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+
+	if got, err := m.OutboundNodeFor(ctx, ""); err != nil || got.ID != 0 {
+		t.Fatalf("默认空 = %+v err=%v", got, err)
+	}
+	if err := m.SetSettings(ctx, map[string]string{OutboundNodeKey: fmt.Sprint(n1.ID)}); err != nil {
+		t.Fatalf("SetSettings: %v", err)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, ""); got.ID != n1.ID {
+		t.Fatalf("空应跟随默认节点: %+v", got)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, "direct"); got.ID != 0 {
+		t.Fatalf("direct 应为直连: %+v", got)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, fmt.Sprint(n1.ID)); got.ID != n1.ID {
+		t.Fatalf("指定节点: %+v", got)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, "9999"); got.ID != n1.ID {
+		t.Fatalf("不存在应回落默认: %+v", got)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, "bogus"); got.ID != n1.ID {
+		t.Fatalf("非法值应回落默认: %+v", got)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, fmt.Sprint(n2.ID)); got.ID != n1.ID {
+		t.Fatalf("停用节点应回落默认: %+v", got)
+	}
+	emptyLink, err := m.AddSelfNode(ctx, "", "空链接", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode 空链接: %v", err)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, fmt.Sprint(emptyLink.ID)); got.ID != n1.ID {
+		t.Fatalf("空链接节点应回落默认: %+v", got)
+	}
+	if err := m.SetSettings(ctx, map[string]string{OutboundNodeKey: ""}); err != nil {
+		t.Fatalf("清除默认: %v", err)
+	}
+	if got, _ := m.OutboundNodeFor(ctx, "9999"); got.ID != 0 {
+		t.Fatalf("无默认时无效节点应直连: %+v", got)
+	}
 }
 
 func TestNewManagerCloseDB(t *testing.T) {

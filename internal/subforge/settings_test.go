@@ -2,9 +2,11 @@ package subforge
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newSettingsManager 创建一个临时 SQLite 管理器（settings 专用）。
@@ -25,10 +27,10 @@ func TestListSettingsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSettings: %v", err)
 	}
-	if len(items) != 4 {
-		t.Fatalf("len = %d, want 4", len(items))
+	if len(items) != 6 {
+		t.Fatalf("len = %d, want 6", len(items))
 	}
-	wantKeys := []string{"script.enabled", "subscheck.enabled", "rules.manifest_path", "rules.output_dir"}
+	wantKeys := []string{"script.enabled", "subscheck.enabled", OutboundNodeKey, SourceRefreshKey, "rules.manifest_path", "rules.output_dir"}
 	for i, k := range wantKeys {
 		if items[i].Key != k {
 			t.Fatalf("items[%d].Key = %q, want %q", i, items[i].Key, k)
@@ -37,14 +39,135 @@ func TestListSettingsDefaults(t *testing.T) {
 	if items[0].Value != "false" || items[1].Value != "false" {
 		t.Fatalf("bool 默认值应 false, got %q %q", items[0].Value, items[1].Value)
 	}
-	if items[2].Value != "" || items[3].Value != "" {
-		t.Fatalf("path 默认值应空串, got %q %q", items[2].Value, items[3].Value)
+	if items[2].Value != "" || items[3].Value != "" || items[4].Value != "" || items[5].Value != "" {
+		t.Fatalf("默认值应空串, got %q %q %q %q", items[2].Value, items[3].Value, items[4].Value, items[5].Value)
 	}
 	if items[0].Kind != SettingKindBool || items[1].Kind != SettingKindBool {
 		t.Errorf("bool kind: %q %q", items[0].Kind, items[1].Kind)
 	}
-	if items[2].Kind != SettingKindPath || items[3].Kind != SettingKindPath {
-		t.Errorf("path kind: %q %q", items[2].Kind, items[3].Kind)
+	if items[2].Kind != SettingKindSelect {
+		t.Errorf("outbound kind = %q", items[2].Kind)
+	}
+	if items[3].Kind != SettingKindNumber || items[3].Placeholder != "30" {
+		t.Errorf("refresh kind/placeholder = %q/%q", items[3].Kind, items[3].Placeholder)
+	}
+	if items[4].Kind != SettingKindPath || items[5].Kind != SettingKindPath {
+		t.Errorf("path kind: %q %q", items[4].Kind, items[5].Kind)
+	}
+	if len(items[2].Options) != 1 || items[2].Options[0].Value != "" {
+		t.Errorf("无自建节点时只应有直连选项: %+v", items[2].Options)
+	}
+}
+
+// TestSourceRefreshInterval 刷新间隔设置：默认 30 分钟、可设 0 关闭、越界报错；缓存读写走同一管理器。
+func TestSourceRefreshInterval(t *testing.T) {
+	ctx := context.Background()
+	m := newSettingsManager(t)
+
+	d, err := m.SourceRefreshInterval(ctx)
+	if err != nil || d != 30*time.Minute {
+		t.Fatalf("默认间隔 = %v err=%v", d, err)
+	}
+	if err := m.SetSettings(ctx, map[string]string{SourceRefreshKey: "5"}); err != nil {
+		t.Fatalf("SetSettings 5: %v", err)
+	}
+	if d, _ = m.SourceRefreshInterval(ctx); d != 5*time.Minute {
+		t.Fatalf("5 分钟 = %v", d)
+	}
+	if err := m.SetSettings(ctx, map[string]string{SourceRefreshKey: "0"}); err != nil {
+		t.Fatalf("SetSettings 0: %v", err)
+	}
+	if d, _ = m.SourceRefreshInterval(ctx); d != 0 {
+		t.Fatalf("0 应关闭, got %v", d)
+	}
+	if err := m.SetSettings(ctx, map[string]string{SourceRefreshKey: ""}); err != nil {
+		t.Fatalf("清空间隔: %v", err)
+	}
+	if d, _ = m.SourceRefreshInterval(ctx); d != 30*time.Minute {
+		t.Fatalf("清空后应回默认 30 分钟, got %v", d)
+	}
+	for _, bad := range []string{"abc", "-1", "10081"} {
+		if err := m.SetSettings(ctx, map[string]string{SourceRefreshKey: bad}); err == nil {
+			t.Fatalf("%q 应被拒绝", bad)
+		}
+	}
+
+	if err := m.setConfig(ctx, SourceRefreshKey, "abc"); err != nil {
+		t.Fatalf("写入脏配置: %v", err)
+	}
+	if _, err := m.SourceRefreshInterval(ctx); err == nil {
+		t.Fatal("非法间隔应报错")
+	}
+	if err := m.SetSettings(ctx, map[string]string{SourceRefreshKey: ""}); err != nil {
+		t.Fatalf("清理脏配置: %v", err)
+	}
+
+	if err := m.PutSourceCache(ctx, "https://x/sub", []byte("content")); err != nil {
+		t.Fatalf("PutSourceCache: %v", err)
+	}
+	content, _, ok, err := m.GetSourceCache(ctx, "https://x/sub")
+	if err != nil || !ok || string(content) != "content" {
+		t.Fatalf("缓存读回失败: ok=%v err=%v content=%q", ok, err, content)
+	}
+}
+
+// TestOutboundNodeSetting 出网节点设置：候选来自自建节点、写入校验、停用后回落到直连。
+func TestOutboundNodeSetting(t *testing.T) {
+	ctx := context.Background()
+	m := newSettingsManager(t)
+	n, err := m.AddSelfNode(ctx, "socks5://user:pass@127.0.0.1:1080", "测试节点", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+	unnamed, err := m.AddSelfNode(ctx, "socks5://user:pass@127.0.0.1:1081", "", false, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode unnamed: %v", err)
+	}
+
+	if err := m.SetSettings(ctx, map[string]string{OutboundNodeKey: fmt.Sprint(n.ID)}); err != nil {
+		t.Fatalf("SetSettings: %v", err)
+	}
+	items, err := m.ListSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListSettings: %v", err)
+	}
+	var found *SettingItem
+	for i := range items {
+		if items[i].Key == OutboundNodeKey {
+			found = &items[i]
+		}
+	}
+	if found == nil || found.Value != fmt.Sprint(n.ID) {
+		t.Fatalf("设置值未落库: %+v", found)
+	}
+	if len(found.Options) != 3 || found.Options[1].Label != "测试节点" {
+		t.Fatalf("选项应包含自建节点: %+v", found.Options)
+	}
+	disabledLabel := ""
+	for _, o := range found.Options {
+		if o.Value == fmt.Sprint(unnamed.ID) {
+			disabledLabel = o.Label
+		}
+	}
+	if !strings.HasPrefix(disabledLabel, "节点 ") || !strings.HasSuffix(disabledLabel, "（已停用）") {
+		t.Fatalf("未命名停用节点标签 = %q", disabledLabel)
+	}
+
+	got, err := m.OutboundNode(ctx)
+	if err != nil || got.ID != n.ID || got.Link == "" {
+		t.Fatalf("OutboundNode = %+v, err=%v", got, err)
+	}
+
+	if err := m.UpdateSelfNode(ctx, n.ID, n.Link, n.Name, false, 0); err != nil {
+		t.Fatalf("停用节点: %v", err)
+	}
+	got, err = m.OutboundNode(ctx)
+	if err != nil || got.ID != 0 {
+		t.Fatalf("停用后应直连, got %+v err=%v", got, err)
+	}
+
+	if err := m.SetSettings(ctx, map[string]string{OutboundNodeKey: "9999"}); err == nil {
+		t.Fatal("不存在的节点 ID 应被拒绝")
 	}
 }
 
@@ -93,8 +216,8 @@ func TestSetSettingsUnknownKey(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("ListSettings: %v", lerr)
 	}
-	if len(items) != 4 {
-		t.Fatalf("ListSettings 应 4 项, got %d", len(items))
+	if len(items) != 6 {
+		t.Fatalf("ListSettings 应 6 项, got %d", len(items))
 	}
 }
 
@@ -137,12 +260,14 @@ func TestListSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSettings: %v", err)
 	}
-	if len(items) != 4 {
-		t.Fatalf("len = %d, want 4", len(items))
+	if len(items) != 6 {
+		t.Fatalf("len = %d, want 6", len(items))
 	}
 	want := map[string]string{
 		"script.enabled":      "true",
 		"subscheck.enabled":   "false",
+		OutboundNodeKey:       "",
+		SourceRefreshKey:      "",
 		"rules.manifest_path": "/tmp/manifest.yaml",
 		"rules.output_dir":    "/tmp/out",
 	}

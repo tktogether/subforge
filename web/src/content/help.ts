@@ -398,6 +398,8 @@ export const FIELD_HELP: Record<string, { hint: string; example?: string }> = {
   'airport.subscription_url': { hint: '机场提供的订阅地址，支持 http 与 https。', example: 'https://example.com/sub?token=xxx' },
   'airport.remarks': { hint: '可选备注，不影响转换结果。', example: '主用机场' },
   'airport.enabled': { hint: '是否参与转换与订阅输出。' },
+  'airport.failure_policy': { hint: '拉取失败时的处理：忽略=跳过该来源继续生成订阅；报错=整份订阅返回错误，客户端保留上一版可用配置。' },
+  'airport.outbound_node': { hint: '拉取该机场时使用的出口：跟随默认=用设置页的默认出网节点；直连=强制本地网络；也可以单独指定一个自建节点。' },
   'airport.traffic_err': { hint: '最近一次采集失败的原因；失败时余额保留上一次成功值。' },
   'airport.traffic_at': { hint: '最近一次成功获取余额的时间。' },
   'group.name': { hint: '输出到客户端的策略组名称。', example: '香港' },
@@ -425,6 +427,9 @@ export const FIELD_HELP: Record<string, { hint: string; example?: string }> = {
   'pipeline.step.on_error': { hint: '步骤失败时的处理方式：跳过、中止或记录告警。' },
   'script.enabled': { hint: '关闭后，引用该脚本的管线步骤会编译失败。' },
   'subscheck.enabled': { hint: '是否执行订阅可用性检测。' },
+  'fetch.outbound_node': { hint: '机场与规则源未单独指定时使用的出网节点；规则集与模板的拉取也用它。留空直连。节点停用或删除后自动直连。' },
+  'fetch.refresh_minutes': { hint: '机场原文缓存的有效期：间隔内订阅直接使用缓存；超过后重新拉取，后台任务也会刷新过期缓存。0 表示关闭缓存与后台刷新。', example: '30' },
+  'ruleSource.outbound_node': { hint: '拉取该规则源时使用的出口：跟随默认=用设置页的默认出网节点；直连=强制本地网络；也可以单独指定一个自建节点。' },
   'rules.manifest_path': { hint: '规则源清单文件的绝对路径。' },
   'rules.output_dir': { hint: '规则源版本文件的保存目录；留空时使用清单中的输出路径。' },
 }

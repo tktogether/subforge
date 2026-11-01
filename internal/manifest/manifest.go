@@ -5,6 +5,7 @@ package manifest
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,8 @@ type Source struct {
 	Type           string `yaml:"type"`
 	UpdateInterval string `yaml:"update_interval"`
 	InputFormat    string `yaml:"input_format"`
+	// OutboundNode 是该源拉取时的出网选择：空=跟随默认，direct=直连，数字=自建节点 ID。
+	OutboundNode string `yaml:"outbound_node,omitempty"`
 }
 
 // Output 是输出配置。
@@ -183,9 +186,12 @@ func (m Manifest) Update(ctx context.Context, opts ...UpdateOption) ([]UpdateRes
 	cfg.Timeout = 60 * time.Second
 	cfg.Retries = 3
 	fetcher := fetch.New(fetch.WithConfig(cfg))
+	if o.clientFor != nil {
+		fetcher.ClientFor = o.clientFor
+	}
 	sources := make([]fetch.Source, len(m.Sources))
 	for i, s := range m.Sources {
-		sources[i] = fetch.Source{Name: s.SourceName(), URL: s.URL}
+		sources[i] = fetch.Source{Name: s.SourceName(), URL: s.URL, Outbound: s.OutboundNode}
 	}
 	results, err := fetcher.Fetch(ctx, sources)
 	if err != nil && len(results) == 0 {
@@ -265,6 +271,7 @@ func (m Manifest) Update(ctx context.Context, opts ...UpdateOption) ([]UpdateRes
 
 type updateOptions struct {
 	retention int
+	clientFor func(ctx context.Context, outbound string) (*http.Client, error)
 }
 
 // UpdateOption 配置 Update 行为。
@@ -276,6 +283,13 @@ func WithRetention(n int) UpdateOption {
 		if n > 0 {
 			o.retention = n
 		}
+	}
+}
+
+// WithClientFor 按来源的出网选择返回 HTTP 客户端（控制台注入节点/直连切换）。
+func WithClientFor(f func(ctx context.Context, outbound string) (*http.Client, error)) UpdateOption {
+	return func(o *updateOptions) {
+		o.clientFor = f
 	}
 }
 

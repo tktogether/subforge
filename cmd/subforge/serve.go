@@ -20,6 +20,7 @@ import (
 	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/convert"
 	"github.com/tktogether/subforge/internal/netguard"
+	"github.com/tktogether/subforge/internal/outbound"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/render/clashmeta"
 	"github.com/tktogether/subforge/internal/render/registry"
@@ -140,11 +141,28 @@ func cmdServe(args []string) error {
 	}
 
 	timeout := time.Duration(timeoutSeconds) * time.Second
-	safeClient := netguard.NewHTTPClient(timeout, allowPrivate)
+
+	// 出网出口按来源动态选择：空=设置页默认，direct=直连，数字=自建节点。
+	// mgr 在数据目录启用后才赋值，之前的请求（启动阶段）一律直连。
+	var mgr *subforge.Manager
+	resolveOutbound := func(ctx context.Context, key string) (outbound.Node, error) {
+		if mgr == nil {
+			return outbound.Node{}, nil
+		}
+		n, err := mgr.OutboundNodeFor(ctx, key)
+		if err != nil {
+			return outbound.Node{}, err
+		}
+		return outbound.Node{ID: n.ID, Name: n.Name, Link: n.Link}, nil
+	}
+	provider := outbound.New(netguard.NewHTTPTransport(allowPrivate), timeout, resolveOutbound, allowPrivate)
+	safeClient := &http.Client{Timeout: timeout, Transport: provider}
 	fetcher, err := newFetcher(cacheDir, timeout, safeClient)
 	if err != nil {
 		return err
 	}
+	// 机场/转换路径按来源选出口；规则集与模板走共享客户端的默认出口。
+	fetcher.ClientFor = provider.Client
 
 	engine := &convert.Engine{
 		Fetcher: fetcher,
@@ -179,11 +197,12 @@ func cmdServe(args []string) error {
 		if err := ensureDataDir(dataDir); err != nil {
 			return err
 		}
-		mgr, err := subforge.NewManagerWithDataDir(filepath.Join(dataDir, "subforge.db"), dataDir)
+		mgr, err = subforge.NewManagerWithDataDir(filepath.Join(dataDir, "subforge.db"), dataDir)
 		if err != nil {
 			return fmt.Errorf("初始化订阅管理: %w", err)
 		}
 		defer mgr.Close()
+		mgr.SetOutboundClientFor(provider.Client)
 		srv.SetSubManager(mgr)
 		fmt.Fprintf(os.Stderr, "订阅管理已启用: %s\n", dataDir)
 
@@ -245,6 +264,11 @@ func cmdServe(args []string) error {
 			if err := sch.AddJob(job); err != nil {
 				log.Printf("[serve] 注册 subscheck 任务失败: %v", err)
 			}
+		}
+
+		// 机场缓存后台刷新：每分钟检查一次，实际间隔由设置项决定（0=关闭）。
+		if err := sch.AddJob(scheduler.NewSourceRefreshJob(mgr, fetcher, log.Default())); err != nil {
+			log.Printf("[serve] 注册 source-refresh 任务失败: %v", err)
 		}
 
 		srv.SetScheduler(sch)

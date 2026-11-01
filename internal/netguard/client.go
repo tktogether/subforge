@@ -18,9 +18,12 @@ import (
 // NewHTTPClient 构造一个默认拒绝私网/回环/链路本地地址的 HTTP 客户端。
 // allowPrivate=true 时退回普通客户端（本地 fixture、内网订阅等显式场景）。
 func NewHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
-	if allowPrivate {
-		return &http.Client{Timeout: timeout}
-	}
+	return &http.Client{Timeout: timeout, Transport: NewHTTPTransport(allowPrivate)}
+}
+
+// NewHTTPTransport 构造带出站地址校验的 Transport。
+// 单独暴露给需要自定义 RoundTripper 的调用方（例如按请求在直连与节点出口之间切换）。
+func NewHTTPTransport(allowPrivate bool) *http.Transport {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
@@ -28,36 +31,40 @@ func NewHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-			if err != nil {
-				return nil, err
-			}
-			// 任意解析结果落在私网就拒绝：避免 DNS 提供公网+内网混合记录绕过。
-			for _, ip := range ips {
-				if IsBlockedIP(ip.IP) {
-					return nil, fmt.Errorf("拒绝访问私网/回环地址 %s", ip.IP)
-				}
-			}
-			var lastErr error
-			for _, ip := range ips {
-				conn, derr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-				if derr == nil {
-					return conn, nil
-				}
-				lastErr = derr
-			}
-			if lastErr == nil {
-				lastErr = fmt.Errorf("域名 %s 没有可用的解析结果", host)
-			}
-			return nil, lastErr
-		},
 	}
-	return &http.Client{Timeout: timeout, Transport: transport}
+	if allowPrivate {
+		transport.DialContext = dialer.DialContext
+		return transport
+	}
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		// 任意解析结果落在私网就拒绝：避免 DNS 提供公网+内网混合记录绕过。
+		for _, ip := range ips {
+			if IsBlockedIP(ip.IP) {
+				return nil, fmt.Errorf("拒绝访问私网/回环地址 %s", ip.IP)
+			}
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, derr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+			if derr == nil {
+				return conn, nil
+			}
+			lastErr = derr
+		}
+		if lastErr == nil {
+			lastErr = fmt.Errorf("域名 %s 没有可用的解析结果", host)
+		}
+		return nil, lastErr
+	}
+	return transport
 }
 
 // IsBlockedIP 报告地址是否属于禁止出站的私网/回环/链路本地/未指定/组播范围。

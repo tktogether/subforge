@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -110,6 +111,22 @@ var validGroupTypes = map[string]bool{
 	"load-balance": true,
 }
 
+// validateOutboundNode 校验来源出网节点取值：空=跟随默认，direct=直连，
+// 数字必须是已存在的自建节点。
+func validateOutboundNode(ctx context.Context, m *subforge.Manager, raw string) (string, error) {
+	v, err := subforge.NormalizeOutboundNode(raw)
+	if err != nil {
+		return "", err
+	}
+	if v != "" && v != "direct" {
+		id, _ := strconv.ParseInt(v, 10, 64)
+		if _, err := m.GetSelfNode(ctx, id); err != nil {
+			return "", fmt.Errorf("自建节点 %d 不存在", id)
+		}
+	}
+	return v, nil
+}
+
 // validateProxyGroup 校验分组输入，返回规范化后的 type（空 -> "select"，统一小写）。
 func validateProxyGroup(name, typ, regex string, interval int) (string, error) {
 	if strings.TrimSpace(name) == "" {
@@ -191,6 +208,8 @@ func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
 			Remarks         string `json:"remarks"`
 			Enabled         bool   `json:"enabled"`
 			Pipeline        string `json:"pipeline"`
+			FailurePolicy   string `json:"failure_policy"`
+			OutboundNode    string `json:"outbound_node"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -199,12 +218,30 @@ func (s *Server) handleAPIAirports(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
+		policy, perr := subforge.NormalizeAirportFailurePolicy(req.FailurePolicy)
+		if perr != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, perr)
+			return
+		}
+		outbound, oerr := validateOutboundNode(r.Context(), m, req.OutboundNode)
+		if oerr != nil {
+			s.writeAPIError(w, r, http.StatusBadRequest, oerr)
+			return
+		}
 		a, err := m.AddAirport(r.Context(), req.Name, req.SubscriptionURL, req.Remarks, req.Enabled)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
 		if err := m.SetAirportPipeline(r.Context(), a.ID, req.Pipeline); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := m.SetAirportFailurePolicy(r.Context(), a.ID, policy); err != nil {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		if err := m.SetAirportOutboundNode(r.Context(), a.ID, outbound); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -242,6 +279,10 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 			Remarks         string `json:"remarks"`
 			Enabled         bool   `json:"enabled"`
 			Pipeline        string `json:"pipeline"`
+			// FailurePolicy 省略 = 保持原值；显式提供时校验后写入。
+			FailurePolicy *string `json:"failure_policy"`
+			// OutboundNode 省略 = 保持原值；显式提供时校验后写入。
+			OutboundNode *string `json:"outbound_node"`
 		}
 		if !s.decodeBody(w, r, &req) {
 			return
@@ -249,6 +290,24 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 		if err := validateAirport(req.Name, req.SubscriptionURL); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
+		}
+		policy := ""
+		if req.FailurePolicy != nil {
+			p, perr := subforge.NormalizeAirportFailurePolicy(*req.FailurePolicy)
+			if perr != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, perr)
+				return
+			}
+			policy = p
+		}
+		outbound := ""
+		if req.OutboundNode != nil {
+			v, verr := validateOutboundNode(r.Context(), m, *req.OutboundNode)
+			if verr != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, verr)
+				return
+			}
+			outbound = v
 		}
 		a, err := m.UpdateAirport(r.Context(), id, req.Name, req.SubscriptionURL, req.Remarks, req.Enabled)
 		if err != nil {
@@ -258,6 +317,18 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 		if err := m.SetAirportPipeline(r.Context(), id, req.Pipeline); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
+		}
+		if req.FailurePolicy != nil {
+			if err := m.SetAirportFailurePolicy(r.Context(), id, policy); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if req.OutboundNode != nil {
+			if err := m.SetAirportOutboundNode(r.Context(), id, outbound); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		if a, err = m.GetAirport(r.Context(), id); err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
@@ -1072,7 +1143,13 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if a.Enabled && strings.TrimSpace(a.SubscriptionURL) != "" {
-			sources = append(sources, convert.Source{Name: a.Name, URLs: []string{a.SubscriptionURL}, Pipeline: a.Pipeline})
+			sources = append(sources, convert.Source{
+				Name:     a.Name,
+				Key:      subforge.AirportSourceKey(a.ID),
+				Outbound: a.OutboundNode,
+				URLs:     []string{a.SubscriptionURL},
+				Pipeline: a.Pipeline,
+			})
 			usedAirports = append(usedAirports, a)
 		}
 	}
@@ -1113,7 +1190,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusInternalServerError, perr)
 			return
 		}
-		sources = append(sources, convert.Source{Name: "自建节点", Files: selfNodeFiles, Pipeline: selfPipeline})
+		sources = append(sources, convert.Source{Name: "自建节点", Key: "self", Files: selfNodeFiles, Pipeline: selfPipeline})
 	}
 	if len(sources) == 0 {
 		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有启用的订阅或自建节点"))
@@ -1242,7 +1319,17 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		DisableTemplateGroups: !hasLayer(groupLayers, "template"),
 		TemplateWarnings:      sourceWarns,
 	}
-	result, err := s.engine.Run(r.Context(), params)
+	// 机场原文缓存：间隔内直接复用，超过后本次重新拉取（后台任务也会按间隔刷新）。
+	if ttl, terr := m.SourceRefreshInterval(r.Context()); terr == nil && ttl > 0 {
+		params.SourceCache = m
+		params.SourceCacheTTL = ttl
+	}
+
+	// 拉取阶段单独限时：客户端的容忍度低于服务端请求总超时，死源必须在预算内
+	// 被截断，健康来源才能照常产出。降级为部分来源失败是本端点的既有语义。
+	fetchCtx, cancel := context.WithTimeout(r.Context(), s.cfg.SubscribeTimeout)
+	defer cancel()
+	result, err := s.engine.Run(fetchCtx, params)
 	if err != nil {
 		s.writeAPIError(w, r, statusFor(err), err)
 		return
@@ -1251,6 +1338,22 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("rid=%s /subscribe 部分来源失败(%d): %s",
 			dash(chimw.GetReqID(r.Context())), len(result.Failures),
 			strings.Join(result.Failures, " | "))
+	}
+	// 机场设为「失败时报错」时整份订阅返回错误，客户端保留上一版可用配置；
+	// 默认 ignore 仍按部分失败降级，缺节点的风险由用户自己权衡。
+	var requiredFailed []string
+	for _, a := range usedAirports {
+		if a.FailurePolicy != subforge.AirportFailureError {
+			continue
+		}
+		if msg, failed := result.SourceErrors[subforge.AirportSourceKey(a.ID)]; failed {
+			requiredFailed = append(requiredFailed, fmt.Sprintf("%s（%s）", a.Name, msg))
+		}
+	}
+	if len(requiredFailed) > 0 {
+		s.writeAPIError(w, r, http.StatusBadGateway,
+			fmt.Errorf("订阅来源拉取失败（机场设置为失败时报错）：%s", strings.Join(requiredFailed, "；")))
+		return
 	}
 	// 5. 流量余额透传：把上游 subscription-userinfo 按策略聚合后写进响应头，
 	//    下游 mihomo/clash 客户端据此显示余额与到期。

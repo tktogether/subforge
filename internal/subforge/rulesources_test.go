@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -128,6 +130,69 @@ func TestLoadRuleManifestOK(t *testing.T) {
 }
 
 // TestListRuleSourcesEmpty 覆盖无版本时 Versions 为空、Latest 为空串（输出目录不存在也不中断）。
+// TestRuleUpdateUsesOutboundClientFactory 控制台注入的出网工厂要接到规则源更新上。
+func TestRuleUpdateUsesOutboundClientFactory(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	srv := httptest.NewServer(ruleSourceHandler())
+	defer srv.Close()
+	writeRuleManifest(t, m, srv.URL, "text", filepath.Join(t.TempDir(), "out"))
+	if _, err := m.SetRuleSourceOutbound(ctx, "a", "direct"); err != nil {
+		t.Fatalf("SetRuleSourceOutbound: %v", err)
+	}
+
+	var mu sync.Mutex
+	var keys []string
+	m.SetOutboundClientFor(func(_ context.Context, outbound string) (*http.Client, error) {
+		mu.Lock()
+		keys = append(keys, outbound)
+		mu.Unlock()
+		return http.DefaultClient, nil
+	})
+	if _, err := m.UpdateRuleSourceOne(ctx, "a"); err != nil {
+		t.Fatalf("UpdateRuleSourceOne: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(keys) == 0 || keys[0] != "direct" {
+		t.Fatalf("出网工厂入参 = %v, want [direct ...]", keys)
+	}
+}
+
+// TestSetRuleSourceOutbound 规则源出网节点写入 manifest 并在状态里返回。
+func TestSetRuleSourceOutbound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	srv := httptest.NewServer(ruleSourceHandler())
+	defer srv.Close()
+	writeRuleManifest(t, m, srv.URL, "text", filepath.Join(t.TempDir(), "out"))
+	n, err := m.AddSelfNode(ctx, "socks5://user:pass@127.0.0.1:1080", "节点A", true, 0)
+	if err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+
+	if _, err := m.SetRuleSourceOutbound(ctx, "a", fmt.Sprint(n.ID)); err != nil {
+		t.Fatalf("SetRuleSourceOutbound: %v", err)
+	}
+	statuses, err := m.ListRuleSources(ctx)
+	if err != nil {
+		t.Fatalf("ListRuleSources: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].OutboundNode != fmt.Sprint(n.ID) {
+		t.Fatalf("status = %+v", statuses)
+	}
+
+	if _, err := m.SetRuleSourceOutbound(ctx, "a", "direct"); err != nil {
+		t.Fatalf("direct: %v", err)
+	}
+	if _, err := m.SetRuleSourceOutbound(ctx, "a", "9999"); err == nil {
+		t.Fatal("不存在的节点应报错")
+	}
+	if _, err := m.SetRuleSourceOutbound(ctx, "nope", "direct"); err == nil {
+		t.Fatal("不存在的规则源应报错")
+	}
+}
+
 func TestListRuleSourcesEmpty(t *testing.T) {
 	ctx := context.Background()
 	m := newTestManager(t)

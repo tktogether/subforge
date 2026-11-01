@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/tktogether/subforge/internal/manifest"
@@ -56,6 +57,48 @@ func (m *Manager) AddRuleSource(ctx context.Context, src manifest.Source) (strin
 		return "", false, err
 	}
 	return path, true, nil
+}
+
+// SetRuleSourceOutbound 设置某个远程规则源拉取时的出网选择。
+// 机场规则源的出网跟随机场自身设置，不允许在清单里单独覆盖。
+func (m *Manager) SetRuleSourceOutbound(ctx context.Context, name, outbound string) (string, error) {
+	name = strings.TrimSpace(name)
+	if isAirportRuleSource(name) {
+		return "", fmt.Errorf("机场规则源的出网跟随机场设置，不能单独修改")
+	}
+	v, err := NormalizeOutboundNode(outbound)
+	if err != nil {
+		return "", err
+	}
+	if v != "" && v != "direct" {
+		id, _ := strconv.ParseInt(v, 10, 64)
+		if _, err := m.GetSelfNode(ctx, id); err != nil {
+			return "", fmt.Errorf("自建节点 %d 不存在", id)
+		}
+	}
+	path, err := m.ResolveRuleManifestPath(ctx)
+	if err != nil {
+		return "", err
+	}
+	mf, err := manifest.LoadManifestRaw(path)
+	if err != nil {
+		return "", fmt.Errorf("读取规则源清单 %s: %w", path, err)
+	}
+	found := false
+	for i := range mf.Sources {
+		if mf.Sources[i].SourceName() == name {
+			mf.Sources[i].OutboundNode = v
+			found = true
+			break
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("规则源 %q 不存在", name)
+	}
+	if err := manifest.SaveManifest(path, mf); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // RemoveRuleSource 按名称删除规则源并写回 manifest。
@@ -146,7 +189,7 @@ func (m *Manager) UpdateRuleSourceOne(ctx context.Context, name string) ([]manif
 		return nil, fmt.Errorf("规则源 %q 不存在", name)
 	}
 	mf.Sources = target
-	results, uerr := mf.Update(ctx, manifest.WithRetention(manifest.DefaultRetention))
+	results, uerr := mf.Update(ctx, m.manifestUpdateOptions()...)
 	// 单源更新也要把该源的「当前版本」指向刚写出的新版本（与全量更新一致）。
 	m.recordCurrentVersions(ctx, results)
 	return results, uerr

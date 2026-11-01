@@ -24,6 +24,9 @@ type Source struct {
 	URL string
 	// Auth 附加请求头（token 等），可选。
 	Auth map[string]string
+	// Outbound 是出网选择：空=默认，direct=直连，数字=自建节点 ID。
+	// 由 Fetcher.ClientFor 解析；未配置 ClientFor 时忽略。
+	Outbound string
 }
 
 // label 返回错误消息里的来源标识。
@@ -70,6 +73,9 @@ type Fetcher struct {
 	cfg    Config
 	client *http.Client
 	cache  *Cache
+	// ClientFor 按来源的出网选择返回 HTTP 客户端；nil 时一律用 client。
+	// 由 serve 接入节点/直连切换，CLI 与测试不设置时行为不变。
+	ClientFor func(ctx context.Context, outbound string) (*http.Client, error)
 }
 
 // Option 配置 Fetcher。
@@ -238,7 +244,17 @@ func (f *Fetcher) fetchOnceWithUA(ctx context.Context, src Source, userAgent str
 		req.Header.Set(k, v)
 	}
 
-	resp, err := f.client.Do(req)
+	client := f.client
+	if f.ClientFor != nil {
+		c, cerr := f.ClientFor(ctx, src.Outbound)
+		if cerr != nil {
+			return Result{}, cerr
+		}
+		if c != nil {
+			client = c
+		}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return Result{}, err
 	}

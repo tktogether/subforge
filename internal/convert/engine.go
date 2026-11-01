@@ -73,6 +73,9 @@ type Result struct {
 	RawNodes int
 	// Failures 失败来源的原因（部分成功时不为空）。
 	Failures []string
+	// SourceErrors 按来源键归因的失败原因（Source.Key；为空时用展示名）。
+	// Failures 是给人看的列表，这里是给调用方做策略判定的结构化结果。
+	SourceErrors map[string]string
 	// Warnings 渲染阶段跳过或降级的项（如 list 模式里协议不支持分享链接的节点）。
 	// 与 Failures 分开：这些不影响产物正确性，但静默丢弃没人会发现。
 	Warnings []string
@@ -131,14 +134,25 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 
 	var (
-		list        model.NodeList
-		failures    []string
-		sourceWarns []string
-		cached      []bool
-		providers   []model.Provider
-		fileSources = map[string]bool{}
-		rawNodes    int
+		list         model.NodeList
+		failures     []string
+		sourceErrors = map[string]string{}
+		sourceWarns  []string
+		cached       []bool
+		providers    []model.Provider
+		fileSources  = map[string]bool{}
+		rawNodes     int
 	)
+	// recordFailure 同时维护给人看的列表与按来源键归因的映射；
+	// 调用方（/subscribe）据此执行机场级失败策略。
+	recordFailure := func(unit Source, label string, failure error) {
+		failures = append(failures, fmt.Sprintf("%s: %v", label, failure))
+		key := unit.Key
+		if key == "" {
+			key = label
+		}
+		sourceErrors[key] = failure.Error()
+	}
 	// provider 按名去重：多个来源可能带同名 provider，首次出现的定义优先。
 	seenProvider := map[string]bool{}
 	collectProviders := func(ps []model.Provider) {
@@ -153,38 +167,42 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 
 	// 来源级处理：每个来源先各自拉取/解析并跑自己的管线，再按顺序合并。
 	// 这样机场 A 的改名、机场 B 的过滤不会互相污染；最终 plan 再对合并结果处理一次。
-	for _, unit := range p.sourceUnits() {
+	//
+	// 拉取先并发完成、再按来源顺序处理：串行拉取时一个挂死的上游会吃光整个
+	// 请求预算，排在后面的健康来源只能看到已取消的 context，整份订阅退化成失败。
+	units := p.sourceUnits()
+	prefetched := e.prefetchSources(ctx, units, p.Headers, p.SourceCache, p.SourceCacheTTL)
+	for ui, unit := range units {
 		label := sourceUnitLabel(unit)
 		var unitList model.NodeList
-		for _, raw := range unit.URLs {
+		for i, raw := range unit.URLs {
 			u := strings.TrimSpace(raw)
 			if u == "" {
 				continue
 			}
-			name := sourceName(u)
-			res := e.Fetcher.FetchFrom(ctx, fetch.Source{Name: name, URL: u, Auth: p.Headers})
+			res := prefetched[ui][i]
 			if res.Err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", label, res.Err))
+				recordFailure(unit, label, res.Err)
 				continue
 			}
 			dec, err := parse.DecodeSource(res.Content)
 			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+				recordFailure(unit, label, err)
 				continue
 			}
-			unitList = append(unitList, model.NewNodeList(dec.Nodes, name)...)
+			unitList = append(unitList, model.NewNodeList(dec.Nodes, res.Source.Name)...)
 			collectProviders(dec.Providers)
 			cached = append(cached, res.FromCache)
 		}
 		for _, f := range unit.Files {
 			buf, err := os.ReadFile(f)
 			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+				recordFailure(unit, label, err)
 				continue
 			}
 			dec, err := parse.DecodeSource(buf)
 			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", label, err))
+				recordFailure(unit, label, err)
 				continue
 			}
 			base := filepath.Base(f)
@@ -201,12 +219,12 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		if pipeline := strings.TrimSpace(unit.Pipeline); pipeline != "" {
 			sourcePlan, perr := BuildPlanWithResolver(Params{Pipeline: pipeline, Pipelines: eff.Pipelines}, e.ScriptResolver)
 			if perr != nil {
-				failures = append(failures, fmt.Sprintf("%s: 处理管线 %q 无法使用: %v", label, pipeline, perr))
+				recordFailure(unit, label, fmt.Errorf("处理管线 %q 无法使用: %w", pipeline, perr))
 				continue
 			}
 			pres, rerr := sourcePlan.Run(unitList)
 			if rerr != nil {
-				failures = append(failures, fmt.Sprintf("%s: 处理失败: %v", label, rerr))
+				recordFailure(unit, label, fmt.Errorf("处理失败: %w", rerr))
 				continue
 			}
 			sourceWarns = append(sourceWarns, pres.Warnings...)
@@ -260,14 +278,15 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 
 	result := Result{
-		Body:     body,
-		Format:   renderer.Name(),
-		Nodes:    nodes.Len(),
-		RawNodes: rawNodes,
-		Failures: failures,
-		Cached:   cached,
-		Groups:   len(groups),
-		Rules:    len(eff.Rules),
+		Body:         body,
+		Format:       renderer.Name(),
+		Nodes:        nodes.Len(),
+		RawNodes:     rawNodes,
+		Failures:     failures,
+		SourceErrors: sourceErrors,
+		Cached:       cached,
+		Groups:       len(groups),
+		Rules:        len(eff.Rules),
 	}
 	if wr, ok := renderer.(render.WarningReporter); ok {
 		result.Warnings = wr.Warnings()
@@ -301,6 +320,49 @@ func (p Params) sourceUnits() []Source {
 		}
 	}
 	return units
+}
+
+// prefetchSources 并发拉取所有来源 URL，返回与 units 下标对齐的结果。
+// 拉取之间互不依赖，并行让总耗时取决于最慢来源，而不是各来源之和；
+// 结果按原顺序放回，后续按来源跑管线的顺序不受影响。
+func (e *Engine) prefetchSources(ctx context.Context, units []Source, auth map[string]string, cache SourceCache, ttl time.Duration) [][]fetch.Result {
+	out := make([][]fetch.Result, len(units))
+	var (
+		refs  []fetch.Source
+		slots [][2]int
+	)
+	now := time.Now()
+	for ui, unit := range units {
+		out[ui] = make([]fetch.Result, len(unit.URLs))
+		for i, raw := range unit.URLs {
+			u := strings.TrimSpace(raw)
+			if u == "" {
+				continue
+			}
+			src := fetch.Source{Name: sourceName(u), URL: u, Auth: auth, Outbound: unit.Outbound}
+			// 间隔内直接复用缓存：缓存读取失败按未命中处理，不影响本次拉取。
+			if cache != nil && ttl > 0 {
+				if content, at, ok, cerr := cache.GetSourceCache(ctx, u); cerr == nil && ok && now.Sub(at) < ttl {
+					out[ui][i] = fetch.Result{Source: src, Content: content, FromCache: true, Size: len(content)}
+					continue
+				}
+			}
+			refs = append(refs, src)
+			slots = append(slots, [2]int{ui, i})
+		}
+	}
+	if len(refs) == 0 {
+		return out
+	}
+	results, _ := e.Fetcher.Fetch(ctx, refs)
+	for i, res := range results {
+		out[slots[i][0]][slots[i][1]] = res
+		if cache != nil && ttl > 0 && res.Err == nil && len(res.Content) > 0 {
+			// 缓存写入失败不阻断本次转换。
+			_ = cache.PutSourceCache(ctx, res.Source.URL, res.Content)
+		}
+	}
+	return out
 }
 
 func sourceUnitLabel(s Source) string {
