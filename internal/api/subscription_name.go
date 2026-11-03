@@ -7,10 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
-	"path"
 	"strings"
-
-	"github.com/tktogether/subforge/internal/convert"
 )
 
 func subscriptionDisplayName(tokenName, profileName, serverName string) string {
@@ -30,22 +27,13 @@ func profileTitleHeader(name string) string {
 	return "base64:" + base64.StdEncoding.EncodeToString([]byte(clean))
 }
 
-func subscriptionContentDisposition(name, target, format string) string {
-	ext := subscriptionFileExt(target, format)
+func subscriptionContentDisposition(name string) string {
 	safe := sanitizeFileName(name)
 	if isPrintableASCII(safe) {
-		return fmt.Sprintf(`attachment; filename="%s%s"`, safe, ext)
+		return fmt.Sprintf(`attachment; filename="%s"`, safe)
 	}
-	return fmt.Sprintf(`attachment; filename="subforge%s"; filename*=UTF-8''%s`,
-		ext, url.PathEscape(safe+ext))
-}
-
-func subscriptionFileExt(target, format string) string {
-	base := filenameFor(convert.Params{Target: target}, format)
-	if ext := path.Ext(base); ext != "" {
-		return ext
-	}
-	return ".yaml"
+	return fmt.Sprintf(`attachment; filename="subforge"; filename*=UTF-8''%s`,
+		url.PathEscape(safe))
 }
 
 func sanitizeHeaderText(raw string) string {

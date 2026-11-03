@@ -37,18 +37,15 @@ func TestSubscriptionNameHelpers(t *testing.T) {
 		t.Errorf("profile-title 解码 = %q/%v", decoded, err)
 	}
 
-	if got := subscriptionContentDisposition("My Sub", "clash.meta", "clash.meta"); !strings.Contains(got, `filename="My Sub.yaml"`) {
+	if got := subscriptionContentDisposition("My Sub"); !strings.Contains(got, `filename="My Sub"`) || strings.Contains(got, ".yaml") {
 		t.Errorf("ASCII Content-Disposition = %q", got)
 	}
-	cd := subscriptionContentDisposition("我的/订阅", "sing-box", "sing-box")
-	if !strings.Contains(cd, `filename="subforge.json"`) {
-		t.Errorf("中文 Content-Disposition 缺少 ASCII 回退: %q", cd)
+	cd := subscriptionContentDisposition("我的/订阅")
+	if !strings.Contains(cd, `filename="subforge"`) || strings.Contains(cd, ".yaml") {
+		t.Errorf("中文 Content-Disposition 缺少 ASCII 回退或带了扩展名: %q", cd)
 	}
-	if !strings.Contains(cd, "filename*=UTF-8''"+url.PathEscape("我的订阅.json")) {
+	if !strings.Contains(cd, "filename*=UTF-8''"+url.PathEscape("我的订阅")) {
 		t.Errorf("中文 Content-Disposition 缺少 filename*: %q", cd)
-	}
-	if got := subscriptionFileExt("list", "list"); got != ".txt" {
-		t.Errorf("list 扩展名 = %q", got)
 	}
 	if got := sanitizeFileName(" a/b:c*?\"<>| "); got != "abc" {
 		t.Errorf("sanitizeFileName = %q", got)
@@ -73,8 +70,8 @@ func TestSubscribeNameHeaders(t *testing.T) {
 		title    string
 		filename string
 	}{
-		{"t-name-zh", "我的订阅", "base64:" + base64.StdEncoding.EncodeToString([]byte("我的订阅")), url.PathEscape("我的订阅.yaml")},
-		{"t-name-ascii", "My Sub", "My Sub", `filename="My Sub.yaml"`},
+		{"t-name-zh", "我的订阅", "base64:" + base64.StdEncoding.EncodeToString([]byte("我的订阅")), url.PathEscape("我的订阅")},
+		{"t-name-ascii", "My Sub", "My Sub", `filename="My Sub"`},
 	}
 	for _, tc := range cases {
 		st, body := postAPIJSON(t, ts, "/api/tokens", map[string]any{

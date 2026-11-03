@@ -1404,7 +1404,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("profile-title", profileTitleHeader(subscriptionName))
-	w.Header().Set("Content-Disposition", subscriptionContentDisposition(subscriptionName, target, result.Format))
+	w.Header().Set("Content-Disposition", subscriptionContentDisposition(subscriptionName))
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
 }
 

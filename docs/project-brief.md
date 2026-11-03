@@ -405,6 +405,7 @@
 
 - **HTTP 环境复制**：复制统一走 Clipboard API，失败或不存在时回退到临时 textarea + `execCommand('copy')`。在 `.251` 的 HTTP 非安全上下文（`isSecureContext=false`、`navigator.clipboard` 不存在）实测点击复制返回「已复制」。
 - **订阅自己的名字**：`/subscribe` 现在把令牌名/方案名写入配置注释头 `配置名:`，并返回 `Profile-Title`（中文使用 `base64:`）与 `Content-Disposition`（ASCII 回退 + `filename*=UTF-8''`）。远端令牌「默认」实测响应头与正文均带名称。
+- **v0.5.2 修正**：`Content-Disposition` 的显示名不再带 `.yaml` 扩展名，避免客户端把扩展名当成订阅名的一部分；`Profile-Title` 仍保留纯订阅名。
 - **远端更新**：`.251` 已更新到 v0.5.1，数据库备份 `/root/subforgedata-backup/20261103-160831`；统一选择组当前使用用户自定义名 `🚀 出站选择`，产物仍为 33 组 / 95 节点 / 10599 规则。
 
 ## 14. 下一步
