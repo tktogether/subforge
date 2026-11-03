@@ -401,6 +401,12 @@
 
 门禁：Go 全量测试通过；语句覆盖 89.5%、函数覆盖 100%、条件覆盖 80.1%；前端 906 个测试通过、typecheck/build/coverage 全绿；docs-check 无错误。
 
+### v0.5.1 后续修复（2026-11-03）
+
+- **HTTP 环境复制**：复制统一走 Clipboard API，失败或不存在时回退到临时 textarea + `execCommand('copy')`。在 `.251` 的 HTTP 非安全上下文（`isSecureContext=false`、`navigator.clipboard` 不存在）实测点击复制返回「已复制」。
+- **订阅自己的名字**：`/subscribe` 现在把令牌名/方案名写入配置注释头 `配置名:`，并返回 `Profile-Title`（中文使用 `base64:`）与 `Content-Disposition`（ASCII 回退 + `filename*=UTF-8''`）。远端令牌「默认」实测响应头与正文均带名称。
+- **远端更新**：`.251` 已更新到 v0.5.1，数据库备份 `/root/subforgedata-backup/20261103-160831`；统一选择组当前使用用户自定义名 `🚀 出站选择`，产物仍为 33 组 / 95 节点 / 10599 规则。
+
 ## 14. 下一步
 
 1. `.251` 已部署 v0.5.0 并开启方案 1 的统一选择组；如需恢复旧的分散选择组，在方案弹窗关闭开关即可。
