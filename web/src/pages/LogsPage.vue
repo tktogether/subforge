@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { endpoints, type LogEntry } from '../api/endpoints'
+import { copyText } from '../utils/clipboard'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { pageHelp } from '../content/help'
@@ -119,12 +120,8 @@ function closeDetail(): void {
 
 async function copyDetail(): Promise<void> {
   if (detailEntry.value === null) return
-  try {
-    await navigator.clipboard.writeText(detailEntry.value.line)
-    notify('已复制日志内容', 'ok')
-  } catch {
-    notify('复制失败', 'error')
-  }
+  const ok = await copyText(detailEntry.value.line)
+  notify(ok ? '已复制日志内容' : '复制失败', ok ? 'ok' : 'error')
 }
 
 onMounted(() => {

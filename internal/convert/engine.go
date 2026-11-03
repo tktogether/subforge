@@ -262,6 +262,9 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 
 	profile := e.Profile
+	if name := strings.TrimSpace(p.ProfileName); name != "" {
+		profile.Name = name
+	}
 	if profile.Version != "" && profile.GeneratedAt == "" {
 		profile.GeneratedAt = nowUTC(e.Now)
 	}

@@ -1072,6 +1072,14 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		profile = p
 	}
 
+	// 订阅自己的名字：令牌名优先，其次方案名，最后服务名。
+	// 同时写进产物注释头与 HTTP 响应头，客户端下拉列表才能显示可辨识的名称。
+	planName := ""
+	if profile != nil {
+		planName = profile.Name
+	}
+	subscriptionName := subscriptionDisplayName(subTok.Name, planName, s.cfg.Name)
+
 	// 五个定制字段的取值优先级：query 显式参数 > 令牌字段 > 原回落链。
 	// 令牌字段为空串（未定制）时逐字节等价于改动前的行为。
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
@@ -1314,6 +1322,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		RuleProviders:  uniqueProviders,
 		FinalGroup:     finalGroupConfig(profile),
 		RuleSourceMeta: ruleSourceMetas,
+		ProfileName:    subscriptionName,
 		Pipeline:       pipeline,
 		Config:         configName,
 		Include:        includeList,
@@ -1394,6 +1403,8 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	w.Header().Set("profile-title", profileTitleHeader(subscriptionName))
+	w.Header().Set("Content-Disposition", subscriptionContentDisposition(subscriptionName, target, result.Format))
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
 }
 

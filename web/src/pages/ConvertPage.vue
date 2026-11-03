@@ -8,6 +8,7 @@ import {
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { pageHelp } from '../content/help'
+import { copyText } from '../utils/clipboard'
 import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
 import InfoTip from '../components/InfoTip.vue'
@@ -136,12 +137,7 @@ async function submit(): Promise<void> {
 
 async function copy(): Promise<void> {
   if (result.value === null) return
-  try {
-    await navigator.clipboard.writeText(result.value.body)
-    copied.value = true
-  } catch {
-    copied.value = false
-  }
+  copied.value = await copyText(result.value.body)
 }
 
 function filenameFor(format: string): string {

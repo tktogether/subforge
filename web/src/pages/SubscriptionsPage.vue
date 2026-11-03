@@ -4,6 +4,7 @@ import { endpoints, subscribeUrl, type Profile, type SubToken, type TrafficStrat
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { pageHelp } from '../content/help'
+import { copyText } from '../utils/clipboard'
 import PageHeader from '../components/PageHeader.vue'
 import InfoTip from '../components/InfoTip.vue'
 import { formatBytes, formatExpire } from '../format'
@@ -127,14 +128,9 @@ function maskToken(tok: string): string {
 
 async function copyUrl(): Promise<void> {
   if (selected.value === null) return
-  try {
-    await navigator.clipboard.writeText(subscribeUrl(origin.value, selected.value.token))
-    copied.value = true
-    notify('已复制', 'ok')
-  } catch {
-    copied.value = false
-    notify('复制失败', 'error')
-  }
+  const ok = await copyText(subscribeUrl(origin.value, selected.value.token))
+  copied.value = ok
+  notify(ok ? '已复制' : '复制失败', ok ? 'ok' : 'error')
 }
 
 // ---------- Block 3: traffic strategy ----------
