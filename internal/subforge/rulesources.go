@@ -17,6 +17,7 @@ import (
 
 	"github.com/tktogether/subforge/internal/manifest"
 	"github.com/tktogether/subforge/internal/model"
+	"github.com/tktogether/subforge/internal/subcfg"
 )
 
 // ErrRuleManifestMissing 表示规则源清单文件不存在（区别于读取/解析失败）。
@@ -475,6 +476,13 @@ func (m *Manager) ListRuleSources(ctx context.Context) ([]RuleSourceStatus, erro
 // 它永远不返回 error：任何失败都降级为一条 warning，并在 rules 中跳过该源。
 // rules 按 names 顺序拼接（每个源内按产物顺序），warnings 同样按 names 顺序。
 func (m *Manager) RuleSourceRules(ctx context.Context, names []string) (rules []string, warnings []string) {
+	rules, _, warnings = m.RuleSourceRulesWithMeta(ctx, names)
+	return rules, warnings
+}
+
+// RuleSourceRulesWithMeta 与 RuleSourceRules 等价，额外返回每个源的统计元数据：
+// FINAL/MATCH 目标与规则目标计数，供统一最终选择组识别规则源的选择目标。
+func (m *Manager) RuleSourceRulesWithMeta(ctx context.Context, names []string) (rules []string, metas []subcfg.RuleSourceMeta, warnings []string) {
 	// 1) trim + 去重保序，丢弃空串；全空 -> 直接返回。
 	ordered := make([]string, 0, len(names))
 	seen := make(map[string]bool, len(names))
@@ -487,13 +495,13 @@ func (m *Manager) RuleSourceRules(ctx context.Context, names []string) (rules []
 		ordered = append(ordered, n)
 	}
 	if len(ordered) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// 2) 读取全部规则源清单；清单读取失败整体降级。
 	sources, err := m.ListRuleSources(ctx)
 	if err != nil {
-		return nil, []string{fmt.Sprintf("读取规则源清单失败：%v", err)}
+		return nil, nil, []string{fmt.Sprintf("读取规则源清单失败：%v", err)}
 	}
 
 	// 3) 建 name -> RuleSourceStatus 映射。
@@ -543,6 +551,7 @@ func (m *Manager) RuleSourceRules(ctx context.Context, names []string) (rules []
 		// 5) 逐行清洗；统计并丢弃 FINAL/MATCH 兜底规则。
 		kept := make([]string, 0, len(lines))
 		dropped := 0
+		meta := subcfg.RuleSourceMeta{Name: name, TargetCounts: map[string]int{}}
 		for _, raw := range lines {
 			rule := strings.TrimSpace(raw)
 			if rule == "" {
@@ -556,17 +565,44 @@ func (m *Manager) RuleSourceRules(ctx context.Context, names []string) (rules []
 			head := strings.ToUpper(strings.TrimSpace(strings.SplitN(rule, ",", 2)[0]))
 			if head == "FINAL" || head == "MATCH" {
 				dropped++
+				if target := ruleLineTarget(rule); target != "" {
+					meta.FinalTargets = append(meta.FinalTargets, target)
+				}
 				continue
 			}
 			kept = append(kept, rule)
+			if target := ruleLineTarget(rule); target != "" {
+				meta.TargetCounts[target]++
+			}
 		}
+		meta.RuleCount = len(kept)
+		metas = append(metas, meta)
 		if dropped > 0 {
 			warnings = append(warnings, fmt.Sprintf("规则源 %s 含 %d 条 FINAL/MATCH 兜底规则，已忽略", name, dropped))
 		}
 		rules = append(rules, kept...)
 	}
 
-	return rules, warnings
+	return rules, metas, warnings
+}
+
+// ruleLineTarget 取规则行的出站目标：普通规则第 3 段，逻辑规则最后一段，
+// MATCH/FINAL 第 2 段。与 render.ruleTargetIndex 的口径保持一致。
+func ruleLineTarget(line string) string {
+	fields := splitRuleFields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+	head := strings.ToUpper(strings.TrimSpace(fields[0]))
+	switch {
+	case head == "MATCH" || head == "FINAL":
+		return strings.TrimSpace(fields[1])
+	case head == "AND" || head == "OR" || head == "NOT" || head == "SUB-RULE":
+		return strings.TrimSpace(fields[len(fields)-1])
+	case len(fields) >= 3:
+		return strings.TrimSpace(fields[2])
+	}
+	return ""
 }
 
 // UpdateRemoteRuleSources 只更新远程清单源；机场规则源由机场刷新路径更新，

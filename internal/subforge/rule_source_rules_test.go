@@ -91,6 +91,41 @@ func TestRuleSourceRulesYAML(t *testing.T) {
 	equalStrings(t, warnings, nil, "warnings(回退最新)")
 }
 
+func TestRuleSourceRulesWithMeta(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	outDir := filepath.Join(t.TempDir(), "out")
+	writeMultiSourceManifest(t, m, outDir, "clash-meta", "a")
+	seedProduct(t, outDir, "a-20240101-000000.yaml", "rules:\n"+
+		"  - \"DOMAIN,a.example,🚀 手动选择\"\n"+
+		"  - \"DOMAIN,b.example,DIRECT\"\n"+
+		"  - \"DOMAIN,c.example,🚀 手动选择\"\n"+
+		"  - \"MATCH,🐟 漏网之鱼\"\n"+
+		"  - \"FINAL,DIRECT\"\n")
+
+	rules, metas, warnings := m.RuleSourceRulesWithMeta(ctx, []string{"a"})
+	equalStrings(t, rules, []string{
+		"DOMAIN,a.example,🚀 手动选择",
+		"DOMAIN,b.example,DIRECT",
+		"DOMAIN,c.example,🚀 手动选择",
+	}, "rules")
+	equalStrings(t, warnings, []string{"规则源 a 含 2 条 FINAL/MATCH 兜底规则，已忽略"}, "warnings")
+	if len(metas) != 1 {
+		t.Fatalf("metas = %+v，期望 1 条", metas)
+	}
+	meta := metas[0]
+	if meta.Name != "a" || meta.RuleCount != 3 {
+		t.Errorf("meta = %+v", meta)
+	}
+	if got := meta.TargetCounts["🚀 手动选择"]; got != 2 {
+		t.Errorf("手动选择计数 = %d，期望 2", got)
+	}
+	if got := meta.TargetCounts["DIRECT"]; got != 1 {
+		t.Errorf("DIRECT 计数 = %d，期望 1", got)
+	}
+	equalStrings(t, meta.FinalTargets, []string{"🐟 漏网之鱼", "DIRECT"}, "FinalTargets")
+}
+
 // TestRuleSourceRulesText 覆盖 text 产物：按行切、TrimSpace、空行与 # 注释跳过。
 func TestRuleSourceRulesText(t *testing.T) {
 	ctx := context.Background()

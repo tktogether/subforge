@@ -842,6 +842,27 @@ describe('endpoints 方案(profile) 与来源(source)分层（v2）', () => {
     })
   })
 
+  it('previewProfileFinalGroup(3) → POST /api/profiles/3/final-group/preview', async () => {
+    const input = {
+      enabled: true,
+      mode: 'auto' as const,
+      name: '🚀 节点选择',
+      include_direct: true,
+      keep_source_terminals: false,
+      overrides: {},
+    }
+    const preview = { report: { unified_name: '🚀 节点选择', terminals: [] }, warnings: [] }
+    fetchMock.mockResolvedValue(respond(preview))
+    const r = await endpoints.previewProfileFinalGroup(3, input)
+    expect(r).toEqual(preview)
+    expect(fetchMock).toHaveBeenCalledWith('/api/profiles/3/final-group/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ final_group: input }),
+      signal: undefined,
+    })
+  })
+
   it('deleteProfile(3) → DELETE /api/profiles/3', async () => {
     fetchMock.mockResolvedValue(respond({ ok: true }))
     const r = await endpoints.deleteProfile(3)

@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/tktogether/subforge/internal/subcfg"
 )
 
 // Profile 是 profiles 表的一行：一套订阅配置 + 层顺序配置。
@@ -38,6 +40,8 @@ type Profile struct {
 	// nil = 未限制（使用全部启用来源）；空数组 = 明确不使用该类来源。
 	AirportIDs  []int64 `json:"airport_ids"`
 	SelfNodeIDs []int64 `json:"self_node_ids"`
+	// FinalGroup 是「统一最终选择组」配置；零值/空串表示关闭。
+	FinalGroup subcfg.FinalGroupConfig `json:"final_group"`
 	// RuleCount / GroupCount 是按「已启用层」实时统计的条数，由查询后填充。
 	RuleCount  int       `json:"rule_count"`
 	GroupCount int       `json:"group_count"`
@@ -56,6 +60,7 @@ const profileSelectCols = `SELECT p.id, p.name, p.description, p.config, p.pipel
        COALESCE(p.rule_sources, ''),
        COALESCE(p.airport_ids, ''),
        COALESCE(p.self_node_ids, ''),
+       COALESCE(p.final_group, ''),
        p.created_at, p.updated_at
 FROM profiles p`
 
@@ -64,11 +69,11 @@ func scanProfile(row interface {
 	Scan(dest ...any) error
 }) (Profile, error) {
 	var p Profile
-	var ruleLayers, groupLayers, ruleSources, airportIDs, selfNodeIDs string
+	var ruleLayers, groupLayers, ruleSources, airportIDs, selfNodeIDs, finalGroup string
 	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Config, &p.Pipeline,
 		&p.Target, &p.Include, &p.Exclude,
 		&p.Enabled, &p.SortOrder,
-		&ruleLayers, &groupLayers, &ruleSources, &airportIDs, &selfNodeIDs, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&ruleLayers, &groupLayers, &ruleSources, &airportIDs, &selfNodeIDs, &finalGroup, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return Profile{}, err
 	}
 	p.RuleLayers = parseLayerList(ruleLayers)
@@ -76,6 +81,11 @@ func scanProfile(row interface {
 	p.RuleSources = parseLayerList(ruleSources)
 	p.AirportIDs = parseIDList(airportIDs)
 	p.SelfNodeIDs = parseIDList(selfNodeIDs)
+	fg, err := subcfg.ParseFinalGroup(finalGroup)
+	if err != nil {
+		return Profile{}, err
+	}
+	p.FinalGroup = fg
 	return p, nil
 }
 
@@ -349,6 +359,28 @@ func (d *DB) SetProfileSources(ctx context.Context, id int64, airportIDs, selfNo
 	sets = append(sets, "updated_at = ?")
 	args = append(args, time.Now(), id)
 	res, err := d.db.ExecContext(ctx, "UPDATE profiles SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetProfileFinalGroup 保存方案的统一最终选择组配置。
+func (d *DB) SetProfileFinalGroup(ctx context.Context, id int64, cfg subcfg.FinalGroupConfig) error {
+	raw, err := cfg.Marshal()
+	if err != nil {
+		return err
+	}
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE profiles SET final_group = ?, updated_at = ? WHERE id = ?",
+		raw, time.Now(), id)
 	if err != nil {
 		return err
 	}

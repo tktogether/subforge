@@ -86,6 +86,8 @@ type Result struct {
 	Groups int
 	// Rules 生效的规则行数（含展开后的远程规则集）。
 	Rules int
+	// FinalGroup 是统一最终选择组的识别/改写报告；未启用时为 nil。
+	FinalGroup *render.FinalGroupReport
 }
 
 // Run 执行一次转换。没有任何来源时直接报错，避免产出空配置。
@@ -265,6 +267,15 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 	}
 	groups := expandGroupExtras(eff.Groups, nodes, fileSources)
 	groups = ResolveGroups(groups, nodes.Names())
+	var finalGroupReport *render.FinalGroupReport
+	var finalGroupWarns []string
+	if eff.FinalGroup.Enabled {
+		unifiedGroups, unifiedRules, report, warns := render.UnifyFinalGroup(
+			groups, eff.Rules, nodes.Names(), eff.FinalGroup, eff.RuleSourceMeta)
+		groups, eff.Rules = unifiedGroups, unifiedRules
+		finalGroupReport = &report
+		finalGroupWarns = warns
+	}
 	body, err := renderer.Render(render.Request{
 		Nodes:             nodes,
 		Groups:            groups,
@@ -288,17 +299,19 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		Cached:       cached,
 		Groups:       len(groups),
 		Rules:        len(eff.Rules),
+		FinalGroup:   finalGroupReport,
 	}
 	if wr, ok := renderer.(render.WarningReporter); ok {
 		result.Warnings = wr.Warnings()
 	}
-	if len(sourceWarns) > 0 || len(eff.TemplateWarnings) > 0 || len(planRes.Warnings) > 0 || len(overrideWarns) > 0 {
-		// 来源处理告警、模板提示与管线告警排在渲染阶段提示前面。
-		head := make([]string, 0, len(sourceWarns)+len(eff.TemplateWarnings)+len(planRes.Warnings)+len(overrideWarns))
+	if len(sourceWarns) > 0 || len(eff.TemplateWarnings) > 0 || len(planRes.Warnings) > 0 || len(overrideWarns) > 0 || len(finalGroupWarns) > 0 {
+		// 来源处理告警、模板提示、管线告警与统一选择组提示排在渲染阶段提示前面。
+		head := make([]string, 0, len(sourceWarns)+len(eff.TemplateWarnings)+len(planRes.Warnings)+len(overrideWarns)+len(finalGroupWarns))
 		head = append(head, sourceWarns...)
 		head = append(head, eff.TemplateWarnings...)
 		head = append(head, planRes.Warnings...)
 		head = append(head, overrideWarns...)
+		head = append(head, finalGroupWarns...)
 		result.Warnings = append(head, result.Warnings...)
 	}
 	return result, nil

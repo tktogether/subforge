@@ -61,7 +61,7 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	// 一个分组就会丢掉模板的几十个分组（D-36），这里改成合并：同名保留高优先层的定义。
 	var templateGroups []render.Group
 	if !base.DisableTemplateGroups {
-		templateGroups = sem.Groups
+		templateGroups = markGroupSource(sem.Groups, "template")
 	}
 	if p.DisableTemplateGroups {
 		p.TemplateWarnings = append(p.TemplateWarnings, "订阅方案未启用 template 层：模板分组已跳过")
@@ -84,6 +84,20 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 		p.TemplateRemoteRulesets = nil
 	}
 	return p, nil
+}
+
+// markGroupSource 给模板分组补来源标记，供统一最终选择组按来源识别。
+// 复制一份再改，避免把标记写回被多个请求共享的模板语义。
+func markGroupSource(groups []render.Group, source string) []render.Group {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]render.Group, len(groups))
+	copy(out, groups)
+	for i := range out {
+		out[i].Source = source
+	}
+	return out
 }
 
 // mergeGroups 按名称合并两组代理分组：先出现的优先，重名只保留第一份定义。

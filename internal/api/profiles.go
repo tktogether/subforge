@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tktogether/subforge/internal/subcfg"
 	"github.com/tktogether/subforge/internal/subforge"
 )
 
@@ -42,6 +43,36 @@ type profileBody struct {
 	SelfNodeIDs *[]int64 `json:"self_node_ids"`
 	// AllSources=true 时清空两个限制（恢复“全部启用来源”）；PUT 里省略=保持原值。
 	AllSources bool `json:"all_sources"`
+	// FinalGroup 是统一最终选择组配置；nil=不修改（PUT）/使用默认关闭（POST）。
+	FinalGroup *finalGroupBody `json:"final_group"`
+}
+
+// finalGroupBody 用指针区分「未传 include_direct」与显式 false。
+type finalGroupBody struct {
+	Enabled             bool                `json:"enabled"`
+	Mode                string              `json:"mode"`
+	Name                string              `json:"name"`
+	IncludeDirect       *bool               `json:"include_direct"`
+	KeepSourceTerminals bool                `json:"keep_source_terminals"`
+	Overrides           map[string][]string `json:"overrides"`
+}
+
+func (b *finalGroupBody) config() (subcfg.FinalGroupConfig, error) {
+	cfg := subcfg.DefaultFinalGroupConfig()
+	cfg.Enabled = b.Enabled
+	cfg.Mode = b.Mode
+	cfg.Name = b.Name
+	if b.IncludeDirect != nil {
+		cfg.IncludeDirect = *b.IncludeDirect
+	}
+	cfg.KeepSourceTerminals = b.KeepSourceTerminals
+	if b.Overrides != nil {
+		cfg.Overrides = b.Overrides
+	}
+	if err := cfg.Normalize(); err != nil {
+		return subcfg.FinalGroupConfig{}, err
+	}
+	return cfg, nil
 }
 
 // 合法层键。规则层与分组层共用一套键。
@@ -341,6 +372,16 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		finalGroupProvided := body.FinalGroup != nil
+		var finalGroupCfg subcfg.FinalGroupConfig
+		if finalGroupProvided {
+			cfg, ferr := body.FinalGroup.config()
+			if ferr != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("统一最终选择组配置非法：%w", ferr))
+				return
+			}
+			finalGroupCfg = cfg
+		}
 		airportIDs := normalizeIDListPtr(body.AirportIDs)
 		selfNodeIDs := normalizeIDListPtr(body.SelfNodeIDs)
 		if body.AllSources {
@@ -401,8 +442,14 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if finalGroupProvided {
+			if err := m.SetProfileFinalGroup(r.Context(), p.ID, finalGroupCfg); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
 		if ruleLayers != nil || groupLayers != nil || ruleSourcesProvided || airportIDs != nil || selfNodeIDs != nil ||
-			body.Target != nil || body.Include != nil || body.Exclude != nil {
+			body.Target != nil || body.Include != nil || body.Exclude != nil || finalGroupProvided {
 			if fresh, err := m.GetProfile(r.Context(), p.ID); err == nil {
 				p = fresh
 			}
@@ -467,6 +514,16 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		finalGroupProvided := body.FinalGroup != nil
+		var finalGroupCfg subcfg.FinalGroupConfig
+		if finalGroupProvided {
+			cfg, ferr := body.FinalGroup.config()
+			if ferr != nil {
+				s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("统一最终选择组配置非法：%w", ferr))
+				return
+			}
+			finalGroupCfg = cfg
+		}
 		airportIDs := normalizeIDListPtr(body.AirportIDs)
 		selfNodeIDs := normalizeIDListPtr(body.SelfNodeIDs)
 		if body.AllSources {
@@ -527,6 +584,12 @@ func (s *Server) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 					s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("订阅方案 %d 不存在", id))
 					return
 				}
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if finalGroupProvided {
+			if err := m.SetProfileFinalGroup(r.Context(), id, finalGroupCfg); err != nil {
 				s.writeAPIError(w, r, http.StatusInternalServerError, err)
 				return
 			}

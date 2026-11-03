@@ -876,6 +876,7 @@ func migrate(db *sql.DB) error {
 			sort_order  INTEGER NOT NULL DEFAULT 0,
 			airport_ids TEXT NOT NULL DEFAULT '',
 			self_node_ids TEXT NOT NULL DEFAULT '',
+			final_group TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -896,6 +897,7 @@ func migrate(db *sql.DB) error {
 		{"exclude", "TEXT NOT NULL DEFAULT ''"},
 		{"airport_ids", "TEXT NOT NULL DEFAULT ''"},
 		{"self_node_ids", "TEXT NOT NULL DEFAULT ''"},
+		{"final_group", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := addColumnIfMissing(db, "profiles", c.col, c.decl); err != nil {
 			return fmt.Errorf("迁移 profiles.%s: %w", c.col, err)

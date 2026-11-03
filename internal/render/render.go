@@ -83,6 +83,9 @@ type Group struct {
 	IncludeSelf bool
 	// IncludeAllSources 把订阅里所有机场的节点并入成员；自建是否并入由 IncludeSelf 决定。
 	IncludeAllSources bool
+	// Source 是分组来源（airport:<名称> / template / 空=自定义）。
+	// 仅用于统一最终选择组的来源级分析，渲染器输出时忽略。
+	Source string
 }
 
 // Renderer 把一个 Request 渲染成一种目标格式。

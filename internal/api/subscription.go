@@ -26,6 +26,7 @@ import (
 	"github.com/tktogether/subforge/internal/parse"
 	"github.com/tktogether/subforge/internal/render"
 	"github.com/tktogether/subforge/internal/store"
+	"github.com/tktogether/subforge/internal/subcfg"
 	"github.com/tktogether/subforge/internal/subforge"
 	"github.com/tktogether/subforge/internal/traffic"
 )
@@ -1217,6 +1218,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			Options:           render.UrlTestOptions{Interval: g.Interval},
 			IncludeSelf:       g.IncludeSelf,
 			IncludeAllSources: g.IncludeAllSources,
+			Source:            g.Source,
 		}
 		// 机场自带分组按成员原样渲染；成员可能是节点名，也可能是子组名，
 		// ResolveGroups 会保留已知组名、展开正则/节点名。手工分组仍走 Regex。
@@ -1265,8 +1267,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// 不替换的话产物规则永远命中不到。注入 0 条（源缺失/无产物/格式不支持）时
 	// 保留模板规则，warning 只是可见提示，不阻断订阅。
 	var sourceRules, sourceWarns []string
+	var ruleSourceMetas []subcfg.RuleSourceMeta
 	if profile != nil && len(profile.RuleSources) > 0 {
-		sourceRules, sourceWarns = m.RuleSourceRules(r.Context(), profile.RuleSources)
+		sourceRules, ruleSourceMetas, sourceWarns = m.RuleSourceRulesWithMeta(r.Context(), profile.RuleSources)
 		if len(sourceRules) > 0 {
 			renderRules = append(renderRules, sourceRules...)
 			sourceWarns = append(sourceWarns, fmt.Sprintf("已用规则源产物替换模板规则：注入 %d 条", len(sourceRules)))
@@ -1304,15 +1307,17 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
 	params := convert.Params{
-		Target:        target,
-		Sources:       sources,
-		Groups:        renderGroups,
-		Rules:         renderRules,
-		RuleProviders: uniqueProviders,
-		Pipeline:      pipeline,
-		Config:        configName,
-		Include:       includeList,
-		Exclude:       excludeList,
+		Target:         target,
+		Sources:        sources,
+		Groups:         renderGroups,
+		Rules:          renderRules,
+		RuleProviders:  uniqueProviders,
+		FinalGroup:     finalGroupConfig(profile),
+		RuleSourceMeta: ruleSourceMetas,
+		Pipeline:       pipeline,
+		Config:         configName,
+		Include:        includeList,
+		Exclude:        excludeList,
 		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
 		// 规则源产物注入后模板规则必须整层停用，否则产物规则排在模板 MATCH 之后全成死规则。
 		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,
@@ -1341,6 +1346,12 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("rid=%s /subscribe 部分来源失败(%d): %s",
 			dash(chimw.GetReqID(r.Context())), len(result.Failures),
 			strings.Join(result.Failures, " | "))
+	}
+	if result.FinalGroup != nil {
+		s.logger.Printf("rid=%s 统一最终选择组: %s（来源最终组 %d 个，改写规则 %d 条，分组 %d→%d）",
+			dash(chimw.GetReqID(r.Context())), result.FinalGroup.UnifiedName,
+			len(result.FinalGroup.Terminals), result.FinalGroup.RewrittenRules,
+			result.FinalGroup.GroupsBefore, result.FinalGroup.GroupsAfter)
 	}
 	// 机场设为「失败时报错」时整份订阅返回错误，客户端保留上一版可用配置；
 	// 默认 ignore 仍按部分失败降级，缺节点的风险由用户自己权衡。
@@ -1384,6 +1395,14 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
+}
+
+// finalGroupConfig 取方案的统一选择组配置；未绑定方案时返回零值（关闭）。
+func finalGroupConfig(p *subforge.Profile) subcfg.FinalGroupConfig {
+	if p == nil {
+		return subcfg.FinalGroupConfig{}
+	}
+	return p.FinalGroup
 }
 
 // applySelfNodeName 把控制台填写的名称写进分享链接。

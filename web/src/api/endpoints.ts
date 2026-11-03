@@ -475,6 +475,47 @@ export interface PipelineInput {
   enabled?: boolean
 }
 
+export interface FinalGroupConfig {
+  enabled: boolean
+  mode: 'auto' | 'custom'
+  name: string
+  include_direct: boolean
+  keep_source_terminals: boolean
+  overrides: Record<string, string[]>
+}
+
+export interface FinalGroupTerminal {
+  source: string
+  group: string
+  evidence: string
+  score?: number
+}
+
+export interface FinalGroupRuleSource {
+  name: string
+  final_target?: string
+  selection_targets?: string[]
+  affected_rules?: number
+}
+
+export interface FinalGroupReport {
+  unified_name: string
+  mode: string
+  generated: boolean
+  terminals: FinalGroupTerminal[]
+  rule_sources: FinalGroupRuleSource[]
+  groups_before: number
+  groups_after: number
+  removed_groups: string[]
+  rewritten_group_refs: number
+  rewritten_rules: number
+}
+
+export interface FinalGroupPreview {
+  report: FinalGroupReport
+  warnings: string[]
+}
+
 export interface Profile {
   id: number
   name: string
@@ -493,6 +534,8 @@ export interface Profile {
   airport_ids: number[] | null
   self_node_ids: number[] | null
   group_layers: string[]
+  // 统一最终选择组：旧响应可能没有该字段，按关闭处理。
+  final_group?: FinalGroupConfig
   rule_count: number
   group_count: number
   created_at?: string
@@ -517,6 +560,8 @@ export interface ProfileInput {
   airport_ids?: number[]
   self_node_ids?: number[]
   group_layers?: string[]
+  // 统一最终选择组配置；省略=不修改（PUT）。
+  final_group?: FinalGroupConfig
 }
 
 export const endpoints = {
@@ -672,6 +717,8 @@ export const endpoints = {
   listProfiles: (): Promise<Profile[]> => api.get<{ profiles: Profile[] }>('/api/profiles').then((r) => r.profiles),
   createProfile: (body: ProfileInput): Promise<Profile> => api.post<{ profile: Profile }>('/api/profiles', body).then((r) => r.profile),
   updateProfile: (id: number, body: ProfileInput): Promise<Profile> => api.put<{ profile: Profile }>('/api/profiles/' + id, body).then((r) => r.profile),
+  previewProfileFinalGroup: (id: number, finalGroup: FinalGroupConfig): Promise<FinalGroupPreview> =>
+    api.post<FinalGroupPreview>('/api/profiles/' + id + '/final-group/preview', { final_group: finalGroup }),
   deleteProfile: (id: number): Promise<OkResponse> => api.del<OkResponse>('/api/profiles/' + id),
 }
 

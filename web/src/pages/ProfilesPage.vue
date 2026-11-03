@@ -4,7 +4,7 @@ import PageHeader from '../components/PageHeader.vue'
 import AsyncSection from '../components/AsyncSection.vue'
 import InfoTip from '../components/InfoTip.vue'
 import { pageHelp } from '../content/help'
-import { endpoints, type Profile } from '../api/endpoints'
+import { endpoints, type FinalGroupConfig, type FinalGroupPreview, type Profile } from '../api/endpoints'
 import { notify } from '../composables/useNotify'
 import { errorMessage } from '../composables/useAsync'
 
@@ -42,6 +42,19 @@ const LAYER_LABELS: Record<string, string> = {
   template: '模板',
 }
 
+const FINAL_GROUP_DEFAULT_NAME = '🚀 节点选择'
+
+function defaultFinalGroup(): FinalGroupConfig {
+  return {
+    enabled: false,
+    mode: 'auto',
+    name: FINAL_GROUP_DEFAULT_NAME,
+    include_direct: true,
+    keep_source_terminals: false,
+    overrides: {},
+  }
+}
+
 const EMPTY_PROFILE: Profile = {
   id: 0,
   name: '',
@@ -58,6 +71,7 @@ const EMPTY_PROFILE: Profile = {
   airport_ids: null,
   self_node_ids: null,
   group_layers: [...GROUP_LAYER_KEYS],
+  final_group: defaultFinalGroup(),
   rule_count: 0,
   group_count: 0,
 }
@@ -130,7 +144,116 @@ const draft = ref({
   limit_sources: false,
   airport_ids: [] as number[],
   self_node_ids: [] as number[],
+  // 统一最终选择组（客制化）：自动/自定义名称、DIRECT、来源覆盖。
+  final_group_enabled: false,
+  final_group_mode: 'auto' as 'auto' | 'custom',
+  final_group_name: FINAL_GROUP_DEFAULT_NAME,
+  final_group_include_direct: true,
+  final_group_keep_source_terminals: false,
+  final_group_overrides: {} as Record<string, string[]>,
 })
+
+// 统一选择组预览：报告、来源分组选项与加载状态。
+const finalGroupModeOptions = [
+  { title: '自动指定（标准名）', value: 'auto' },
+  { title: '自定义名称', value: 'custom' },
+]
+const finalGroupPreviewOpen = ref(false)
+const finalGroupPreviewLoading = ref(false)
+const finalGroupPreview = ref<FinalGroupPreview | null>(null)
+const finalGroupGroupOptions = ref<{ title: string; value: string; source: string }[]>([])
+
+// 自动模式固定使用标准名；切回自动时把名称复位，避免沿用上一次的自定义名。
+watch(() => draft.value.final_group_mode, (mode) => {
+  if (mode === 'auto') draft.value.final_group_name = FINAL_GROUP_DEFAULT_NAME
+})
+
+function draftFinalGroup(): FinalGroupConfig {
+  return {
+    enabled: draft.value.final_group_enabled,
+    mode: draft.value.final_group_mode,
+    name: draft.value.final_group_mode === 'auto' ? FINAL_GROUP_DEFAULT_NAME : draft.value.final_group_name,
+    include_direct: draft.value.final_group_include_direct,
+    keep_source_terminals: draft.value.final_group_keep_source_terminals,
+    overrides: { ...draft.value.final_group_overrides },
+  }
+}
+
+function overrideKey(source: string): string {
+  return 'group:' + source
+}
+
+function overrideValue(source: string): string {
+  return draft.value.final_group_overrides[overrideKey(source)]?.[0] ?? ''
+}
+
+function setOverride(source: string, value: string): void {
+  const next = { ...draft.value.final_group_overrides }
+  if (!value) {
+    delete next[overrideKey(source)]
+  } else {
+    next[overrideKey(source)] = [value]
+  }
+  draft.value.final_group_overrides = next
+}
+
+function ruleOverrideText(name: string): string {
+  return (draft.value.final_group_overrides['rule:' + name] ?? []).join('、')
+}
+
+function setRuleOverrideText(name: string, raw: string): void {
+  const names = raw.split(/[,，、]/).map((v) => v.trim()).filter(Boolean)
+  const next = { ...draft.value.final_group_overrides }
+  if (names.length === 0) {
+    delete next['rule:' + name]
+  } else {
+    next['rule:' + name] = [...new Set(names)]
+  }
+  draft.value.final_group_overrides = next
+}
+
+function overrideOptions(source: string): { title: string; value: string }[] {
+  const groups = finalGroupGroupOptions.value
+    .filter((g) => g.source === source)
+    .map((g) => ({ title: g.title, value: g.value }))
+  return [
+    { title: '自动识别', value: '' },
+    { title: '不处理该来源', value: 'none' },
+    ...groups,
+  ]
+}
+
+async function loadFinalGroupOptions(): Promise<void> {
+  try {
+    const groups = await endpoints.listGroups()
+    finalGroupGroupOptions.value = groups.map((g) => ({
+      title: g.name,
+      value: g.name,
+      source: g.source ?? '',
+    }))
+  } catch {
+    finalGroupGroupOptions.value = []
+  }
+}
+
+async function openFinalGroupPreview(): Promise<void> {
+  if (editingId.value === 0) {
+    notify('请先保存方案，再预览识别结果', 'error')
+    return
+  }
+  finalGroupPreviewOpen.value = true
+  finalGroupPreviewLoading.value = true
+  finalGroupPreview.value = null
+  void loadFinalGroupOptions()
+  try {
+    finalGroupPreview.value = await endpoints.previewProfileFinalGroup(editingId.value, draftFinalGroup())
+  } catch (err) {
+    finalGroupPreviewOpen.value = false
+    notify(errorMessage(err), 'error')
+  } finally {
+    finalGroupPreviewLoading.value = false
+  }
+}
 
 // 两个层编辑器的行状态（顺序即优先级）。
 const ruleLayers = ref<LayerRow[]>(defaultLayers(RULE_LAYER_KEYS))
@@ -399,6 +522,12 @@ function openCreate(): void {
     limit_sources: false,
     airport_ids: [],
     self_node_ids: [],
+    final_group_enabled: false,
+    final_group_mode: 'auto',
+    final_group_name: FINAL_GROUP_DEFAULT_NAME,
+    final_group_include_direct: true,
+    final_group_keep_source_terminals: false,
+    final_group_overrides: {},
   }
   ruleLayers.value = defaultLayers(RULE_LAYER_KEYS)
   groupLayers.value = defaultLayers(GROUP_LAYER_KEYS)
@@ -426,6 +555,14 @@ function openEdit(row: Profile): void {
     limit_sources: row.airport_ids !== null || row.self_node_ids !== null,
     airport_ids: [...(row.airport_ids ?? [])],
     self_node_ids: [...(row.self_node_ids ?? [])],
+    final_group_enabled: row.final_group?.enabled ?? false,
+    final_group_mode: row.final_group?.mode === 'custom' ? 'custom' : 'auto',
+    final_group_name: row.final_group?.mode === 'custom'
+      ? (row.final_group?.name || FINAL_GROUP_DEFAULT_NAME)
+      : FINAL_GROUP_DEFAULT_NAME,
+    final_group_include_direct: row.final_group?.include_direct ?? true,
+    final_group_keep_source_terminals: row.final_group?.keep_source_terminals ?? false,
+    final_group_overrides: { ...(row.final_group?.overrides ?? {}) },
   }
   ruleLayers.value = ruleRowsFrom(row.rule_layers)
   groupLayers.value = layersToRows(row.group_layers, GROUP_LAYER_KEYS)
@@ -457,6 +594,7 @@ async function save(): Promise<void> {
     rule_layers,
     rule_sources: [...draft.value.rule_sources],
     group_layers,
+    final_group: draftFinalGroup(),
     all_sources: !draft.value.limit_sources,
     ...(draft.value.limit_sources
       ? { airport_ids: [...draft.value.airport_ids], self_node_ids: [...draft.value.self_node_ids] }
@@ -768,6 +906,75 @@ loadPipelineOptions()
             </v-alert>
           </div>
           <v-divider class="mb-3" />
+          <div class="text-subtitle-2 mb-1">统一最终选择组</div>
+          <div class="d-flex align-center ga-2 mb-2">
+            <v-switch
+              v-model="draft.final_group_enabled"
+              label="统一各来源的最终节点选择组"
+              color="primary"
+              density="compact"
+              hide-details
+              data-testid="profile-final-group-enabled"
+            />
+            <InfoTip
+              text="开启后，机场、模板与规则源各自的最终节点选择组会归并为一个组；服务分组（Netflix、ChatGPT 等）保留。关闭时行为不变。"
+              label="统一最终选择组"
+            />
+          </div>
+          <template v-if="draft.final_group_enabled">
+            <div class="profile-form-row">
+              <v-select
+                v-model="draft.final_group_mode"
+                :items="finalGroupModeOptions"
+                label="统一组"
+                hint="自动指定使用标准名；自定义名称可沿用已有最终组或新建组。"
+                variant="outlined"
+                density="comfortable"
+                persistent-hint
+                class="mb-3"
+                data-testid="profile-final-group-mode"
+              />
+              <v-text-field
+                v-model="draft.final_group_name"
+                :disabled="draft.final_group_mode === 'auto'"
+                label="统一组名称"
+                hint="规则目标与分组成员都会指向这个名字；不能与普通服务组重名。"
+                variant="outlined"
+                density="comfortable"
+                persistent-hint
+                class="mb-3"
+                data-testid="profile-final-group-name"
+              />
+            </div>
+            <div class="d-flex align-center flex-wrap ga-3 mb-3">
+              <v-switch
+                v-model="draft.final_group_include_direct"
+                label="包含 DIRECT"
+                color="primary"
+                density="compact"
+                hide-details
+                data-testid="profile-final-group-direct"
+              />
+              <v-switch
+                v-model="draft.final_group_keep_source_terminals"
+                label="保留来源最终组为子选项"
+                color="primary"
+                density="compact"
+                hide-details
+                data-testid="profile-final-group-keep"
+              />
+              <v-btn
+                size="small"
+                variant="tonal"
+                prepend-icon="mdi-magnify-scan"
+                data-testid="profile-final-group-preview"
+                @click="openFinalGroupPreview"
+              >
+                预览识别结果
+              </v-btn>
+            </div>
+          </template>
+          <v-divider class="mb-3" />
           <div class="text-subtitle-2 mb-1">节点来源</div>
           <div class="d-flex align-center ga-1 mb-2">
             <v-switch
@@ -918,6 +1125,106 @@ loadPipelineOptions()
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" data-testid="profile-source-conflicts-close" @click="conflictDialogOpen = false">关闭</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="finalGroupPreviewOpen" max-width="820" scrollable>
+    <v-card data-testid="profile-final-group-preview-dialog">
+      <v-card-title>统一最终选择组预览</v-card-title>
+      <v-card-text>
+        <div v-if="finalGroupPreviewLoading" class="text-medium-emphasis py-4" data-testid="profile-final-group-preview-loading">
+          正在读取分组与规则源…
+        </div>
+        <template v-else-if="finalGroupPreview">
+          <div class="text-body-2 mb-3">
+            统一组：<strong>{{ finalGroupPreview.report.unified_name }}</strong>
+            <span class="text-medium-emphasis">
+              （{{ finalGroupPreview.report.generated ? '将新建' : '复用已有分组' }}；
+              分组 {{ finalGroupPreview.report.groups_before }} → {{ finalGroupPreview.report.groups_after }}；
+              改写规则 {{ finalGroupPreview.report.rewritten_rules }} 条）
+            </span>
+          </div>
+          <v-table density="compact" class="mb-3" data-testid="profile-final-group-preview-terminals">
+            <thead>
+              <tr><th>来源</th><th>识别到的最终组</th><th>依据</th><th>来源覆盖</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in finalGroupPreview.report.terminals" :key="t.source + t.group">
+                <td class="text-caption">{{ t.source }}</td>
+                <td>{{ t.group }}</td>
+                <td class="text-caption">{{ t.evidence }}</td>
+                <td style="min-width: 180px">
+                  <v-select
+                    :model-value="overrideValue(t.source)"
+                    :items="overrideOptions(t.source)"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    :data-testid="'profile-final-group-override-' + t.source"
+                    @update:model-value="setOverride(t.source, $event)"
+                  />
+                </td>
+              </tr>
+              <tr v-if="finalGroupPreview.report.terminals.length === 0">
+                <td colspan="4" class="text-medium-emphasis">未识别到来源最终组；保存后仍会把 MATCH 指向统一组。</td>
+              </tr>
+            </tbody>
+          </v-table>
+          <div v-if="finalGroupPreview.report.rule_sources.length > 0" class="mb-3">
+            <div class="text-subtitle-2 mb-1">规则源</div>
+            <v-table density="compact" data-testid="profile-final-group-preview-rule-sources">
+              <thead>
+                <tr><th>来源</th><th>兜底目标</th><th>选择目标</th><th>影响规则</th><th>覆盖选择目标</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="rs in finalGroupPreview.report.rule_sources" :key="rs.name">
+                  <td>{{ rs.name }}</td>
+                  <td>{{ rs.final_target || '—' }}</td>
+                  <td>{{ (rs.selection_targets ?? []).join('、') || '—' }}</td>
+                  <td>{{ rs.affected_rules ?? 0 }}</td>
+                  <td style="min-width: 160px">
+                    <v-text-field
+                      :model-value="ruleOverrideText(rs.name)"
+                      density="compact"
+                      variant="outlined"
+                      hide-details
+                      placeholder="留空=自动；逗号分隔"
+                      :data-testid="'profile-final-group-rule-override-' + rs.name"
+                      @update:model-value="setRuleOverrideText(rs.name, $event)"
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+          <v-alert
+            v-if="finalGroupPreview.warnings.length > 0"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-2"
+            data-testid="profile-final-group-preview-warnings"
+          >
+            <div v-for="w in finalGroupPreview.warnings" :key="w">{{ w }}</div>
+          </v-alert>
+          <div class="text-caption text-medium-emphasis">
+            将删除：{{ finalGroupPreview.report.removed_groups.join('、') || '无' }}；
+            引用统一组的分组改写 {{ finalGroupPreview.report.rewritten_group_refs }} 处。
+            修改来源覆盖后请点「重新识别」。
+          </div>
+        </template>
+      </v-card-text>
+      <v-card-actions>
+        <v-btn variant="text" data-testid="profile-final-group-preview-close" @click="finalGroupPreviewOpen = false">关闭</v-btn>
+        <v-spacer />
+        <v-btn
+          color="primary"
+          variant="tonal"
+          :disabled="finalGroupPreviewLoading"
+          data-testid="profile-final-group-preview-refresh"
+          @click="openFinalGroupPreview"
+        >重新识别</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

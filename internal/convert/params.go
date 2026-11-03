@@ -14,6 +14,7 @@ import (
 	"github.com/tktogether/subforge/internal/config"
 	"github.com/tktogether/subforge/internal/model"
 	"github.com/tktogether/subforge/internal/render"
+	"github.com/tktogether/subforge/internal/subcfg"
 	"github.com/tktogether/subforge/internal/transform"
 )
 
@@ -70,6 +71,10 @@ type Params struct {
 	NodePref transform.NodePrefSpec
 	// Groups 代理组定义（[clash_proxy_group] 段落）。
 	Groups []render.Group
+	// FinalGroup 是方案级「统一最终选择组」配置；零值/关闭时不做任何改写。
+	FinalGroup subcfg.FinalGroupConfig
+	// RuleSourceMeta 是已绑定规则源的目标统计，供统一选择组识别规则源的选择目标。
+	RuleSourceMeta []subcfg.RuleSourceMeta
 	// Rules 规则行（原样透传，如 "GEOIP,CN,DIRECT"）。
 	Rules []string
 	// RuleProviders 规则源产品里的 rule-provider 定义，随订阅一起渲染。

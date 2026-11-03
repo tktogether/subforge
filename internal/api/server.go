@@ -219,6 +219,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/", s.handleAPIProfile)
 			r.Put("/", s.handleAPIProfile)
 			r.Delete("/", s.handleAPIProfile)
+			r.Post("/final-group/preview", s.handleAPIProfileFinalGroupPreview)
 		})
 	})
 	r.Route("/api/rules", func(r chi.Router) {

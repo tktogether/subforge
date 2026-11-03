@@ -19,8 +19,10 @@ vi.mock('../api/endpoints', () => ({
     checkRuleSourceConflicts: vi.fn(),
     listAirports: vi.fn(),
     listSelfNodes: vi.fn(),
+    listGroups: vi.fn(),
     targets: vi.fn(),
     pipelines: vi.fn(),
+    previewProfileFinalGroup: vi.fn(),
   },
 }))
 
@@ -247,10 +249,157 @@ describe('ProfilesPage', () => {
       rule_layers: ['custom', 'template'],
       rule_sources: [],
       group_layers: ['custom', 'airport', 'template'],
+      final_group: {
+        enabled: false,
+        mode: 'auto',
+        name: '🚀 节点选择',
+        include_direct: true,
+        keep_source_terminals: false,
+        overrides: {},
+      },
       all_sources: true,
     })
     expect(notifyState.kind).toBe('ok')
     expect(notifyState.text).toBe('已保存')
+  })
+
+  it('统一最终选择组：回填自定义配置、保存并预览来源识别结果', async () => {
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeProfile({
+        final_group: {
+          enabled: true,
+          mode: 'custom',
+          name: '🌐 统一出口',
+          include_direct: false,
+          keep_source_terminals: true,
+          overrides: { 'group:airport:fx': ['选择节点'] },
+        },
+      }),
+    ])
+    ;(endpoints.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeProfile())
+    ;(endpoints.listGroups as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 1, name: '选择节点', type: 'select', regex: '', source: 'airport:fx' },
+      { id: 2, name: 'Netflix', type: 'select', regex: '', source: 'airport:fx' },
+    ])
+    ;(endpoints.previewProfileFinalGroup as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      report: {
+        unified_name: '🌐 统一出口',
+        mode: 'custom',
+        generated: true,
+        terminals: [
+          { source: 'airport:fx', group: '选择节点', evidence: '被同来源 2/2 个分组引用' },
+        ],
+        rule_sources: [
+          { name: 'src', final_target: '🐟 漏网之鱼', selection_targets: ['🚀 手动选择'], affected_rules: 3 },
+        ],
+        groups_before: 3,
+        groups_after: 2,
+        removed_groups: ['选择节点'],
+        rewritten_group_refs: 2,
+        rewritten_rules: 3,
+      },
+      warnings: ['已把 1 个来源最终组收敛到 "🌐 统一出口"'],
+    })
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-edit"]').trigger('click')
+    await flushPromises()
+
+    expect((w.find('[data-testid="profile-final-group-enabled"] input').element as HTMLInputElement).checked).toBe(true)
+    expect((w.find('[data-testid="profile-final-group-name"] input').element as HTMLInputElement).value).toBe('🌐 统一出口')
+    expect((w.find('[data-testid="profile-final-group-direct"] input').element as HTMLInputElement).checked).toBe(false)
+    expect((w.find('[data-testid="profile-final-group-keep"] input').element as HTMLInputElement).checked).toBe(true)
+
+    // 覆盖客制化控件的双向绑定与自动模式名称复位。
+    await w.find('[data-testid="profile-final-group-enabled"] input').setValue(false)
+    await w.find('[data-testid="profile-final-group-enabled"] input').setValue(true)
+    await w.findComponent('[data-testid="profile-final-group-mode"]').setValue('auto')
+    expect((w.find('[data-testid="profile-final-group-name"] input').element as HTMLInputElement).value).toBe('🚀 节点选择')
+    await w.findComponent('[data-testid="profile-final-group-mode"]').setValue('custom')
+    await w.find('[data-testid="profile-final-group-name"] input').setValue('🌐 统一出口')
+    await w.find('[data-testid="profile-final-group-direct"] input').setValue(true)
+    await w.find('[data-testid="profile-final-group-direct"] input').setValue(false)
+    await w.find('[data-testid="profile-final-group-keep"] input').setValue(false)
+    await w.find('[data-testid="profile-final-group-keep"] input').setValue(true)
+
+    await w.find('[data-testid="profile-final-group-preview"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.previewProfileFinalGroup).toHaveBeenCalledWith(1, {
+      enabled: true,
+      mode: 'custom',
+      name: '🌐 统一出口',
+      include_direct: false,
+      keep_source_terminals: true,
+      overrides: { 'group:airport:fx': ['选择节点'] },
+    })
+    expect(w.find('[data-testid="profile-final-group-preview-dialog"]').text()).toContain('选择节点')
+    expect(w.find('[data-testid="profile-final-group-preview-dialog"]').text()).toContain('🚀 手动选择')
+
+    // 来源覆盖下拉：不处理 → 选择具体组；保留最终提交值。
+    const override = w.findComponent('[data-testid="profile-final-group-override-airport:fx"]')
+    await override.setValue('none')
+    await override.setValue('')
+    await override.setValue('选择节点')
+
+    // 规则源选择目标覆盖：填写后清空，验证两臂与最终提交值不残留。
+    const ruleOverride = w.find('[data-testid="profile-final-group-rule-override-src"]')
+    await ruleOverride.find('input').setValue('🚀 手动选择')
+    await ruleOverride.find('input').setValue('')
+    await w.find('[data-testid="profile-final-group-preview-close"]').trigger('click')
+
+    await w.find('[data-testid="profile-save"]').trigger('click')
+    await flushPromises()
+    expect(endpoints.updateProfile).toHaveBeenCalledWith(1, expect.objectContaining({
+      final_group: {
+        enabled: true,
+        mode: 'custom',
+        name: '🌐 统一出口',
+        include_direct: false,
+        keep_source_terminals: true,
+        overrides: { 'group:airport:fx': ['选择节点'] },
+      },
+    }))
+  })
+
+  it('统一最终选择组：新建方案预览提示先保存', async () => {
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-new"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="profile-final-group-enabled"] input').setValue(true)
+    await flushPromises()
+    await w.find('[data-testid="profile-final-group-preview"]').trigger('click')
+    await flushPromises()
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('请先保存方案')
+    expect(endpoints.previewProfileFinalGroup).not.toHaveBeenCalled()
+  })
+
+  it('统一最终选择组：预览加载失败时关闭弹窗并提示', async () => {
+    ;(endpoints.listProfiles as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeProfile({
+        final_group: {
+          enabled: true,
+          mode: 'auto',
+          name: '🚀 节点选择',
+          include_direct: true,
+          keep_source_terminals: false,
+          overrides: {},
+        },
+      }),
+    ])
+    ;(endpoints.listGroups as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('groups down'))
+    ;(endpoints.previewProfileFinalGroup as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('preview down'))
+    const w = mountPage()
+    await flushPromises()
+    await w.find('[data-testid="profile-edit"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="profile-final-group-preview"]').trigger('click')
+    await flushPromises()
+    expect(notifyState.kind).toBe('error')
+    expect(notifyState.text).toContain('preview down')
+    expect(w.find('[data-testid="profile-final-group-preview-dialog"]').exists()).toBe(false)
   })
 
   it('新建全不选层保存被阻止并提示至少启用一层', async () => {

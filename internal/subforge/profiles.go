@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	"github.com/tktogether/subforge/internal/store"
+	"github.com/tktogether/subforge/internal/subcfg"
 )
 
 // Profile 是一个订阅方案。行类型定义在 internal/store。
@@ -134,6 +135,17 @@ func (m *Manager) SetProfileRuleSources(ctx context.Context, id int64, sources [
 // 目标方案不存在时返回 sql.ErrNoRows。
 func (m *Manager) SetProfileLayers(ctx context.Context, id int64, ruleLayers, groupLayers []string) error {
 	return m.db.SetProfileLayers(ctx, id, ruleLayers, groupLayers)
+}
+
+// SetProfileFinalGroup 保存方案的统一最终选择组配置。
+func (m *Manager) SetProfileFinalGroup(ctx context.Context, id int64, cfg subcfg.FinalGroupConfig) error {
+	if err := m.db.SetProfileFinalGroup(ctx, id, cfg); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("订阅方案 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
 }
 
 // ListRulesByLayers 按层顺序拼接规则（只取 enabled=true 的规则）。
