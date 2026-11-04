@@ -95,9 +95,9 @@ INI 写法适合与 INI 模板放在同一套配置仓库里，段落与字段�
 
 | 段落 | 可用键 | 说明 |
 | --- | --- | --- |
-| `[override.rules]` | `prepend`、`append` | 只认这两个键，其他键报错 |
+| `[override.rules]` | `prepend`、`append` | 只接受这两个键，其他键报错 |
 | `[override.group:<名>]` | `type`、`strategy`、`test`、`lazy`、`proxy`、`use` | `<名>` 是组名；`proxy` 与 `use` 可重复出现 |
-| `[override.proxy:<名>]` | `server`、`port` | `<名>` 是节点名正则；只认这两个键 |
+| `[override.proxy:<名>]` | `server`、`port` | `<名>` 是节点名正则；只接受这两个键 |
 
 ```ini
 [override.rules]
@@ -146,7 +146,7 @@ flowchart LR
 
 **是什么**：按组名匹配模板中已有的代理组，合并字段；组名不存在时直接新增一个组。
 
-**为什么**：模板给出的组通常只有骨架（例如一个 `select` 组），而实际使用需要调整
+**为什么**：模板给出的组通常只包含一个基础结构（例如一个 `select` 组），实际使用中需要调整
 测活策略、追加成员、或引用外部 provider。
 
 **怎么用**：`groups` 列表里每一项的 `name` 必须与目标组同名。

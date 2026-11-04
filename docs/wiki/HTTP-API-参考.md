@@ -6,7 +6,7 @@
 
 ## 1. 服务概览
 
-HTTP 服务由 `subforge serve` 命令启动（`cmd/subforge/serve.go:108-113`），默认监听 `127.0.0.1:25500`。启动选项可以用环境变量提供默认值：`SUBFORGE_LISTEN`、`SUBFORGE_TOKEN`、`SUBFORGE_CONFIG`、`SUBFORGE_DATA_DIR` 分别对应 `-listen`、`-token`、`-config`、`-data-dir`，优先级为「环境变量 < 命令行参数 < INI 配置文件同名项」（`cmd/subforge/serve.go:123`）。三个参数决定了接口的行为边界：`-token` 为空时不鉴权；`-data-dir` 为空时不启用 SQLite 订阅管理，相关接口统一返回 503，而数据目录本身不要求预先存在，缺失时会自动创建（`cmd/subforge/serve.go:361`）；`-timeout` 默认为 30 秒，同时约束上游拉取与单请求。官方容器镜像（`v0.1.4` 及之后的标签）预设了 `SUBFORGE_DATA_DIR=/data` 与 `SUBFORGE_LISTEN=0.0.0.0:25500`，容器裸跑即可使用；更早的标签（`v0.1.3` 及以前）需要显式传参。完整启动参数见[安装与部署](安装与部署)。
+HTTP 服务由 `subforge serve` 命令启动（`cmd/subforge/serve.go:113-123`），默认监听 `127.0.0.1:25500`。启动选项可以用环境变量提供默认值：`SUBFORGE_LISTEN`、`SUBFORGE_TOKEN`、`SUBFORGE_CONFIG`、`SUBFORGE_DATA_DIR` 分别对应 `-listen`、`-token`、`-config`、`-data-dir`，优先级为「环境变量 < 命令行参数 < INI 配置文件同名项」（`cmd/subforge/serve.go:130`）。三个参数决定了接口的行为边界：`-token` 为空时不鉴权；`-data-dir` 为空时不启用 SQLite 订阅管理，相关接口统一返回 503，而数据目录本身不要求预先存在，缺失时会自动创建（`cmd/subforge/serve.go:394-398`）；`-timeout` 默认为 30 秒，同时约束上游拉取与单请求。官方容器镜像（`v0.1.4` 及之后的标签）预设了 `SUBFORGE_DATA_DIR=/data` 与 `SUBFORGE_LISTEN=0.0.0.0:25500`，容器无需额外参数即可使用；更早的标签（`v0.1.3` 及以前）需要显式传参。完整启动参数见[安装与部署](安装与部署)。
 
 ### 1.1 请求处理链
 
@@ -36,7 +36,7 @@ flowchart LR
 
 - 未匹配到任何路由时返回 `404: 路径不存在`，`Content-Type: text/plain; charset=utf-8`（`internal/api/server.go:369-372`）。
 - 令牌校验失败时返回 `401: 缺少或错误的访问令牌`（`internal/api/middleware.go:80-96`）。
-- 调试模式未开启时访问 `/debug/pprof/*` 由标准库返回 `404 page not found`（`internal/api/pprof.go:29-125`）。
+- 调试模式未开启时访问 `/debug/pprof/*` 由标准库返回 `404 page not found`（`internal/api/pprof.go:14-111`）。
 
 ## 2. 鉴权
 
@@ -164,7 +164,7 @@ curl -H "X-Token: <YOUR_TOKEN>" "http://127.0.0.1:25500/api/stats"
 | `udp`、`tfo`、`scv`、`tls13` | 布尔 | 否 | 分别写入 UDP、TCP Fast Open、跳过证书校验、TLS 1.3 相关字段 |
 | `x-*` | 字符串 | — | 自定义扩展参数，原样进入 `Extensions`，不参与转换 |
 
-两点容易踩坑的取值规则：`url` 只按 `;` 拆分，不按 `?` 拆分，订阅地址自带的查询串因此能完整保留（`internal/convert/params.go:120-123`）；`sort` 同时兼容布尔值与排序键两种语义，若只接受排序键，sub-web 的「高级」模式会整条请求失败（`internal/convert/params.go:135-148`）。
+两点需要留意的取值规则：`url` 只按 `;` 拆分，不按 `?` 拆分，订阅地址自带的查询串因此能完整保留（`internal/convert/params.go:120-123`）；`sort` 同时兼容布尔值与排序键两种语义，若只接受排序键，sub-web 的「高级」模式会整条请求失败（`internal/convert/params.go:135-148`）。
 
 成功响应的头部如下（`internal/api/handlers.go:73-89`）：
 
@@ -268,7 +268,7 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 | POST | `/api/airports/check` | 可选 `{"ids":[1,2]}` | `{"results":[...],"ok":N,"fail":N,"at":"..."}` |
 | GET | `/api/airports/check/last` | — | `{"results":[...],"at":"..."}` |
 
-机场对象包含 `id`、`name`、`subscription_url`、`remarks`、`enabled`、`sort_order`、`upload`、`download`、`total`、`expire`、`node_count`、`traffic_at`、`traffic_err`、`created_at`、`updated_at`（`internal/subforge/subforge.go:74-94`）。流量刷新失败时只写 `traffic_err`，保留上一次成功的数值，不会清零（`internal/subforge/subforge.go:149-162`）。
+机场对象包含 `id`、`name`、`subscription_url`、`remarks`、`enabled`、`sort_order`、`pipeline`、`failure_policy`、`outbound_node`、`upload`、`download`、`total`、`expire`、`node_count`、`traffic_at`、`traffic_err`、`created_at`、`updated_at`（`internal/store/store.go:62-87`）。流量刷新失败时只写 `traffic_err`，保留上一次成功的数值，不会清零（`internal/subforge/subforge.go:245-258`）。
 
 刷新结果里还有一个可选的 `note` 字段（`internal/subforge/traffic.go:34-36`）：拉取成功但上游没回 `subscription-userinfo` 时，`ok` 仍为 `true`、`note` 给出说明，节点数照常写回。详见[流量策略与用量统计](流量策略与用量统计)第 3.3 节。
 
@@ -294,7 +294,7 @@ curl -X POST "http://127.0.0.1:25500/api/convert" \
 | POST | `/api/groups` | `name`、`type`、`regex`、`url`、`interval`，可选 `include_self`、`include_all_sources` | 201 `{"group":{...}}` |
 | GET、PUT、DELETE | `/api/groups/{id}` | PUT 同 POST；`include_self` / `include_all_sources` 省略时保持原值 | `{"group":{...}}` 或 `{"ok":true}` |
 
-`type` 常用取值为 `select`、`url-test`、`fallback`、`load-balance`；`regex` 是成员节点名正则，`url` 是检测地址，`interval` 是检测间隔秒数（`internal/api/subscription.go:170-186`）。需要特别注意：mihomo 只接受上述四种分组类型，`relay` 已被上游移除，其他类型会直接报错（`internal/render/clashmeta/clashmeta.go:293-312`）。
+`type` 常用取值为 `select`、`url-test`、`fallback`、`load-balance`；`regex` 是成员节点名正则，`url` 是检测地址，`interval` 是检测间隔秒数（`internal/api/subscription.go:170-186`）。mihomo 只接受上述四种分组类型，`relay` 已被上游移除，其他类型会直接报错（`internal/render/clashmeta/clashmeta.go:293-312`）。
 
 ### 5.4 规则与规则集
 
@@ -393,13 +393,13 @@ Rule-Bot 建议队列未启用时，确认与拒绝接口返回 501 `Rule-Bot �
 
 `/api/targets` 返回 `registry.Available()` 的结果（`internal/api/web.go:109-111`），共 36 项：`clash.meta`、`surge`、`quan`、`quanx`、`loon`、`surfboard`、`mellow`、`list`、`mixed`、`ss`、`ssd`、`shadowsocks`、`ssr`、`shadowsocksr`、`trojan`、`v2ray`、`sing-box`、`singbox`、`ss-sub`、`ss-sub-json`、`ss-sub-b64`、`ssjson`、`quantumult`、`quantumultx`、`surge2`、`surge3`、`surge4`、`suri`、`clash-json`、`clashmeta-json`、`mellow-ios`、`sssub`，以及 `clash`、`clash.meta`、`clashmeta`、`mihomo` 四个名字各加一个 `.json` 后缀构成的别名（`internal/render/registry/registry.go:106-150`）。
 
-除清单之外，解析器还接受若干未列入清单的写法：Clash YAML 别名 `clash`、`clashmeta`、`mihomo`、`yaml`、`clashr`，以及 `sub`、`subscription`（`internal/render/registry/registry.go:31-43`、`:117-120`）。这些写法在实测中都能正常转换，但不会出现在 `/api/targets` 的响应里。
+除清单之外，解析器还接受若干未列入清单的写法：Clash YAML 别名 `clash`、`clashmeta`、`mihomo`、`yaml`、`clashr`，以及 `sub`、`subscription`（`internal/render/registry/registry.go:31-43`、`:117-120`）。这些写法都能正常转换，但不会出现在 `/api/targets` 的响应里。
 
 ### 6.5 管线与脚本
 
 | 方法 | 路径 | 请求 | 响应 |
 | --- | --- | --- | --- |
-| GET | `/api/pipelines` | 可选 `?config=` | 管线数组（裸数组，非对象包装） |
+| GET | `/api/pipelines` | 可选 `?config=` | 管线数组（纯数组，非对象包装） |
 | POST | `/api/pipelines` | `name`、`description`、`steps` 或 `steps_json`、`enabled` | 201 `{"pipeline":{...}}` |
 | GET、PUT、DELETE | `/api/pipelines/{id}` | PUT 要求 `name` 非空 | `{"pipeline":{...}}` 或 `{"ok":true}` |
 | GET、POST | `/api/scripts` | POST 为 `name`、`description`、`code`、`enabled` | `{"scripts":[...]}` 或 201 `{"script":{...}}` |
@@ -412,7 +412,7 @@ Rule-Bot 建议队列未启用时，确认与拒绝接口返回 501 `Rule-Bot �
 
 ## 7. GET /subscribe
 
-`/subscribe` 按数据库当前状态实时编译一份订阅配置，不生成落盘产物（`internal/api/subscription.go:560-748`）。请求必须带 `token` 查询参数，缺少时返回 400 `缺少 token 参数`；令牌不存在时返回 404。
+`/subscribe` 按数据库当前状态实时编译一份订阅配置，不生成磁盘产物（`internal/api/subscription.go:560-748`）。请求必须带 `token` 查询参数，缺少时返回 400 `缺少 token 参数`；令牌不存在时返回 404。
 
 ```mermaid
 sequenceDiagram
@@ -458,11 +458,11 @@ flowchart TD
 
 ### 8.1 pprof
 
-`/debug/pprof/*` 默认关闭，只有在启动时显式 `-pprof` 或设置 `SUBFORGE_PPROF=1` 时才生效；请求带 `?debug=1` 不会开启（`internal/api/pprof.go`）。可用路径包括 `/debug/pprof/`、`/cmdline`、`/profile`、`/symbol`、`/trace`、`/heap`、`/goroutine`、`/allocs`、`/block`、`/mutex`、`/threadcreate`（`internal/api/pprof.go:29-125`）。未开启时由标准库返回纯文本 404。
+`/debug/pprof/*` 默认关闭，只有在启动时显式 `-pprof` 或设置 `SUBFORGE_PPROF=1` 时才生效；请求带 `?debug=1` 不会开启（`internal/api/pprof.go`）。可用路径包括 `/debug/pprof/`、`/cmdline`、`/profile`、`/symbol`、`/trace`、`/heap`、`/goroutine`、`/allocs`、`/block`、`/mutex`、`/threadcreate`（`internal/api/pprof.go:14-111`）。未开启时由标准库返回纯文本 404。
 
 ### 8.2 GET /api/metrics
 
-返回 JSON 格式的运行时指标，不是 Prometheus 文本格式（`internal/api/pprof.go:128-155`），顶层字段为 `uptime`（运行时长）、`goroutines`（协程数）、`memory`（堆内存、栈内存、GC 次数与累计分配等）与 `cpu`（`gomaxprocs` 与 CPU 核数）。
+返回 JSON 格式的运行时指标，不是 Prometheus 文本格式（`internal/api/pprof.go:113-141`），顶层字段为 `uptime`（运行时长）、`goroutines`（协程数）、`memory`（堆内存、栈内存、GC 次数与累计分配等）与 `cpu`（`gomaxprocs` 与 CPU 核数）。
 
 ## 9. 状态码对照
 
@@ -489,7 +489,7 @@ flowchart TD
 - MCP 服务已实现但未接入：`internal/mcp/mcp.go` 提供了 JSON-RPC 的 `initialize`、`tools/list`、`tools/call`，工具为 `convert` 与 `list_targets`，但 `cmd/` 与 `internal/api/` 中没有任何入口暴露它，且 `list_targets` 返回的是硬编码的简化清单。
 - `pkg/subforge` 库入口在仓库内没有任何调用方。
 - SMTP 告警通道尚未实现，`Send` 恒定返回 `SMTP 通道尚未实现，请使用 Telegram 或 DingTalk`（`internal/scheduler/alert_channels.go:99-101`）。
-- 未提供数据目录（裸二进制下的 `-data-dir` 或 `SUBFORGE_DATA_DIR`）时，SQLite 订阅管理整体不启用，上表中标注「需要」的端点全部返回 503；官方容器镜像（v0.1.4 起）已预设数据目录，默认不存在这个问题。
+- 未提供数据目录（直接运行时的 `-data-dir` 或 `SUBFORGE_DATA_DIR`）时，SQLite 订阅管理整体不启用，上表中标注「需要」的端点全部返回 503；官方容器镜像（v0.1.4 起）已预设数据目录，默认不存在这个问题。
 
 ## 11. 相关页面
 

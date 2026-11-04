@@ -183,11 +183,11 @@ CLI 入口是 `subforge rulebot`（`cmd/subforge/rulebot.go:12`）。帮助文�
 subforge rulebot analyze ./subforge.log
 ```
 
-该子命令在进程内新建检测器与队列，**结果不会写入数据库**，队列随进程结束而丢弃（`cmd/subforge/rulebot.go:34-35`）。`pending` 与 `stats` 在 `switch` 中都没有分支（`cmd/subforge/rulebot.go:20-27`），因此 `pending` 实测会打印 `subforge: 未知子命令 "pending"` 并以退出码 1 结束。
+该子命令在进程内新建检测器与队列，**结果不会写入数据库**，队列随进程结束而丢弃（`cmd/subforge/rulebot.go:34-35`）。`pending` 与 `stats` 在 `switch` 中都没有分支（`cmd/subforge/rulebot.go:20-27`），因此执行 `pending` 会打印 `subforge: 未知子命令 "pending"` 并以退出码 1 结束。
 
 ## 8. 装配与启用条件
 
-Rule-Bot 只在指定了数据目录时启用，装配点在 `cmd/subforge/serve.go:167-185`：
+Rule-Bot 只在指定了数据目录时启用，装配点在 `cmd/subforge/serve.go:209-215`：
 
 ```mermaid
 flowchart LR
@@ -203,9 +203,9 @@ flowchart LR
 
 关键点有三条：
 
-- 没有数据目录（`-data-dir` 与 `SUBFORGE_DATA_DIR` 都为空）时不创建队列与闭环，相关接口返回 501（`cmd/subforge/serve.go:167`、`cmd/subforge/serve.go:181-185`）；
-- 启动时队列是**空的**，没有历史建议可读，必须先有日志被摄入（`cmd/subforge/serve.go:181` 的注释）；
-- 仓库内唯一的生产摄入点是调度器的失败回调：任务失败且错误非空时，以 `scheduler` 为来源、把 `任务名: 错误` 作为一行日志摄入（`cmd/subforge/serve.go:189-193`）。
+- 没有数据目录（`-data-dir` 与 `SUBFORGE_DATA_DIR` 都为空）时不创建队列与闭环，相关接口返回 501（`cmd/subforge/serve.go:194`、`cmd/subforge/serve.go:209-215`）；
+- 启动时队列是**空的**，没有历史建议可读，必须先有日志被摄入（`cmd/subforge/serve.go:209-213` 的注释）；
+- 仓库内唯一的生产摄入点是调度器的失败回调：任务失败且错误非空时，以 `scheduler` 为来源、把 `任务名: 错误` 作为一行日志摄入（`cmd/subforge/serve.go:217-221`）。
 
 ## 9. 当前实现边界
 

@@ -17,7 +17,7 @@ send_message 发给 lead，共 4 次：
 订阅令牌对话框的 config 字段现在是手填文本框（用户原话：per-token 操作不能走下拉吗）。前端要做成下拉/combobox，需要一个列表 API。pipeline 列表已有 GET /api/pipelines，config 没有列表来源——本任务补 GET /api/configs。
 
 ## 3. config 的真实语义（已核实，不许另编）
-- internal/convert/engine.go:318-327：请求参数 config=<ref> 会经 e.LoadTemplate(ctx, ref) 加载模板；serve 模式下 cmd/subforge/serve.go:143-145 用 config.LoadSource 支持 URL/路径。
+- internal/convert/engine.go:318-327：请求参数 config=<ref> 会经 e.LoadTemplate(ctx, ref) 加载模板；serve 模式下 cmd/subforge/serve.go:177-179 用 config.LoadSource 支持 URL/路径。
 - 模板 [common] 段的 config= 键值对会进入 Semantics().Params["config"]（internal/config/template.go:199-212：「键名即参数名」）。
 - 所以 config 候选 = 当前生效模板 [common] 里 config= 的值（去重），这是模板作者给出的推荐远程模板。default = 第一个。
 

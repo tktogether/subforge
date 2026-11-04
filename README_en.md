@@ -28,37 +28,42 @@ owns parameter parsing, the node transformation pipeline and format rendering.
 
 ## Quick Start
 
-**1. Download a prebuilt binary**: grab the **bare executable** for your platform from
-[Releases](https://github.com/tktogether/subforge/releases) (not an archive) and make it executable:
+**1. Download a prebuilt binary**: download the executable for your platform from
+[Releases](https://github.com/tktogether/subforge/releases) and make it executable:
 
 ```sh
 chmod +x subforge-linux-amd64 && ./subforge-linux-amd64 version
 ```
 
-**2. Use the container image**: the image presets the listen address and the data directory, so a bare run
-works:
+**2. Use the container image**: the image presets the listen address and the data directory, so it starts
+without extra flags:
 
 ```sh
-docker run -d --name subforge -p 25500:25500 -v "$(pwd)/data:/data" \
+docker run -d --name subforge \
+  -p 25500:25500 \
+  -v "$(pwd)/data:/data" \
+  -e SUBFORGE_TOKEN=<YOUR_TOKEN> \
   ghcr.io/tktogether/subforge:latest
 ```
 
-No `-listen` or `-data-dir` is needed: `SUBFORGE_LISTEN=0.0.0.0:25500` makes the published port reach the
-container, and `SUBFORGE_DATA_DIR=/data` enables subscription management by default, with SQLite stored in the
-host directory `./data`. To back up or migrate, copy that directory. Add `-e SUBFORGE_TOKEN=<YOUR_TOKEN>`
-before exposing the service. `:latest` uses an
-alpine runtime layer, ships both `linux/amd64` and `linux/arm64`, and carries the version string and root
-certificates; `:latest-scratch` is smaller but has no root certificates and only works with `http://` upstreams
-or local files. To build the image yourself, use
+Mount the data directory and set an access token when the service is reachable by other hosts. No `-listen` or
+`-data-dir` is needed: `SUBFORGE_LISTEN=0.0.0.0:25500` makes the published port reach the container, and
+`SUBFORGE_DATA_DIR=/data` enables subscription management, with SQLite stored in the host directory `./data`.
+To back up or migrate, copy that directory. `:latest` uses an alpine runtime layer, ships both `linux/amd64`
+and `linux/arm64`, and carries the version string and root certificates; `:latest-scratch` is smaller but has
+no root certificates and only works with `http://` upstreams or local files. To build the image yourself, use
 `docker build -t subforge:local -f Dockerfile.alpine .`.
 
-> Both presets reach the image starting with v0.1.4; earlier tags still need `-listen 0.0.0.0:25500` and
+> Both presets ship in the image from v0.1.4 onward; earlier tags still require `-listen 0.0.0.0:25500` and
 > `-data-dir /data` passed explicitly.
 
-**3. Build from source**: `go build -o bin/subforge ./cmd/subforge` (equivalent to `make build`). Go 1.26.0
-is required (see [go.mod](go.mod)); dependencies are vendored, so the build needs no network access.
-`make cross` produces the whole delivery matrix in one run: linux/amd64, linux/arm64, linux/arm,
-windows/amd64, darwin/amd64, darwin/arm64 and freebsd/amd64.
+**3. Build from source**: run `make build`, which writes `bin/subforge` and injects the commit hash and
+build time. Go 1.26.0 is required (see [go.mod](go.mod)); dependencies are vendored, so the build needs no
+network access. A plain `go build -o bin/subforge ./cmd/subforge` also works but reports `none` and
+`unknown` for the commit and build time.
+`make cross` produces the full delivery matrix in one run: linux/amd64, linux/arm64, linux/arm,
+windows/amd64, darwin/amd64, darwin/arm64 and freebsd/amd64. It also injects the commit hash and build
+time; a plain `go build` does not.
 
 ## Usage
 
@@ -85,10 +90,10 @@ With the HTTP service running, point the client at
 bin/subforge serve -listen 127.0.0.1:25500 -token <YOUR_TOKEN> -data-dir ./data
 ```
 
-`-data-dir` enables subscription management (SQLite) and the directory is created when missing; a bare
-binary without it returns `503` from the management endpoints (the startup log explains how to enable it),
-while the Dockerfiles in this repository preset `SUBFORGE_DATA_DIR=/data`, so containers are enabled out of
-the box (published images only from v0.1.4). Once `-token` is set, authentication is **global**: `/healthz`
+`-data-dir` enables subscription management (SQLite) and the directory is created when missing. A binary
+started without it returns `503` from the management endpoints, and the startup log explains how to enable
+them. The Dockerfiles in this repository preset `SUBFORGE_DATA_DIR=/data`, so containers built from source
+have it enabled; published images provide the same preset from v0.1.4. Once `-token` is set, authentication is **global**: `/healthz`
 and `/version` need the token too, supplied through `Authorization: Bearer <YOUR_TOKEN>`, the `X-Token`
 header or the `?token=` query parameter. The `url` parameter is itself a URL, so separate multiple
 subscriptions with `;`, never with `?`.
@@ -123,13 +128,13 @@ do not have to repeat flags:
 | `SUBFORGE_ALLOW_PRIVATE_NETWORK` | `-allow-private-network` (allow private/loopback outbound fetches, off by default) |
 
 Precedence, lowest first: **environment variable < command-line parameter < the matching key in the INI
-`[subforge]` section**. The Dockerfiles in this repository preset `SUBFORGE_LISTEN` and `SUBFORGE_DATA_DIR`;
+`[subforge]` section**. The Dockerfiles in this repository preset `SUBFORGE_LISTEN` and `SUBFORGE_DATA_DIR`.
+The old name `SUBFORGE_DATA` is deprecated: no code reads it, no error is raised, and the effect equals
+subscription management being disabled.
+
 For SSRF protection the server only fetches public http/https URLs by default. Local fixtures, intranet
 subscriptions and LAN rule sources require `-allow-private-network` (or `SUBFORGE_ALLOW_PRIVATE_NETWORK=1`);
 remote templates, rulesets and alert webhooks follow the same policy.
-
-the old name `SUBFORGE_DATA` is deprecated — a wrong name raises no error, it silently falls back to
-"subscription management disabled".
 
 The User-Agent used when fetching upstream subscriptions can be overridden with `SUBFORGE_USER_AGENT`; the
 default is `mihomo/1.19.31 SubForge/<version>`. If a response has no traffic header, SubForge retries once
@@ -213,8 +218,8 @@ Coverage gates: 80% statement coverage and 100% function coverage. The front end
 - `subscheck` subscription health checks are off by default and must be invoked as `subforge subscheck`.
 - The MCP server and the `pkg/subforge` public library are implemented but not wired to any entry point.
 - The SMTP alert channel is not implemented; use Telegram or DingTalk.
-- A bare binary without `-data-dir` (or `SUBFORGE_DATA_DIR`) returns `503` from subscription management and
-  operations endpoints; the images built from this repository preset the data directory and are unaffected.
+- A binary started without `-data-dir` (or `SUBFORGE_DATA_DIR`) returns `503` from subscription management
+  and operations endpoints; images built from this repository preset the data directory and are unaffected.
 - The `condition-gate` tier runs only in the nightly job or on manual dispatch, never as part of `make verify`.
 - mips and mipsle are outside the delivery matrix because `modernc.org/sqlite` has no build support for them.
 - The OpenWrt `/etc/config/subforge` options are currently not read; the init script uses procd environment

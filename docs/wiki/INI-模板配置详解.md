@@ -178,14 +178,14 @@ include 也一律拒绝，避免远程内容借模板读取本机文件。
 当 `[subforge] token` 为空时会回退读取 `[common] token`
 （`internal/config/settings.go:56-61`）。新写的模板建议直接使用 `[subforge]`。
 
-### 3.4 一个易踩的坑：`mixed-port`
+### 3.4 `mixed-port` 的生效范围
 
 `[common] mixed-port` **不会**影响任何一处的产物端口。原因有两层：
 
 - 命令行 `convert` 的端口来自 `-mixed-port` 标志，默认 7890，不读 `[common]`
   （`cmd/subforge/convert.go:97`、`cmd/subforge/convert.go:166`）。
 - 服务端 `serve` 的端口来自 `[subforge] mixed_port` 或 `-mixed-port`
-  （`cmd/subforge/serve.go:114`、`cmd/subforge/serve.go:124`、`cmd/subforge/serve.go:160`）。
+  （`cmd/subforge/serve.go:119`、`internal/config/settings.go:37-55`）。
 
 因此产物的端口请写在 `[subforge] mixed_port`（服务端）或用 `-mixed-port` 指定。
 
@@ -285,7 +285,7 @@ include 也一律拒绝，避免远程内容借模板读取本机文件。
 **注意什么**：多个组必须写在**同一个** `[clash_proxy_group]` 段落里。INI 解析器会合并
 同名段落，重复书写段落头只会得到一个组。
 
-该段落采用"识别即取值、不认识就跳过"的策略：写了不在上表中的键不会报错，只是被忽略；
+该段落采用"识别即取值、无法识别就跳过"的策略：写了不在上表中的键不会报错，只是被忽略；
 `strategy` 写成 `global` 与 `compatible` 之外的值同样被忽略
 （`internal/config/template.go:418-459`）。因此产物里缺少某个字段时，先对照上表核对键名
 拼写，而不要先怀疑渲染器。
@@ -380,7 +380,7 @@ custom_proxy_group=自动测速`url-test`[]节点池`https://www.gstatic.com/gen
 ### 6.1 是什么
 
 命名管线让模板自己声明一条变换管线，请求侧用 `pipeline=<名>` 选中它。段落名是
-`pipeline:` 加管线名，段落内只认两个键（`internal/config/pipeline.go:151-186`）：
+`pipeline:` 加管线名，段落内只接受两个键（`internal/config/pipeline.go:151-186`）：
 
 | 键 | 取值 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -452,7 +452,7 @@ subforge convert -file sub.b64 -config demo.ini -pipeline lite
 
 这三个值都是"部署相关"而非"单次转换相关"：令牌属于部署凭证，混合端口属于客户端接入
 参数，产物名属于标识。它们集中在这里，配置文件热重载时可以直接生效
-（`cmd/subforge/serve.go:346-349`）。
+（`cmd/subforge/serve.go:379-382`）。
 
 ### 7.3 注意什么
 
@@ -581,7 +581,7 @@ name = demo
 
 代理组则被 `[custom]` 的两个内联组取代：`[custom]` 的内联分组先接入，之后才追加
 `[clash_proxy_group]` 的组，而同名组由后出现的定义覆盖，因此 `base.ini` 里的
-`手动选择` 被 `[custom]` 的 `全部节点` 顶掉，产物里只有：
+`手动选择` 被 `[custom]` 的 `全部节点` 覆盖，产物里只有：
 
 ```text
   - name: 全部节点
@@ -650,8 +650,8 @@ flowchart TD
 | 报 `无法解析的行（应为 key = value）`，行内容是 `!include ...` | `!include` 写在段落之内，只在顶层被识别为指令 | 移到文件开头，或改用 `!import` |
 | 报 `第 N 行的 step 参数 "x" 应为 key=value` | 步骤参数不是 `键=值` 形式 | 补上 `=` |
 | 只生效了最后一个代理组 | 把多个组写成了多个同名段落 | 合并到一个段落，用 `---` 分隔 |
-| 写进 `[clash_proxy_group]` 的组没有出现在产物里 | 用了 `group = <类型>,<组名>,<成员>` 这类 subconverter 写法 | 该段落只认 `name` / `type` / `proxies` 等字段名，`group` 键会被忽略 |
-| 模板里的组被内联组顶掉 | 两种分组写法出现同名组，后出现的整体覆盖 | 组名保持唯一 |
+| 写进 `[clash_proxy_group]` 的组没有出现在产物里 | 用了 `group = <类型>,<组名>,<成员>` 这类 subconverter 写法 | 该段落只接受 `name` / `type` / `proxies` 等字段名，`group` 键会被忽略 |
+| 模板里的组被内联组覆盖 | 两种分组写法出现同名组，后出现的整体覆盖 | 组名保持唯一 |
 | 节点名里出现引号 | 值里写了引号，解析器不剥离引号 | 去掉引号 |
 | 前缀没有间隔 | 值末尾的空格被编辑器删除 | 在值末尾补一个空格 |
 | 模板里的 `include` 没生效 | URL 上同时写了 `include`，整体取代了模板值 | 二者只留一处 |

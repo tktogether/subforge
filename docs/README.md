@@ -1,7 +1,6 @@
 # SubForge 文档索引
 
-本文件是 SubForge 仓库全部文档的入口。无论你是使用者、运维人员还是贡献者，
-都可以从这里定位到需要的资料。
+本文件是 SubForge 仓库全部文档的入口，使用者、运维人员与贡献者都可以从这里定位到需要的资料。
 
 阅读本索引前，请先明确一条总原则：
 
@@ -42,7 +41,7 @@
 docs/
 ├── README.md                 # 本文件：文档总索引
 ├── style-guide.md            # 文档写作规范（中英文风格、术语、Mermaid 约束）
-├── compatibility.md          # 与 subconverter 的已知行为差异表（金测副产品）
+├── compatibility.md          # 与 subconverter 的已知行为差异表
 ├── m2-aethersailor-compat.md # 与 Aethersailor 规则集的兼容性分析
 ├── spike-mihomo.md           # mihomo 配置校验的技术预研记录
 ├── adr/                      # 架构决策记录（ADR）
@@ -84,7 +83,7 @@ docs/
 | `docs/design/` | 设计期的方案、计划、调研与视觉稿 | 不保证同步 | 仅作历史记录，不回填 |
 | `docs/adr/` | 架构决策记录，记录"为什么这样选" | 决策变更时新增记录 | 不修改已有记录，只追加 |
 | `docs/reports/` | 质量核查、审计与验收结论 | 按次归档 | 每次核查新增一份 |
-| `docs/compatibility.md` | 与 subconverter 的行为差异对照 | 必须同步 | 金测发现差异时更新 |
+| `docs/compatibility.md` | 与 subconverter 的行为差异对照 | 必须同步 | 发现行为差异时更新 |
 
 ---
 
@@ -98,7 +97,7 @@ docs/
 | [SECURITY.md](../SECURITY.md) | 全部读者 | 安全政策、漏洞报告流程、部署安全建议 |
 | [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | 全部参与者 | 社区行为准则 |
 | [LICENSE](../LICENSE) | 全部读者 | MIT 许可证 |
-| [docs/style-guide.md](style-guide.md) | 文档作者 | 文案风格、术语表、图表与示例规范 |
+| [docs/style-guide.md](style-guide.md) | 文档作者 | 文案风格、术语表、图表与示例规范、验证数据归档约定 |
 
 `.github/` 目录下另有 Issue 与 Pull Request 模板，用于收集结构化的反馈信息。
 
