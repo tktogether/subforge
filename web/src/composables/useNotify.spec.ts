@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { closeNotify, notify, notifyState, snackbarColor } from './useNotify'
+import { closeNotify, notify, notifyState } from './useNotify'
 
 describe('useNotify', () => {
   beforeEach(() => {
     notifyState.open = false
     notifyState.text = ''
     notifyState.kind = 'ok'
+    notifyState.seq = 0
   })
 
   it('notify 不传 kind 时默认为 ok，并写入 text、打开弹层', () => {
@@ -27,17 +28,18 @@ describe('useNotify', () => {
     expect(notifyState.open).toBe(true)
   })
 
+  it('每次 notify 递增 seq：连续弹同一条也能重置计时（SfToast 依赖）', () => {
+    notify('a')
+    const first = notifyState.seq
+    notify('a')
+    expect(notifyState.seq).toBe(first + 1)
+  })
+
   it('closeNotify 只关闭弹层，保留 text 与 kind', () => {
     notify('y', 'error')
     closeNotify()
     expect(notifyState.open).toBe(false)
     expect(notifyState.text).toBe('y')
     expect(notifyState.kind).toBe('error')
-  })
-
-  it('snackbarColor 按 kind 映射颜色', () => {
-    expect(snackbarColor('error')).toBe('error')
-    expect(snackbarColor('info')).toBe('info')
-    expect(snackbarColor('ok')).toBe('success')
   })
 })

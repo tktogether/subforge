@@ -564,7 +564,16 @@ export interface ProfileInput {
   final_group?: FinalGroupConfig
 }
 
+export interface VersionInfo {
+  name: string
+  version: string
+  startedAt: string
+  uptime: string
+  time: string
+}
+
 export const endpoints = {
+  versionInfo: (): Promise<VersionInfo> => api.get<VersionInfo>('/api/version'),
   overview: (): Promise<Overview> => api.get<Overview>('/api/overview'),
   stats: (): Promise<Stats> => api.get<Stats>('/api/stats'),
   history: (): Promise<HistoryEntry[]> => api.get<HistoryEntry[]>('/api/history'),

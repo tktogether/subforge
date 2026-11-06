@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   THEME_STORAGE_KEY,
   isThemeMode,
@@ -6,6 +6,8 @@ import {
   systemPrefersDark,
   resolveDark,
   useThemeMode,
+  applyTheme,
+  documentThemeFor,
 } from './useThemeMode'
 
 function createMemoryStorage(initial: Record<string, string> = {}): Storage {
@@ -60,14 +62,14 @@ describe('readStoredMode', () => {
     expect(readStoredMode(storage3)).toBe('system')
   })
 
-  it('getItem 返回 null 时返回 system', () => {
+  it('getItem 返回 null 时返回 dark（管制台默认深色）', () => {
     const storage = createMemoryStorage()
-    expect(readStoredMode(storage)).toBe('system')
+    expect(readStoredMode(storage)).toBe('dark')
   })
 
-  it('返回非法值时返回 system', () => {
+  it('返回非法值时返回 dark', () => {
     const storage = createMemoryStorage({ [THEME_STORAGE_KEY]: 'blue' })
-    expect(readStoredMode(storage)).toBe('system')
+    expect(readStoredMode(storage)).toBe('dark')
   })
 })
 
@@ -129,7 +131,7 @@ describe('useThemeMode', () => {
 
   it('初始 mode 为 system 时 isDark 跟随 matchMedia', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }))
-    const storage = createMemoryStorage()
+    const storage = createMemoryStorage({ [THEME_STORAGE_KEY]: 'system' })
     const api = useThemeMode(storage)
     expect(api.mode.value).toBe('system')
     expect(api.isDark.value).toBe(true)
@@ -182,97 +184,44 @@ describe('useThemeMode', () => {
   })
 })
 
-import { LIGHT_THEME_NAME, DARK_THEME_NAME, themeNameFor, documentThemeFor, resolveTheme, applyTheme } from './useThemeMode'
-import type { ThemeMode } from './useThemeMode'
-
-describe('首帧主题解析（W6A 单一真值源）', () => {
-  it('themeNameFor：dark → subforgeDark，light → subforgeLight', () => {
-    expect(themeNameFor(true)).toBe(DARK_THEME_NAME)
-    expect(themeNameFor(false)).toBe(LIGHT_THEME_NAME)
-    expect(themeNameFor(true)).toBe('subforgeDark')
-    expect(themeNameFor(false)).toBe('subforgeLight')
-  })
-
+describe('applyTheme（首帧与运行时切换共用）', () => {
   it('documentThemeFor：dark → "dark"，light → "light"', () => {
     expect(documentThemeFor(true)).toBe('dark')
     expect(documentThemeFor(false)).toBe('light')
   })
 
-  it('resolveTheme：dark/light 各自产出 name 与 dataTheme', () => {
-    expect(resolveTheme(true)).toEqual({ name: 'subforgeDark', dataTheme: 'dark' })
-    expect(resolveTheme(false)).toEqual({ name: 'subforgeLight', dataTheme: 'light' })
-  })
-
-  it('三种模式：light / dark / system 都走同一解析路径（mode → resolveDark → themeNameFor/documentThemeFor）', () => {
-    // light
-    expect(themeNameFor(resolveDark('light'))).toBe(LIGHT_THEME_NAME)
-    expect(documentThemeFor(resolveDark('light'))).toBe('light')
-    // dark
-    expect(themeNameFor(resolveDark('dark'))).toBe(DARK_THEME_NAME)
-    expect(documentThemeFor(resolveDark('dark'))).toBe('dark')
-    // system 跟随 matchMedia
-    vi.stubGlobal('matchMedia', () => ({ matches: true }))
-    expect(themeNameFor(resolveDark('system'))).toBe(DARK_THEME_NAME)
-    expect(documentThemeFor(resolveDark('system'))).toBe('dark')
-    vi.unstubAllGlobals()
-    vi.stubGlobal('matchMedia', () => ({ matches: false }))
-    expect(themeNameFor(resolveDark('system'))).toBe(LIGHT_THEME_NAME)
-    expect(documentThemeFor(resolveDark('system'))).toBe('light')
-    vi.unstubAllGlobals()
-  })
-})
-
-describe('applyTheme（首帧与运行时切换共用）', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('dark：theme.change("subforgeDark") + data-theme=dark', () => {
-    const theme = { change: vi.fn() }
+  it('dark：data-theme=dark；light：data-theme=light', () => {
     const root = { documentElement: { dataset: {} as Record<string, string> } }
-    applyTheme(true, theme, root as unknown as Document)
-    expect(theme.change).toHaveBeenCalledWith('subforgeDark')
+    applyTheme(true, root as unknown as Document)
     expect((root.documentElement.dataset as Record<string, string>).theme).toBe('dark')
-  })
-
-  it('light：theme.change("subforgeLight") + data-theme=light', () => {
-    const theme = { change: vi.fn() }
-    const root = { documentElement: { dataset: {} as Record<string, string> } }
-    applyTheme(false, theme, root as unknown as Document)
-    expect(theme.change).toHaveBeenCalledWith('subforgeLight')
+    applyTheme(false, root as unknown as Document)
     expect((root.documentElement.dataset as Record<string, string>).theme).toBe('light')
   })
 
   it('三种模式 × 两种 media：解析结果与 data-theme 同步', () => {
-    const cases: Array<[ThemeMode, boolean, string, string]> = [
-      ['light', false, 'subforgeLight', 'light'],
-      ['dark', false, 'subforgeDark', 'dark'],
+    const cases: Array<['light' | 'dark', boolean, string]> = [
+      ['light', false, 'light'],
+      ['dark', false, 'dark'],
     ]
-    for (const [mode, media, expectedName, expectedData] of cases) {
+    for (const [mode, media, expected] of cases) {
       vi.stubGlobal('matchMedia', () => ({ matches: media }))
-      const theme = { change: vi.fn() }
       const root = { documentElement: { dataset: {} as Record<string, string> } }
-      applyTheme(resolveDark(mode), theme, root as unknown as Document)
-      expect(theme.change).toHaveBeenLastCalledWith(expectedName)
-      expect((root.documentElement.dataset as Record<string, string>).theme).toBe(expectedData)
+      applyTheme(resolveDark(mode), root as unknown as Document)
+      expect((root.documentElement.dataset as Record<string, string>).theme).toBe(expected)
       vi.unstubAllGlobals()
     }
     // system + matchMedia dark
     vi.stubGlobal('matchMedia', () => ({ matches: true }))
     {
-      const theme = { change: vi.fn() }
       const root = { documentElement: { dataset: {} as Record<string, string> } }
-      applyTheme(resolveDark('system'), theme, root as unknown as Document)
-      expect(theme.change).toHaveBeenCalledWith('subforgeDark')
+      applyTheme(resolveDark('system'), root as unknown as Document)
       expect((root.documentElement.dataset as Record<string, string>).theme).toBe('dark')
     }
     vi.unstubAllGlobals()
     vi.stubGlobal('matchMedia', () => ({ matches: false }))
     {
-      const theme = { change: vi.fn() }
       const root = { documentElement: { dataset: {} as Record<string, string> } }
-      applyTheme(resolveDark('system'), theme, root as unknown as Document)
-      expect(theme.change).toHaveBeenCalledWith('subforgeLight')
+      applyTheme(resolveDark('system'), root as unknown as Document)
       expect((root.documentElement.dataset as Record<string, string>).theme).toBe('light')
     }
     vi.unstubAllGlobals()

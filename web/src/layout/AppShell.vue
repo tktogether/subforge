@@ -1,22 +1,36 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
-import { useTheme } from 'vuetify'
-import AppNav from './AppNav.vue'
+import AppRail from './AppRail.vue'
 import AppTopBar from './AppTopBar.vue'
 import TokenDialog from '../components/TokenDialog.vue'
-import { closeNotify, notifyState, snackbarColor } from '../composables/useNotify'
-import { applyTheme, useThemeMode } from '../composables/useThemeMode'
+import HelpDialog from '../components/HelpDialog.vue'
+import SfToast from '../components/ui/SfToast.vue'
+import SfConfirm from '../components/ui/SfConfirm.vue'
+import { endpoints, type VersionInfo } from '../api/endpoints'
+import { useAsync } from '../composables/useAsync'
+import { applyTheme, useThemeMode, watchSystemTheme } from '../composables/useThemeMode'
 import { logout, openTokenDialog, tokenDialogOpen } from '../api/token'
+import { confirmAction } from '../composables/useConfirm'
 
-const drawer = ref(true)
 const route = useRoute()
-const theme = useTheme()
-const { isDark } = useThemeMode()
+const drawerOpen = ref(false)
+const helpOpen = ref(false)
 
 // 令牌是保存后才生效的，而当前页面早已挂载并取过数据；换 key 强制重建 RouterView，
 // 让页面用新令牌重新请求一遍，用户不必手动刷新浏览器。
 const reloadKey = ref(0)
+
+function reloadPages(): void {
+  reloadKey.value += 1
+}
+
+// 令牌保存后除重建页面外，还要重探引擎心跳：首次探测发生在无令牌时，
+// 401 后 versionInfo 停留在失败态，顶栏会一直显示 OFFLINE。
+function onTokenSaved(): void {
+  reloadPages()
+  loadVersion()
+}
 
 const pageTitle = computed(() => {
   const title = route.meta.title
@@ -28,79 +42,89 @@ const pageGroup = computed(() => {
   return group === undefined ? '' : String(group)
 })
 
-const snackbarTone = computed(() => snackbarColor(notifyState.kind))
+// 引擎心跳：顶栏状态灯的数据源。null = 探测中。
+const {
+  data: versionInfo,
+  loading: versionLoading,
+  load: loadVersion,
+} = useAsync<VersionInfo>(() => endpoints.versionInfo())
+loadVersion()
 
-function reloadPages(): void {
-  reloadKey.value += 1
+const engineOnline = computed(() => {
+  if (versionLoading.value) {
+    return null
+  }
+  return versionInfo.value !== null
+})
+
+const { mode: themeMode, isDark, cycle } = useThemeMode()
+watchSystemTheme()
+watch(isDark, (dark) => applyTheme(dark), { immediate: true })
+
+async function askLogout(): Promise<void> {
+  const ok = await confirmAction({
+    title: '确认退出登录？',
+    body: '退出后会清空本机保存的访问令牌，之后所有请求都不再携带令牌。',
+    confirmText: '退出登录',
+    danger: true,
+  })
+  if (ok) {
+    logout()
+    openTokenDialog()
+    reloadPages()
+  }
 }
 
-// 退出登录是不可逆操作，先弹确认框：确认后才清令牌，然后立刻打开令牌输入框，
-// 用户要么重新输入新令牌继续，要么直接关掉输入框（等于不登录）。
-const logoutConfirmOpen = ref(false)
-
-function askLogout(): void {
-  logoutConfirmOpen.value = true
-}
-
-function cancelLogout(): void {
-  logoutConfirmOpen.value = false
-}
-
-function doLogout(): void {
-  logout()
-  logoutConfirmOpen.value = false
-  openTokenDialog()
-  reloadPages()
-}
-
-watch(isDark, (dark) => applyTheme(dark, theme), { immediate: true })
+watch(
+  () => route.path,
+  () => {
+    drawerOpen.value = false
+  },
+)
 </script>
 
 <template>
-  <v-app>
-    <AppNav v-model="drawer" />
-    <AppTopBar
-      :title="pageTitle"
-      :group="pageGroup"
-      @toggle-drawer="drawer = !drawer"
-      @open-token="openTokenDialog"
-      @logout="askLogout"
-    />
-    <v-main style="background: var(--sf-bg);">
-      <div class="main-content">
-        <RouterView :key="reloadKey" />
-      </div>
-    </v-main>
-    <TokenDialog v-model="tokenDialogOpen" @saved="reloadPages" />
-    <v-dialog v-model="logoutConfirmOpen" max-width="480">
-      <v-card>
-        <v-card-title>确认退出登录</v-card-title>
-        <v-card-text>
-          退出后会清空本机保存的访问令牌，之后所有请求都不再带令牌。
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" data-testid="logout-cancel" @click="cancelLogout">取消</v-btn>
-          <v-btn color="error" data-testid="logout-confirm" @click="doLogout">退出登录</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-    <v-snackbar
-      :model-value="notifyState.open"
-      :color="snackbarTone"
-      data-testid="snackbar"
-      @update:model-value="closeNotify"
-    >
-      {{ notifyState.text }}
-    </v-snackbar>
-  </v-app>
+  <div class="sf-shell">
+    <AppRail :drawer-open="drawerOpen" @close="drawerOpen = false" />
+    <div class="sf-shell__main">
+      <AppTopBar
+        :title="pageTitle"
+        :group="pageGroup"
+        :version="versionInfo"
+        :engine-online="engineOnline"
+        :theme-mode="themeMode"
+        @toggle-drawer="drawerOpen = !drawerOpen"
+        @cycle-theme="cycle()"
+        @open-token="openTokenDialog"
+        @logout="askLogout"
+        @open-help="helpOpen = true"
+      />
+      <main class="sf-container">
+        <RouterView v-slot="{ Component }">
+          <Transition name="sf-page" mode="out-in">
+            <component :is="Component" :key="route.path + '-' + reloadKey" />
+          </Transition>
+        </RouterView>
+      </main>
+    </div>
+
+    <TokenDialog v-model="tokenDialogOpen" @saved="onTokenSaved" />
+    <HelpDialog :open="helpOpen" @close="helpOpen = false" />
+    <SfConfirm />
+    <SfToast />
+  </div>
 </template>
 
 <style scoped>
-.main-content {
-  max-width: var(--sf-shell);
-  margin: 0 auto;
-  padding: 24px;
-  background: var(--sf-bg);
+.sf-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sf-shell__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 </style>

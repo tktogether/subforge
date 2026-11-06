@@ -1,4 +1,4 @@
-﻿import { ref, type Ref } from 'vue'
+import { ref, type Ref } from 'vue'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 
@@ -15,7 +15,7 @@ export function readStoredMode(storage: Storage): ThemeMode {
   if (raw !== null && isThemeMode(raw)) {
     return raw
   }
-  return 'system'
+  return 'dark'
 }
 
 export function systemPrefersDark(): boolean {
@@ -49,9 +49,8 @@ interface ThemeState {
 
 /**
  * 同一个 storage 实例共享一份状态：AppShell（读）与 SettingsPage（写）各自调用
- * useThemeMode() 时拿到的是同一对 ref，设置页 setMode 才会即时驱动外壳换主题；
- * 否则两边各持一份副本，点了按钮只有 storage 变、界面不动。
- * 按 storage 缓存（WeakMap）：组件在浏览器里共用 window.localStorage，测试里各自 new 的
+ * useThemeMode() 时拿到的是同一对 ref，设置页 setMode 才会即时驱动外壳换主题。
+ * 按 storage 缓存（WeakMap）：浏览器里共用 window.localStorage，测试里各自 new 的
  * MemoryStorage 仍然互相隔离。
  */
 const themeStates = new WeakMap<Storage, ThemeState>()
@@ -90,19 +89,29 @@ export function useThemeMode(storage: Storage = window.localStorage): ThemeModeA
   return { mode: state.mode, isDark: state.isDark, setMode: apply, cycle }
 }
 
-
-// ===== 首帧主题：解析与落地（单一真值源，W6A） =====
-export const LIGHT_THEME_NAME = 'subforgeLight'
-export const DARK_THEME_NAME = 'subforgeDark'
-export type ThemeName = typeof LIGHT_THEME_NAME | typeof DARK_THEME_NAME
+// ===== 首帧主题：把解析结果落到 <html data-theme>，防止 FOUC =====
 export type DocumentTheme = 'light' | 'dark'
-export function themeNameFor(dark: boolean): ThemeName { return dark ? DARK_THEME_NAME : LIGHT_THEME_NAME }
-export function documentThemeFor(dark: boolean): DocumentTheme { return dark ? 'dark' : 'light' }
-export function resolveTheme(dark: boolean): { name: ThemeName; dataTheme: DocumentTheme } { return { name: themeNameFor(dark), dataTheme: documentThemeFor(dark) } }
-export interface ThemeNameController { change: (themeName: string) => void }
-export function applyTheme(dark: boolean, theme: ThemeNameController, root?: Document): void {
-  const { name, dataTheme } = resolveTheme(dark)
-  theme.change(name)
+
+export function documentThemeFor(dark: boolean): DocumentTheme {
+  return dark ? 'dark' : 'light'
+}
+
+export function applyTheme(dark: boolean, root?: Document): void {
   const doc = root ?? (typeof document === 'undefined' ? undefined : document)
-  if (doc !== undefined) { doc.documentElement.dataset.theme = dataTheme }
+  if (doc !== undefined) {
+    doc.documentElement.dataset.theme = documentThemeFor(dark)
+  }
+}
+
+// 跟随系统模式下的实时切换：系统明暗变化时更新共享 isDark（AppShell 负责落到 data-theme）。
+export function watchSystemTheme(storage: Storage = window.localStorage): void {
+  if (typeof window.matchMedia !== 'function') {
+    return
+  }
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    const state = themeStates.get(storage)
+    if (state !== undefined && state.mode.value === 'system') {
+      state.isDark.value = systemPrefersDark()
+    }
+  })
 }
