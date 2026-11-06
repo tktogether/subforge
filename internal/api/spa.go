@@ -55,6 +55,8 @@ func (s *Server) handleSPAFallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if data, err := fs.ReadFile(webFS, name); err == nil {
 		w.Header().Set("Content-Type", assetContentType(name))
+		// Vite 产物的文件名带内容哈希：内容变了文件名就变，可以放心让浏览器长缓存。
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
 		return
@@ -87,6 +89,9 @@ func lastSegment(name string) string {
 }
 
 // serveIndex 直出 index.html；产物缺失（例如没跑前端构建）时退化为 404。
+//
+// 入口 HTML 不带内容哈希，每次发版文件名不变而内容变化，必须 no-cache 强制再验证；
+// 否则浏览器按启发式缓存旧 index.html，引用到已被新构建删除的哈希资源，升级后白屏。
 func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	data, err := fs.ReadFile(webFS, spaIndexFile)
 	if err != nil {
@@ -94,6 +99,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
