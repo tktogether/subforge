@@ -120,7 +120,7 @@ const hasToken = computed(() => tokenState.value !== '')
   align-items: center;
   gap: 6px;
   padding: 0 14px;
-  background: oklch(from var(--sf-bg) l c h / 0.93);
+  background: var(--sf-bg);
   border-bottom: 1px solid var(--sf-border);
 }
 
