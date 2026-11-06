@@ -8,14 +8,31 @@ import {
   type ImportRulesResult,
   type SubscheckResult,
   type NodePreviewResult,
+  type TrafficRefreshResult,
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
-import { pageHelp, fieldHelp } from '../content/help'
-import PageHeader from '../components/PageHeader.vue'
-import AsyncSection from '../components/AsyncSection.vue'
-import NodePreviewDialog from '../components/NodePreviewDialog.vue'
+import { confirmAction } from '../composables/useConfirm'
+import { fieldHelp } from '../content/help'
+import SfPageHead from '../components/ui/SfPageHead.vue'
+import SfField from '../components/ui/SfField.vue'
+import SfSwitch from '../components/ui/SfSwitch.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
+import SfNote from '../components/ui/SfNote.vue'
+import SfEmpty from '../components/ui/SfEmpty.vue'
+import SfNodePreview from '../components/ui/SfNodePreview.vue'
 import { formatBytes, formatDuration, formatExpire } from '../format'
+import {
+  IconPlus,
+  IconRefresh,
+  IconPencil,
+  IconTrash,
+  IconActivity,
+  IconFileImport,
+  IconRadar,
+  IconInbox,
+  IconAlertTriangle,
+} from '@tabler/icons-vue'
 
 type AirportRow = Airport & {
   upload: number
@@ -27,7 +44,6 @@ type AirportRow = Airport & {
   traffic_err: string
 }
 
-const help = pageHelp('airports')
 const nameHelp = fieldHelp('airport.name')
 const urlHelp = fieldHelp('airport.subscription_url')
 const remarksHelp = fieldHelp('airport.remarks')
@@ -73,27 +89,6 @@ async function loadSelfNodeOptions(): Promise<void> {
 const loading = ref(false)
 const error = ref('')
 const rows = ref<AirportRow[]>([])
-const emptyState = computed(() => help.emptyState)
-
-// W6B 表格：minWidth 给每列下界（Vuetify 会把 minWidth 写成 th 的内联 min-width），
-// 表头的 white-space:nowrap 由 vuetify-overrides.css 统一提供 → 1600px 下 9 列表头全部单行。
-// align:'end' 让数字列（节点数 / 流量 / 到期时间 / 操作）右对齐，并吃到 tabular-nums。
-// 操作列额外挂 sf-table__actions，供覆写层做「单行不折 + 紧凑按钮」。
-const headers = [
-  { key: 'name', title: '名称', minWidth: 140 },
-  { key: 'subscription_url', title: '订阅地址' },
-  { key: 'enabled', title: '启用', minWidth: 64 },
-  { key: 'node_count', title: '节点数', align: 'end' as const, minWidth: 72 },
-  { key: 'traffic', title: '流量 / 到期', align: 'end' as const, minWidth: 152 },
-  { key: 'status', title: '采集状态', minWidth: 150 },
-  {
-    key: 'actions',
-    title: '操作',
-    align: 'end' as const,
-    minWidth: 176,
-    cellProps: { class: 'sf-table__actions' },
-  },
-]
 
 const dialog = ref(false)
 const editing = ref<AirportRow | null>(null)
@@ -137,14 +132,15 @@ async function loadPipelineOptions(): Promise<void> {
   }
 }
 
-const confirmOpen = ref(false)
-const pendingDelete = ref<AirportRow | null>(null)
-
 const page = ref(1)
 const itemsPerPage = ref(10)
 const pageCount = computed(() => Math.max(1, Math.ceil(rows.value.length / itemsPerPage.value)))
 watch([rows, itemsPerPage], () => {
   page.value = Math.min(page.value, pageCount.value)
+})
+const pagedRows = computed(() => {
+  const start = (page.value - 1) * itemsPerPage.value
+  return rows.value.slice(start, start + itemsPerPage.value)
 })
 
 function setPageSize(next: number): void {
@@ -176,7 +172,7 @@ const refreshing = ref(false)
 const refreshSummary = ref<{ ok: number; fail: number } | null>(null)
 const imports = ref<ImportRulesOutcome[]>([])
 const refreshError = ref('')
-const refreshResults = ref<import('../api/endpoints').TrafficRefreshResult[]>([])
+const refreshResults = ref<TrafficRefreshResult[]>([])
 
 const checking = ref(false)
 const checkResults = ref<SubscheckResult[]>([])
@@ -244,15 +240,14 @@ async function submit(): Promise<void> {
   }
 }
 
-function askDelete(row: AirportRow): void {
-  pendingDelete.value = row
-  confirmOpen.value = true
-}
-
-async function doDelete(): Promise<void> {
-  const row = pendingDelete.value
-  confirmOpen.value = false
-  if (row === null) {
+async function askDelete(row: AirportRow): Promise<void> {
+  const ok = await confirmAction({
+    title: '确认删除机场「' + row.name + '」？',
+    body: '删除机场会把它从所有方案的规则源绑定里解绑；规则源作为历史快照保留在「规则源」页，可稍后删除。已创建的规则/分组不会自动删除。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) {
     return
   }
   try {
@@ -305,7 +300,7 @@ async function confirmImportRules(): Promise<void> {
     let text = (r.rule_source_rules ?? 0) > 0
       ? '规则源已更新：' + r.rule_source_rules + ' 条'
       : '未发现可保存的规则'
-    if (r.groups_created && r.groups_created > 0) {
+    if (r.groups_created !== undefined && r.groups_created > 0) {
       text += '，新建分组 ' + r.groups_created
     }
     manualImport.value = { name: row.name, result: r }
@@ -370,6 +365,13 @@ function expireText(row: AirportRow): string {
   return formatExpire(row.expire)
 }
 
+function trafficPercent(row: AirportRow): number {
+  if (row.total <= 0) {
+    return 0
+  }
+  return Math.min(100, ((row.upload + row.download) / row.total) * 100)
+}
+
 function formatCheckAt(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false })
@@ -407,487 +409,465 @@ async function restoreLastCheck(): Promise<void> {
 </script>
 
 <template>
-  <div class="airports-page">
-    <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="airports">
+  <div>
+    <SfPageHead>
       <template #actions>
-        <v-btn data-testid="add" color="primary" prepend-icon="mdi-plus" @click="openCreate">新增</v-btn>
-        <v-btn data-testid="refresh" variant="tonal" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
-        <v-btn data-testid="refresh-traffic-all" variant="tonal" prepend-icon="mdi-traffic-light" :loading="refreshing" @click="refreshAll">刷新全部</v-btn>
-        <v-btn data-testid="check-all" variant="tonal" prepend-icon="mdi-pulse" :loading="checking" @click="checkAll">检测全部</v-btn>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="add" @click="openCreate">
+          <IconPlus :size="15" :stroke-width="2" />
+          新增
+        </button>
+        <button class="sf-btn sf-btn--ghost" type="button" data-testid="refresh" :disabled="loading" @click="load">
+          <IconRefresh :size="15" :stroke-width="1.8" :class="{ 'ap-spin': loading }" />
+          刷新
+        </button>
+        <button class="sf-btn sf-btn--ghost" type="button" data-testid="refresh-traffic-all" :disabled="refreshing" @click="refreshAll">
+          <IconActivity :size="15" :stroke-width="1.8" />
+          {{ refreshing ? '刷新中…' : '流量刷新' }}
+        </button>
+        <button class="sf-btn sf-btn--ghost" type="button" data-testid="check-all" :disabled="checking" @click="checkAll">
+          <IconRadar :size="15" :stroke-width="1.8" />
+          {{ checking ? '检测中…' : '检测全部' }}
+        </button>
       </template>
-    </PageHeader>
+    </SfPageHead>
 
-    <v-alert v-if="manualImport" data-testid="manual-import-result" type="success" variant="tonal" closable
-      class="mb-4" @click:close="manualImport = null">
-      {{ manualImport.name }}：
-      <template v-if="(manualImport.result.rule_source_rules ?? 0) > 0">
-        规则源已更新 {{ manualImport.result.rule_source_rules }} 条
-      </template>
+    <SfNote v-if="manualImport !== null" tone="ok" data-testid="manual-import-result" style="margin-bottom: 16px">
+      <b>{{ manualImport.name }}</b>——
+      <template v-if="(manualImport.result.rule_source_rules ?? 0) > 0">规则源已更新 {{ manualImport.result.rule_source_rules }} 条</template>
       <template v-else>未发现可保存的规则</template>
-      <span v-if="(manualImport.result.groups_created ?? 0) > 0">
-        ，新建分组 {{ manualImport.result.groups_created }}
-      </span>
-    </v-alert>
+      <template v-if="(manualImport.result.groups_created ?? 0) > 0">，新建分组 {{ manualImport.result.groups_created }}</template>
+    </SfNote>
 
-    <AsyncSection :loading="loading" :error="error" :empty="rows.length === 0 ? (emptyState ?? false) : false" empty-text="还没有机场" @retry="load">
-      <template v-slot:default>
-        <div class="airports-table-bar">
-          <span class="text-caption text-medium-emphasis">共 {{ rows.length }} 条</span>
-          <v-spacer />
-          <v-select
-            :model-value="itemsPerPage"
-            :items="[10, 25, 50, 100]"
-            label="每页条数"
-            density="compact"
-            variant="outlined"
-            hide-details
-            data-testid="airport-page-size"
-            class="airports-page-size"
-            @update:model-value="setPageSize"
-          />
-        </div>
-        <v-data-table
-          :page="page"
-          :items-per-page="itemsPerPage"
-          :items-per-page-options="[10, 25, 50, 100]"
-          :headers="headers"
-          :items="rows"
-          data-testid="table"
-          class="airports-table"
-        >
-          <template #item.name="{ item }">
-            <div class="airport-name" :title="item.subscription_url">{{ item.name }}</div>
-            <div class="airport-pipeline" data-testid="airport-pipeline-text">处理：{{ item.pipeline || '不处理' }}<span v-if="item.failure_policy === 'error'"> · 失败时报错</span><span v-if="item.outbound_node" data-testid="airport-outbound-text"> · 出网：{{ outboundLabel(item.outbound_node) }}</span></div>
-          </template>
-          <template #item.subscription_url="{ value }">
-            <span class="airport-mono airport-truncate" :title="value">{{ value }}</span>
-          </template>
-          <template #item.node_count="{ value }">
-            <span class="airport-num">{{ value }}</span>
-          </template>
-          <template #item.enabled="{ item }">
-            <v-switch :model-value="item.enabled" density="compact" :hide-details="true"
-              data-testid="airport-enabled" :loading="toggling === item.id"
-              @update:model-value="toggleEnabled(item, $event as boolean)"></v-switch>
-          </template>
-          <template #item.traffic="{ item }">
-            <div class="airport-traffic">
-              <span :data-testid="item.total <= 0 ? 'traffic-unknown' : 'traffic-value'">{{ trafficText(item) }}</span>
-              <span class="airport-expire">
-                到期：<span :data-testid="item.expire <= 0 ? 'expire-unknown' : 'expire-value'">{{ expireText(item) }}</span>
-              </span>
-              <span v-if="item.traffic_err !== ''" data-testid="traffic-error" class="airport-traffic-err" :title="item.traffic_err + ' · 余额仍是上次成功值，没有被清零'">余额未更新</span>
-            </div>
-          </template>
-          <template #item.status="{ item }">
-            <div class="airport-status-cell">
-              <span v-if="item.traffic_err !== ''" data-testid="traffic-err" class="sf-status airport-status-err" :title="item.traffic_err">
-                <span class="sf-status__dot sf-status__dot--danger"></span>
-                <span>采集失败</span>
-              </span>
-              <span v-else data-testid="traffic-status-ok" class="sf-status">
-                <span class="sf-status__dot sf-status__dot--ok"></span>
-                <span>正常</span>
-              </span>
-              <span v-if="item.traffic_at <= 0" data-testid="traffic-at" class="airport-status-time">尚未采集</span>
-              <span v-else data-testid="traffic-stale" class="airport-status-time" :title="'上次成功：' + formatExpire(item.traffic_at)">
-                上次成功：{{ relativeTime(item.traffic_at) }}前
-              </span>
-            </div>
-          </template>
-          <template #item.actions="{ item }">
-            <div class="airport-actions">
-              <v-btn icon="mdi-pencil" size="small" variant="text" title="编辑机场" aria-label="编辑机场" data-testid="edit" @click="openEdit(item)" />
-              <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" title="删除机场" aria-label="删除机场" data-testid="delete" @click="askDelete(item)" />
-              <v-btn icon="mdi-refresh" size="small" variant="text" title="刷新机场" aria-label="刷新机场" data-testid="refresh-traffic" @click="refreshOne(item)" />
-              <v-btn icon="mdi-file-sync-outline" size="small" variant="text" title="更新规则源" aria-label="更新规则源" data-testid="import-rules" @click="openImportDialog(item)" />
-              <v-btn icon="mdi-pulse" size="small" variant="text" title="检测订阅可用性" aria-label="检测订阅可用性" data-testid="check-one" @click="checkOne(item)" />
-            </div>
-          </template>
-        </v-data-table>
-      </template>
-    </AsyncSection>
+    <div v-if="error !== ''" class="sf-note sf-note--danger sf-rise" style="margin-bottom: 16px">
+      <IconAlertTriangle :size="16" :stroke-width="1.8" class="sf-note__icon" />
+      <span class="sf-note__body">{{ error }}</span>
+      <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" @click="load">重试</button>
+    </div>
 
-    <div class="airports-page__extras">
+    <div v-if="rows.length === 0 && !loading && error === ''" class="sf-panel">
+      <SfEmpty title="还没有机场" desc="添加上游订阅地址后，SubForge 会定时采集节点、流量与规则。">
+        <template #icon><IconInbox :size="30" :stroke-width="1.4" /></template>
+        <template #action>
+          <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" @click="openCreate">
+            <IconPlus :size="14" :stroke-width="2" />
+            新增机场
+          </button>
+        </template>
+      </SfEmpty>
+    </div>
 
-      <div v-if="refreshSummary !== null" data-testid="refresh-summary" class="airports-page__summary">
+    <template v-else>
+      <div class="ap-bar sf-rise sf-d1">
+        <span class="sf-pagination__info">共 {{ rows.length }} 条</span>
+        <span class="sf-spacer" />
+        <label class="ap-size">
+          <span class="sf-faint" style="font-size: 12px">每页</span>
+          <span class="sf-select-wrap" style="width: 76px">
+            <select class="sf-select ap-size__select" data-testid="airport-page-size" :value="String(itemsPerPage)" @change="setPageSize(Number(($event.target as HTMLSelectElement).value))">
+              <option v-for="n in [10, 25, 50, 100]" :key="n" :value="String(n)">{{ n }}</option>
+            </select>
+          </span>
+        </label>
+      </div>
+
+      <div class="sf-table-wrap sf-rise sf-d1" data-testid="table">
+        <table class="sf-table sf-table--scroll">
+          <thead>
+            <tr>
+              <th style="min-width: 150px">名称</th>
+              <th class="ap-col-url">订阅地址</th>
+              <th style="width: 70px">启用</th>
+              <th style="text-align: right; width: 70px">节点数</th>
+              <th style="min-width: 150px; text-align: right">流量 / 到期</th>
+              <th style="min-width: 140px">采集状态</th>
+              <th style="width: 186px; text-align: right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading && rows.length === 0">
+              <td v-for="n in 7" :key="n"><span class="sf-skeleton" style="width: 60%" /></td>
+            </tr>
+            <tr v-for="row in pagedRows" v-else :key="row.id">
+              <td>
+                <div class="ap-name" :title="row.subscription_url">{{ row.name }}</div>
+                <div class="ap-pipeline" data-testid="airport-pipeline-text">
+                  处理：{{ row.pipeline || '不处理' }}<template v-if="row.failure_policy === 'error'"> · 失败时报错</template><template v-if="row.outbound_node"> · 出网：{{ outboundLabel(row.outbound_node) }}</template>
+                </div>
+              </td>
+              <td class="ap-col-url"><span class="sf-mono ap-url" :title="row.subscription_url">{{ row.subscription_url }}</span></td>
+              <td>
+                <SfSwitch
+                  :model-value="row.enabled"
+                  :disabled="toggling === row.id"
+                  data-testid="airport-enabled"
+                  @update:model-value="toggleEnabled(row, $event)"
+                />
+              </td>
+              <td class="sf-table__num" style="text-align: right">{{ row.node_count }}</td>
+              <td style="text-align: right">
+                <div class="ap-traffic">
+                  <span><span class="sf-table__num" :data-testid="row.total <= 0 ? 'traffic-unknown' : 'traffic-value'">{{ trafficText(row) }}</span><span class="ap-expire"> · 到期 <span :data-testid="row.expire <= 0 ? 'expire-unknown' : 'expire-value'">{{ expireText(row) }}</span></span></span>
+                  <div v-if="row.total > 0" class="sf-meter ap-meter" aria-hidden="true">
+                    <span
+                      class="sf-meter__fill"
+                      :class="trafficPercent(row) >= 90 ? 'sf-meter__fill--danger' : trafficPercent(row) >= 70 ? 'sf-meter__fill--warn' : ''"
+                      :style="{ width: trafficPercent(row) + '%' }"
+                    />
+                  </div>
+                  <span v-if="row.traffic_err !== ''" data-testid="traffic-error" class="ap-traffic-err" :title="row.traffic_err + ' · 余额仍是上次成功值，没有被清零'">余额未更新</span>
+                </div>
+              </td>
+              <td>
+                <div class="ap-status">
+                  <span v-if="row.traffic_err !== ''" data-testid="traffic-err" class="sf-status" :title="row.traffic_err">
+                    <span class="sf-led sf-led--danger" />
+                    <span style="color: var(--sf-danger)">采集失败</span>
+                  </span>
+                  <span v-else data-testid="traffic-status-ok" class="sf-status">
+                    <span class="sf-led sf-led--ok" />
+                    <span>正常</span>
+                  </span>
+                  <span v-if="row.traffic_at <= 0" data-testid="traffic-at" class="ap-status-time">尚未采集</span>
+                  <span v-else data-testid="traffic-stale" class="ap-status-time" :title="'上次成功：' + formatExpire(row.traffic_at)">
+                    上次成功 {{ relativeTime(row.traffic_at) }}前
+                  </span>
+                </div>
+              </td>
+              <td>
+                <span class="sf-table__actions">
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="编辑机场" data-testid="edit" @click="openEdit(row)">
+                    <span class="sf-tip" data-tip="编辑机场" style="display: inline-flex"><IconPencil :size="15" :stroke-width="1.7" /></span>
+                  </button>
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="刷新流量" data-testid="refresh-traffic" @click="refreshOne(row)">
+                    <span class="sf-tip" data-tip="刷新流量" style="display: inline-flex"><IconRefresh :size="15" :stroke-width="1.7" /></span>
+                  </button>
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="更新规则源" data-testid="import-rules" @click="openImportDialog(row)">
+                    <span class="sf-tip" data-tip="更新规则源" style="display: inline-flex"><IconFileImport :size="15" :stroke-width="1.7" /></span>
+                  </button>
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="检测订阅可用性" data-testid="check-one" @click="checkOne(row)">
+                    <span class="sf-tip" data-tip="检测订阅可用性" style="display: inline-flex"><IconRadar :size="15" :stroke-width="1.7" /></span>
+                  </button>
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm sf-btn--del" type="button" aria-label="删除机场" data-testid="delete" @click="askDelete(row)">
+                    <span class="sf-tip" data-tip="删除机场" style="display: inline-flex"><IconTrash :size="15" :stroke-width="1.7" /></span>
+                  </button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="rows.length > itemsPerPage" class="sf-pagination" style="border: none; padding: 12px 2px">
+        <span class="sf-pagination__info">PAGE {{ page }} / {{ pageCount }}</span>
+        <span class="sf-spacer" />
+        <button class="sf-btn sf-btn--ghost sf-btn--icon sf-btn--sm" type="button" aria-label="上一页" :disabled="page <= 1" @click="page = page - 1">‹</button>
+        <button class="sf-btn sf-btn--ghost sf-btn--icon sf-btn--sm" type="button" aria-label="下一页" :disabled="page >= pageCount" @click="page = page + 1">›</button>
+      </div>
+    </template>
+
+    <!-- 刷新 / 导入 / 检测结果 -->
+    <div class="ap-extras">
+      <SfNote v-if="refreshSummary !== null" tone="info" data-testid="refresh-summary">
         刷新完成：成功 {{ refreshSummary.ok }}，失败 {{ refreshSummary.fail }}
-      </div>
-      <div v-if="refreshError !== ''" data-testid="refresh-error" class="text-error">{{ refreshError }}</div>
+      </SfNote>
+      <div v-if="refreshError !== ''" data-testid="refresh-error" class="sf-field__error">{{ refreshError }}</div>
 
-      <div v-if="imports.length > 0" data-testid="imports" class="airports-page__imports">
-        <div v-for="imp in imports" :key="imp.airport_id + '-' + imp.name" class="airports-page__import">
-          <span>{{ imp.name }}</span>
-          <span>规则源 {{ imp.rule_source_rules ?? 0 }} 条</span>
-          <span>提供者 {{ imp.providers_added }}</span>
-          <span v-if="(imp.groups_created ?? 0) > 0">新建分组 {{ imp.groups_created }}</span>
-          <span v-if="imp.err !== ''" class="text-error">{{ imp.err }}</span>
-        </div>
+      <div v-if="imports.length > 0" data-testid="imports" class="sf-note sf-note--ok">
+        <span class="sf-note__body">
+          <div v-for="imp in imports" :key="imp.airport_id + '-' + imp.name" class="ap-import-line">
+            <b>{{ imp.name }}</b>——规则源 {{ imp.rule_source_rules ?? 0 }} 条 · 提供者 {{ imp.providers_added }}<template v-if="(imp.groups_created ?? 0) > 0"> · 新建分组 {{ imp.groups_created }}</template><span v-if="imp.err !== ''" style="color: var(--sf-danger)"> · {{ imp.err }}</span>
+          </div>
+        </span>
       </div>
 
-      <div v-if="refreshResults.length > 0" data-testid="refresh-results" class="airports-page__refresh-results">
-        <div v-for="res in refreshResults" :key="res.airport_id" data-testid="refresh-result-row" class="airports-page__refresh-result">
-          <span>{{ res.name }}</span>
-          <span :class="res.ok ? 'text-success' : 'text-error'">{{ res.ok ? '成功' : '失败' }}</span>
-          <span v-if="res.err !== ''" class="text-error">{{ res.err }}</span>
-          <span v-else-if="res.note" data-testid="refresh-result-note" class="text-medium-emphasis">{{ res.note }}</span>
-        </div>
+      <div v-if="refreshResults.length > 0" data-testid="refresh-results" class="sf-note">
+        <span class="sf-note__body">
+          <div v-for="res in refreshResults" :key="res.airport_id" data-testid="refresh-result-row" class="ap-import-line">
+            <b>{{ res.name }}</b>——<span :style="{ color: res.ok ? 'var(--sf-ok)' : 'var(--sf-danger)' }">{{ res.ok ? '成功' : '失败' }}</span><template v-if="res.err !== ''"><span style="color: var(--sf-danger)"> · {{ res.err }}</span></template><template v-else-if="res.note !== undefined"> · {{ res.note }}</template>
+          </div>
+        </span>
       </div>
 
-      <div v-if="checkError !== ''" data-testid="check-error" class="text-error">{{ checkError }}</div>
-      <section v-if="checkResults.length > 0" data-testid="check-results" class="check-panel" aria-live="polite">
-        <header class="check-panel__head">
+      <div v-if="checkError !== ''" data-testid="check-error" class="sf-field__error">{{ checkError }}</div>
+      <section v-if="checkResults.length > 0" data-testid="check-results" class="sf-panel" aria-live="polite">
+        <div class="sf-panel__head">
           <div>
-            <div class="check-panel__title">可用性检测结果</div>
-            <div v-if="checkAt !== ''" class="check-panel__time">检测时间：{{ formatCheckAt(checkAt) }}</div>
+            <div class="sf-panel__title">可用性检测结果 · {{ checkSummary.total }} 项</div>
+            <div v-if="checkAt !== ''" class="sf-field__hint" style="margin-top: 2px">检测时间：{{ formatCheckAt(checkAt) }}</div>
           </div>
-          <div data-testid="check-summary" class="check-panel__stats">
-            <span class="check-stat check-stat--ok"><span class="check-stat__dot"></span>可用 {{ checkSummary.ok }}</span>
-            <span class="check-stat check-stat--fail"><span class="check-stat__dot"></span>不可用 {{ checkSummary.fail }}</span>
-            <span class="check-stat">共 {{ checkSummary.total }}</span>
-          </div>
-        </header>
-        <div class="check-list">
+          <span class="sf-spacer" />
+        </div>
+        <div class="ap-check-list">
           <div
             v-for="(res, index) in checkResults"
             :key="res.url + '-' + index"
             data-testid="check-result-row"
-            class="check-item"
-            :class="res.ok ? 'check-item--ok' : 'check-item--fail'"
+            class="ap-check-item"
           >
-            <div class="check-item__line">
-              <span class="check-item__status"><span class="check-stat__dot"></span>{{ res.ok ? '可用' : '不可用' }}</span>
-              <span class="check-item__name" :title="res.url">{{ res.name || res.url }}</span>
-              <span class="check-item__meta">
-                <template v-if="res.ok">HTTP {{ res.status_code }} · {{ formatDuration(res.latency_ms ?? 0) }}</template>
-                <template v-else-if="res.status_code > 0">HTTP {{ res.status_code }}</template>
-                <template v-else>连接失败</template>
-              </span>
-            </div>
-            <div v-if="!res.ok && res.err !== ''" class="check-item__error" :title="res.err">{{ res.err }}</div>
+            <span class="sf-led" :class="res.ok ? 'sf-led--ok' : 'sf-led--danger'" />
+            <span class="ap-check-item__status" :style="{ color: res.ok ? 'var(--sf-ok)' : 'var(--sf-danger)' }">{{ res.ok ? '可用' : '不可用' }}</span>
+            <span class="ap-check-item__name" :title="res.url">{{ res.name || res.url }}</span>
+            <span class="ap-check-item__meta sf-table__num">
+              <template v-if="res.ok">HTTP {{ res.status_code }} · {{ formatDuration(res.latency_ms ?? 0) }}</template>
+              <template v-else-if="res.status_code > 0">HTTP {{ res.status_code }}</template>
+              <template v-else>连接失败</template>
+            </span>
+            <div v-if="!res.ok && res.err !== ''" class="ap-check-item__error" :title="res.err">{{ res.err }}</div>
           </div>
         </div>
       </section>
     </div>
 
-    <v-dialog v-model="dialog" max-width="520">
-      <v-card>
-        <v-card-title>{{ editing === null ? '新增机场' : '编辑机场' }}</v-card-title>
-        <v-card-text>
-          <v-text-field v-model="draft.name" data-testid="airport-name" label="名称" :hint="nameHelp?.hint" :placeholder="nameHelp?.example" persistent-hint></v-text-field>
-          <v-text-field v-model="draft.subscription_url" data-testid="airport-url" label="订阅地址" :hint="urlHelp?.hint" :placeholder="urlHelp?.example" persistent-hint></v-text-field>
-          <v-text-field v-model="draft.remarks" data-testid="airport-remarks" label="备注" :hint="remarksHelp?.hint" :placeholder="remarksHelp?.example" persistent-hint></v-text-field>
-          <v-select
-            v-model="draft.failure_policy"
-            :items="failurePolicyItems"
-            label="拉取失败时"
-            :hint="failurePolicyHelp?.hint"
-            persistent-hint
-            data-testid="airport-failure-policy"
-            class="mb-3"
-          />
-          <v-select
-            v-model="draft.outbound_node"
-            :items="outboundItems"
-            label="出网节点"
-            :hint="outboundHelp?.hint"
-            persistent-hint
-            data-testid="airport-outbound"
-            class="mb-3"
-          />
-          <v-select
-            v-model="draft.pipeline"
-            :items="pipelineItems"
-            label="处理管线"
-            hint="机场节点先经过这条管线，再与其他来源合并；留空表示不处理。"
-            persistent-hint
-            clearable
-            data-testid="airport-pipeline"
-            class="mb-3"
-          />
-          <div class="d-flex align-center ga-2 mb-3">
-            <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-outline" :disabled="editing === null" data-testid="airport-preview-process" @click="previewProcess">预览处理</v-btn>
-            <span class="text-caption text-medium-emphasis">{{ editing === null ? '保存机场后可预览处理结果' : '按当前选择的管线预览该机场的节点' }}</span>
-          </div>
-          <v-switch v-model="draft.enabled" data-testid="airport-enabled-new" label="启用"></v-switch>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" @click="dialog = false">取消</v-btn>
-          <v-btn color="primary" data-testid="airport-save" @click="submit">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 编辑机场 -->
+    <SfDialog :open="dialog" :label="editing === null ? 'CREATE AIRPORT' : 'EDIT AIRPORT'" :title="editing === null ? '新增机场' : '编辑机场'" @close="dialog = false">
+      <SfField :hint="nameHelp?.hint ?? ''">
+        <template #label><span class="sf-field__label">名称</span></template>
+        <input v-model="draft.name" class="sf-input" data-testid="airport-name" :placeholder="nameHelp?.example ?? ''" spellcheck="false" />
+      </SfField>
+      <SfField :hint="urlHelp?.hint ?? ''">
+        <template #label><span class="sf-field__label">订阅地址</span></template>
+        <input v-model="draft.subscription_url" class="sf-input sf-input--mono" data-testid="airport-url" :placeholder="urlHelp?.example ?? ''" spellcheck="false" />
+      </SfField>
+      <SfField :hint="remarksHelp?.hint ?? ''">
+        <template #label><span class="sf-field__label">备注</span></template>
+        <input v-model="draft.remarks" class="sf-input" data-testid="airport-remarks" :placeholder="remarksHelp?.example ?? ''" spellcheck="false" />
+      </SfField>
+      <SfField :hint="failurePolicyHelp?.hint ?? ''">
+        <template #label><span class="sf-field__label">拉取失败时</span></template>
+        <span class="sf-select-wrap">
+          <select v-model="draft.failure_policy" class="sf-select" data-testid="airport-failure-policy">
+            <option v-for="opt in failurePolicyItems" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+          </select>
+        </span>
+      </SfField>
+      <SfField :hint="outboundHelp?.hint ?? ''">
+        <template #label><span class="sf-field__label">出网节点</span></template>
+        <span class="sf-select-wrap">
+          <select v-model="draft.outbound_node" class="sf-select" data-testid="airport-outbound">
+            <option v-for="opt in outboundItems" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+          </select>
+        </span>
+      </SfField>
+      <SfField hint="机场节点先经过这条管线，再与其他来源合并；留空表示不处理。">
+        <template #label><span class="sf-field__label">处理管线</span></template>
+        <span class="sf-select-wrap">
+          <select v-model="draft.pipeline" class="sf-select" data-testid="airport-pipeline">
+            <option value="">不处理</option>
+            <option v-for="item in pipelineItems" :key="item.value" :value="item.value">{{ item.title }}</option>
+          </select>
+        </span>
+      </SfField>
+      <div class="ap-dialog-row">
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="airport-preview-process" :disabled="editing === null" @click="previewProcess">
+          预览处理
+        </button>
+        <span class="sf-field__hint">{{ editing === null ? '保存机场后可预览处理结果' : '按当前选择的管线预览该机场的节点' }}</span>
+      </div>
+      <SfSwitch v-model="draft.enabled" label="启用" data-testid="airport-enabled-new" />
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" @click="dialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="airport-save" @click="submit">保存</button>
+      </template>
+    </SfDialog>
 
-    <v-dialog v-model="confirmOpen" max-width="420">
-      <v-card>
-        <v-card-title>确认删除</v-card-title>
-        <v-card-text>
-          删除机场会把它从所有方案的规则源绑定里解绑；规则源作为历史快照保留在「规则源」页，可稍后删除。已创建的规则/分组不会自动删除。确定删除 {{ pendingDelete === null ? '' : pendingDelete.name }} 吗？
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" @click="confirmOpen = false">取消</v-btn>
-          <v-btn color="error" @click="doDelete">删除</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 更新规则源 -->
+    <SfDialog :open="importDialog" label="IMPORT RULES" :title="'更新规则源' + (importTarget === null ? '' : '：' + importTarget.name)" @close="importDialog = false">
+      <label class="ap-check-row" data-testid="import-rules-create-groups">
+        <input v-model="importCreateGroups" type="checkbox" class="sf-checkbox" />
+        <span>自动创建缺失的目标分组</span>
+      </label>
+      <SfNote tone="info" data-testid="import-rules-hint">
+        系统会从机场订阅提取规则并保存为规则源；在方案中绑定后生效。
+      </SfNote>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="import-rules-cancel" @click="importDialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="import-rules-confirm" @click="confirmImportRules">确认更新</button>
+      </template>
+    </SfDialog>
 
-    <v-dialog v-model="importDialog" max-width="480">
-      <v-card>
-        <v-card-title>更新规则源{{ importTarget === null ? '' : '：' + importTarget.name }}</v-card-title>
-        <v-card-text>
-          <v-checkbox v-model="importCreateGroups" label="自动创建缺失的目标分组"
-            data-testid="import-rules-create-groups" density="compact"></v-checkbox>
-          <div class="text-medium-emphasis" data-testid="import-rules-hint">
-            系统会从机场订阅提取规则并保存为规则源；在方案中绑定后生效。
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" data-testid="import-rules-cancel" @click="importDialog = false">取消</v-btn>
-          <v-btn color="primary" data-testid="import-rules-confirm" @click="confirmImportRules">确认更新</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <NodePreviewDialog
-      v-model="previewOpen"
+    <SfNodePreview
+      :open="previewOpen"
       title="机场处理预览"
       :loading="previewLoading"
       :error="previewError"
       :result="previewResult"
+      @close="previewOpen = false"
     />
   </div>
 </template>
 
-
 <style scoped>
-/* 可用性检测结果：摘要 + 条目列表，避免裸文本堆叠 */
-.check-panel {
-  margin-top: 16px;
-  border: 1px solid var(--sf-border);
-  border-radius: 10px;
-  background: var(--sf-surface);
-  box-shadow: var(--sf-shadow);
-  overflow: hidden;
+.ap-spin {
+  animation: ap-rotate 0.9s linear infinite;
 }
-.check-panel__head {
+
+@keyframes ap-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ap-bar {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--sf-border);
-  background: var(--sf-surface-raised);
+  margin-bottom: 10px;
 }
-.check-panel__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--sf-text);
-}
-.check-panel__time {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--sf-text-muted);
-}
-.check-panel__stats {
-  display: flex;
-  flex-wrap: wrap;
+
+.ap-size {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
 }
-.check-stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 9px;
-  border: 1px solid var(--sf-border);
-  border-radius: 999px;
-  background: var(--sf-surface);
-  color: var(--sf-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-.check-stat--ok {
-  color: var(--sf-ok);
-}
-.check-stat--fail {
-  color: var(--sf-danger);
-}
-.check-stat__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: 0 0 auto;
-}
-.check-list {
-  display: flex;
-  flex-direction: column;
-}
-.check-item {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--sf-border);
-}
-.check-item:last-child {
-  border-bottom: 0;
-}
-.check-item--ok {
-  border-left: 3px solid var(--sf-ok);
-}
-.check-item--fail {
-  border-left: 3px solid var(--sf-danger);
-}
-.check-item__line {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  min-width: 0;
-}
-.check-item__status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 54px;
-  font-size: 12px;
-  font-weight: 600;
-}
-.check-item--ok .check-item__status {
-  color: var(--sf-ok);
-}
-.check-item--fail .check-item__status {
-  color: var(--sf-danger);
-}
-.check-item__name {
-  flex: 1 1 180px;
-  min-width: 0;
-  color: var(--sf-text);
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-.check-item__meta {
-  color: var(--sf-text-muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.check-item__error {
-  display: -webkit-box;
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--sf-danger);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+
+.ap-size__select {
+  height: 28px;
+  font-size: 12.5px;
+  padding: 0 26px 0 8px;
 }
 
-.airports-table-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-.airports-page-size {
-  max-width: 132px;
-}
-.airports-table :deep(.v-data-table-footer__items-per-page) {
-  display: none;
-}
-.airports-table {
-  border: 1px solid var(--sf-border);
-  border-radius: var(--sf-radius);
-}
-.airports-table :deep(thead th) {
-  background: var(--sf-surface-raised);
-  color: var(--sf-text-muted);
-  font-size: 12px;
+.ap-name {
   font-weight: 600;
-  position: sticky;
-  top: 0;
-}
-.airport-name {
-  font-weight: 500;
   white-space: nowrap;
 }
-.airport-pipeline {
+
+.ap-pipeline {
   margin-top: 2px;
-  color: var(--sf-text-muted);
-  font-size: 12px;
+  color: var(--sf-text-faint);
+  font-size: 11.5px;
   white-space: nowrap;
 }
-.airport-mono {
-  font-family: var(--sf-font-mono);
-  font-variant-numeric: tabular-nums;
-}
-.airport-truncate {
+
+.ap-url {
   display: inline-block;
-  /* W6B：380px 的内联块会把整列下界顶到 404px，9 列在 1600px 下放不下；
-     收到 200px 后 URL 列 ≈224px，truncate + title 行为不变。 */
-  max-width: 200px;
+  max-width: 210px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
+  font-size: 11.5px;
+  color: var(--sf-text-muted);
 }
-.airport-num {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  display: block;
-}
-/* W6B：操作列单行——flex 一行 + 8px 间距，靠右（表头 align='end'） */
-.airport-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-}
-@media (max-width: 1200px) {
-  .airports-table :deep(th:nth-child(2)),
-  .airports-table :deep(td:nth-child(2)) {
-    display: none;
-  }
-}
-.airports-table :deep(.text-end),
-.airports-table :deep(.text-right) {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-/* W7A：流量列 8px 圆点 + 文字——替代 tonal chip，用户点名「启用配色完全不可见」 */
-.airport-traffic {
+
+.ap-traffic {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 1px;
+  gap: 4px;
 }
-.airport-expire {
-  color: var(--sf-text-muted);
+
+.ap-meter {
+  width: 110px;
+}
+
+.ap-expire {
+  color: var(--sf-text-faint);
   font-size: 11px;
   white-space: nowrap;
 }
-.airport-status-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-.airport-status-time {
-  color: var(--sf-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-}
-.airport-traffic-err {
+
+.ap-traffic-err {
   color: var(--sf-danger);
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: help;
+  font-size: 11px;
 }
-/* W7A：状态列异常文案用 --sf-danger，色点走全局 .sf-status__dot--danger */
-.airport-status-err {
+
+.ap-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.ap-status-time {
+  color: var(--sf-text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ap-col-url {
+  min-width: 160px;
+}
+
+@media (max-width: 1200px) {
+  .ap-col-url {
+    display: none;
+  }
+}
+
+.ap-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.ap-import-line {
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.ap-check-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.ap-check-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 10px 18px;
+  border-bottom: 1px solid oklch(from var(--sf-border) l c h / 0.55);
+}
+
+.ap-check-item:last-child {
+  border-bottom: 0;
+}
+
+.ap-check-item__status {
+  min-width: 3.5em;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ap-check-item__name {
+  flex: 1 1 180px;
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.ap-check-item__meta {
+  color: var(--sf-text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ap-check-item__error {
+  flex-basis: 100%;
   color: var(--sf-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.ap-dialog-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ap-check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  font-size: 13.5px;
 }
 </style>

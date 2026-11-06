@@ -3,13 +3,16 @@ import { computed, onMounted, ref } from 'vue'
 import { endpoints, subscribeUrl, type Profile, type SubToken, type TrafficStrategy, type TrafficUsage, type TrafficRefreshResponse } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
-import { pageHelp } from '../content/help'
+import { confirmAction } from '../composables/useConfirm'
 import { copyText } from '../utils/clipboard'
-import PageHeader from '../components/PageHeader.vue'
-import InfoTip from '../components/InfoTip.vue'
+import SfPageHead from '../components/ui/SfPageHead.vue'
+import SfField from '../components/ui/SfField.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
+import SfNote from '../components/ui/SfNote.vue'
+import SfEmpty from '../components/ui/SfEmpty.vue'
+import SfInfoTip from '../components/ui/SfInfoTip.vue'
 import { formatBytes, formatExpire } from '../format'
-
-const help = pageHelp('subscriptions')
+import { IconPlus, IconCopy, IconPencil, IconTrash, IconRefresh } from '@tabler/icons-vue'
 
 // 方案（Profile）列表：令牌可以绑定方案，绑定后该订阅只使用该方案的规则与分组。
 // 拉取失败降级为「只有未分配」，不阻塞令牌列表本身。
@@ -33,30 +36,24 @@ const profileOptions = computed(() => [
 const tokens = ref<SubToken[]>([])
 const selectedToken = ref('')
 const origin = ref(window.location.origin)
-const copied = ref(false)
 const loadingTokens = ref(false)
 const errorTokens = ref('')
 
 const selected = computed(() => tokens.value.find((t) => t.token === selectedToken.value) ?? null)
 
-const resource = {
-  list: async () => {
-    loadingTokens.value = true
-    errorTokens.value = ''
-    try {
-      const r = await endpoints.listTokens()
-      tokens.value = r
-      return r as any[]
-    } catch (err) {
-      errorTokens.value = errorMessage(err)
-      return []
-    } finally {
-      loadingTokens.value = false
+async function loadTokens(): Promise<void> {
+  loadingTokens.value = true
+  errorTokens.value = ''
+  try {
+    tokens.value = await endpoints.listTokens()
+    if (selectedToken.value === '' && tokens.value.length > 0) {
+      selectedToken.value = tokens.value[0].token
     }
-  },
-  create: endpoints.createToken as (item: any) => Promise<any>,
-  update: async (item: any) => item,
-  remove: async (item: any) => endpoints.deleteToken(String(item.token)),
+  } catch (err) {
+    errorTokens.value = errorMessage(err)
+  } finally {
+    loadingTokens.value = false
+  }
 }
 
 // token dialog
@@ -104,16 +101,23 @@ async function saveToken(): Promise<void> {
       })
     }
     tokenDialog.value = false
-    await resource.list()
+    await loadTokens()
     notify('已保存', 'ok')
   } catch (err) {
     notify(errorMessage(err), 'error')
   }
 }
 async function deleteToken(t: SubToken): Promise<void> {
+  const ok = await confirmAction({
+    title: '确认删除令牌？',
+    body: '使用该令牌的订阅地址会立即失效；客户端需要换成新地址。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await endpoints.deleteToken(t.token)
-    await resource.list()
+    await loadTokens()
     if (selectedToken.value === t.token) selectedToken.value = ''
     notify('已删除', 'ok')
   } catch (err) {
@@ -129,8 +133,7 @@ function maskToken(tok: string): string {
 async function copyUrl(): Promise<void> {
   if (selected.value === null) return
   const ok = await copyText(subscribeUrl(origin.value, selected.value.token))
-  copied.value = ok
-  notify(ok ? '已复制' : '复制失败', ok ? 'ok' : 'error')
+  notify(ok ? '已复制订阅地址' : '复制失败', ok ? 'ok' : 'error')
 }
 
 // ---------- Block 3: traffic strategy ----------
@@ -262,280 +265,349 @@ async function refreshAll(): Promise<void> {
 }
 
 onMounted(() => {
-  void resource.list()
+  void loadTokens()
   void loadStrategy()
   void loadProfiles()
 })
 </script>
 
 <template>
-  <PageHeader title="订阅" :subtitle="help.oneLiner" help-key="subscriptions" />
+  <div>
+    <SfPageHead title="订阅" desc="管理订阅令牌与流量余额聚合策略。">
+      <template #actions>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="create-token-btn" @click="openCreateToken">
+          <IconPlus :size="15" :stroke-width="2" />
+          新建令牌
+        </button>
+      </template>
+    </SfPageHead>
 
-  <!-- Block 1: subscription URL -->
-  <v-card class="pa-4 mb-4" data-testid="block-url">
-    <v-card-title>订阅地址</v-card-title>
-    <v-card-text>
-      <p class="text-body-2 mb-2">订阅地址是客户端填写的 URL；令牌是地址中的访问凭据。同一地址可以长期重复使用。</p>
-      <v-select
-        v-model="selectedToken"
-        :items="tokens.map((t) => ({ title: t.name || t.token, value: t.token }))"
-        label="选择令牌"
-        hint="选择用于生成订阅地址的令牌"
-        persistent-hint
-        data-testid="token-select"
-      />
-      <div v-if="selected !== null" data-testid="url-preview">
-        <code data-testid="subscription-url-code">{{ subscribeUrl(origin, selected.token) }}</code>
-        <v-text-field
-          :model-value="subscribeUrl(origin, selected.token)"
-          readonly
-          label="订阅 URL"
-          hint="只读预览"
-          persistent-hint
-          data-testid="subscription-url"
-        />
-        <v-btn data-testid="copy-url-btn" variant="tonal" @click="copyUrl">复制</v-btn>
+    <!-- 订阅地址 -->
+    <section class="sf-panel sf-panel--ticks sf-rise sf-d1" data-testid="block-url" style="margin-bottom: 16px">
+      <div class="sf-panel__head">
+        <span class="sf-label-mono">SUBSCRIPTION URL / 订阅地址</span>
       </div>
-      <div v-else data-testid="no-token-empty" class="text-medium-emphasis mt-2">
-        暂无订阅令牌。请先新建令牌，再复制生成的订阅地址。
+      <div class="sf-panel__body">
+        <p class="sf-field__hint" style="margin: 0 0 14px">
+          订阅地址是客户端填写的 URL；令牌是地址中的访问凭据。同一地址可以长期重复使用。
+        </p>
+        <SfField label="选择令牌" hint="选择用于生成订阅地址的令牌" style="max-width: 360px">
+          <span class="sf-select-wrap">
+            <select v-model="selectedToken" class="sf-select" data-testid="token-select">
+              <option value="" disabled>选择令牌…</option>
+              <option v-for="t in tokens" :key="t.token" :value="t.token">{{ t.name || t.token }}</option>
+            </select>
+          </span>
+        </SfField>
+        <div v-if="selected !== null" data-testid="url-preview" class="sb-urlbox">
+          <code class="sb-urlbox__url sf-mono" data-testid="subscription-url-code">{{ subscribeUrl(origin, selected.token) }}</code>
+          <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" data-testid="copy-url-btn" @click="copyUrl">
+            <IconCopy :size="14" :stroke-width="1.8" />
+            复制地址
+          </button>
+        </div>
+        <div v-else data-testid="no-token-empty" class="sf-faint" style="font-size: 13px">
+          暂无订阅令牌。请先新建令牌，再复制生成的订阅地址。
+        </div>
+        <SfNote tone="warn" data-testid="risk-hint" style="margin-top: 14px">
+          持有该地址即可获取节点配置。如令牌泄露，请删除并重新创建。
+        </SfNote>
       </div>
-      <div data-testid="risk-hint" class="text-warning mt-3">
-        持有该地址即可获取节点配置。如令牌泄露，请删除并重新创建。
-      </div>
-    </v-card-text>
-  </v-card>
+    </section>
 
-  <!-- Block 2: tokens -->
-  <v-card class="pa-4 mb-4" data-testid="block-tokens">
-    <v-card-title>令牌</v-card-title>
-    <v-card-text>
-      <v-btn data-testid="create-token-btn" variant="tonal" class="mb-3" @click="openCreateToken">新建令牌</v-btn>
-      <table v-if="tokens.length > 0" data-testid="token-table" class="token-table">
-        <colgroup>
-          <col class="token-col-token" />
-          <col class="token-col-name" />
-          <col class="token-col-profile" />
-          <col class="token-col-actions" />
-        </colgroup>
-        <thead>
-          <tr><th>令牌</th><th>名称</th><th>方案</th><th class="token-actions">操作</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="t in tokens" :key="t.token" data-testid="token-row">
-            <td><code class="token-value" :title="t.token">{{ maskToken(t.token) }}</code></td>
-            <td><span class="token-text" :title="t.name">{{ t.name || '—' }}</span></td>
-            <td data-testid="token-profile-name"><span class="token-text" :title="t.profile_name ?? '未绑定方案'">{{ t.profile_name ?? '未绑定方案' }}</span></td>
-            <td class="token-actions">
-              <v-btn size="small" variant="text" data-testid="token-edit" @click="openEditToken(t)">编辑</v-btn>
-              <v-btn size="small" variant="text" color="error" data-testid="token-delete" @click="deleteToken(t)">删除</v-btn>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-if="tokens.length === 0" class="token-empty" data-testid="token-empty">还没有令牌。点击「新建令牌」创建第一个。</div>
-    </v-card-text>
-  </v-card>
+    <!-- 令牌 -->
+    <section class="sf-panel sf-rise sf-d2" data-testid="block-tokens" style="margin-bottom: 16px">
+      <div class="sf-panel__head">
+        <span class="sf-panel__title">令牌</span>
+        <span class="sf-spacer" />
+        <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" @click="loadTokens">
+          <IconRefresh :size="14" :stroke-width="1.8" :class="{ 'sb-spin': loadingTokens }" />
+          刷新
+        </button>
+      </div>
+      <div v-if="tokens.length === 0 && errorTokens === ''" data-testid="token-empty">
+        <SfEmpty title="还没有令牌" desc="点击「新建令牌」创建第一个访问凭据。" />
+      </div>
+      <div v-else-if="errorTokens !== ''" class="sf-field__error" style="padding: 0 18px 14px">{{ errorTokens }}</div>
+      <div v-else class="sf-table-wrap" data-testid="token-table" style="border: none; border-top: 1px solid var(--sf-border); border-radius: 0">
+        <table class="sf-table">
+          <thead>
+            <tr><th>令牌</th><th>名称</th><th>方案</th><th style="text-align: right; width: 110px">操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in tokens" :key="t.token" data-testid="token-row">
+              <td><code class="sb-token" :title="t.token">{{ maskToken(t.token) }}</code></td>
+              <td>{{ t.name || '—' }}</td>
+              <td data-testid="token-profile-name"><span :class="{ 'sf-faint': t.profile_name === undefined || t.profile_name === '' }">{{ t.profile_name ?? '未绑定方案' }}</span></td>
+              <td>
+                <span class="sf-table__actions">
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="编辑" data-testid="token-edit" @click="openEditToken(t)">
+                    <IconPencil :size="15" :stroke-width="1.7" />
+                  </button>
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm sf-btn--del" type="button" aria-label="删除" data-testid="token-delete" @click="deleteToken(t)">
+                    <IconTrash :size="15" :stroke-width="1.7" />
+                  </button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-  <v-dialog v-model="tokenDialog" max-width="480">
-    <v-card>
-      <v-card-title>{{ editingToken ? '编辑令牌' : '新建令牌' }}</v-card-title>
-      <v-card-text>
-        <v-text-field v-model="tokenForm.token" label="令牌" hint="留空由系统生成，或填写唯一值" persistent-hint data-testid="token-field" />
-        <v-text-field v-model="tokenForm.name" label="名称" hint="用于区分用途，例如设备名称" persistent-hint data-testid="name-field" />
-        <v-select
-          v-model="tokenForm.profile_id"
-          :items="profileOptions"
-          item-title="title"
-          item-value="value"
-          label="方案"
-          persistent-hint
-          data-testid="token-profile"
-        />
-        <div data-testid="token-profile-hint" class="text-caption text-medium-emphasis mb-2">
-          令牌只作为访问凭据；目标格式、模板、管线与节点筛选由绑定的方案决定。
+    <!-- 流量策略 -->
+    <section class="sf-panel sf-rise sf-d3" data-testid="block-strategy" style="margin-bottom: 16px">
+      <div class="sf-panel__head">
+        <span class="sf-panel__title">流量余额聚合策略</span>
+        <span class="sf-spacer" />
+        <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="preview-btn" :disabled="previewing" @click="previewStrategy">
+          {{ previewing ? '试算中…' : '试算' }}
+        </button>
+        <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" data-testid="save-strategy-btn" :disabled="savingStrategy" @click="saveStrategy">
+          {{ savingStrategy ? '保存中…' : '保存策略' }}
+        </button>
+      </div>
+      <div class="sf-panel__body">
+        <div class="sb-strategy">
+          <SfField label="整体预设" hint="选预设会自动填入 4 个字段，仍可手工修改">
+            <span class="sf-select-wrap">
+              <select class="sf-select" data-testid="preset-select" :value="preset" @change="onPresetChange(($event.target as HTMLSelectElement).value)">
+                <option v-for="p in PRESET_VALUES" :key="p" :value="p">{{ p }}</option>
+              </select>
+            </span>
+          </SfField>
+          <SfField label="上传">
+            <span class="sf-select-wrap">
+              <select v-model="upload" class="sf-select" data-testid="upload-field" :disabled="ignoresFields">
+                <option v-for="v in FIELD_VALUES" :key="v" :value="v">{{ v }}</option>
+              </select>
+            </span>
+          </SfField>
+          <SfField label="下载">
+            <span class="sf-select-wrap">
+              <select v-model="download" class="sf-select" data-testid="download-field" :disabled="ignoresFields">
+                <option v-for="v in FIELD_VALUES" :key="v" :value="v">{{ v }}</option>
+              </select>
+            </span>
+          </SfField>
+          <SfField label="总量">
+            <span class="sf-select-wrap">
+              <select v-model="total" class="sf-select" data-testid="total-field" :disabled="ignoresFields">
+                <option v-for="v in FIELD_VALUES" :key="v" :value="v">{{ v }}</option>
+              </select>
+            </span>
+          </SfField>
+          <SfField label="到期">
+            <span class="sf-select-wrap">
+              <select v-model="expire" class="sf-select" data-testid="expire-field" :disabled="ignoresFields">
+                <option v-for="v in FIELD_VALUES" :key="v" :value="v">{{ v }}</option>
+              </select>
+            </span>
+          </SfField>
         </div>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="tokenDialog = false">取消</v-btn>
-        <v-btn color="primary" data-testid="token-save" @click="saveToken">保存</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+        <p class="sb-preset-label sf-mono">{{ PRESET_LABELS[preset] ?? '自定义字段级策略。' }}</p>
+        <SfNote v-if="ignoresFields" tone="warn" data-testid="preset-ignores-fields" style="margin-bottom: 12px">
+          该预设使用单个机场的完整数据，不使用字段级策略。
+        </SfNote>
+        <div class="sf-toolbar" style="margin-bottom: 12px">
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="quick-default" @click="applyQuick('sum/sum/sum/min')">求和</button>
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="quick-strict" @click="applyQuick('min/min/min/min')">最小值</button>
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="quick-optimistic" @click="applyQuick('max/max/max/max')">最大值</button>
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="quick-independent" @click="applyQuick('avg/avg/avg/avg')">平均值</button>
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="quick-hidden" @click="applyQuick('none/none/none/none')">不透传</button>
+        </div>
+        <p class="sf-field__hint" style="margin: 0 0 4px">
+          数值为 0 的机场不参与计算。
+          <SfInfoTip text="未获取到流量信息的机场会被跳过；求和时其额度不会计入。" />
+        </p>
+        <div v-if="previewUsage !== null" data-testid="preview-summary" class="sb-preview">
+          <div class="sb-preview__item">
+            <span class="sb-preview__label">上传</span>
+            <span class="sb-preview__value">{{ formatBytes(previewUsage.upload ?? 0) }}</span>
+          </div>
+          <div class="sb-preview__item">
+            <span class="sb-preview__label">下载</span>
+            <span class="sb-preview__value">{{ formatBytes(previewUsage.download ?? 0) }}</span>
+          </div>
+          <div class="sb-preview__item">
+            <span class="sb-preview__label">总量</span>
+            <span class="sb-preview__value">{{ formatBytes(previewUsage.total ?? 0) }}</span>
+          </div>
+          <div class="sb-preview__item">
+            <span class="sb-preview__label">到期</span>
+            <span class="sb-preview__value">{{ formatExpire(previewUsage.expire ?? 0) }}</span>
+          </div>
+        </div>
+        <p v-if="previewHeader !== ''" class="sf-mono sb-header" data-testid="preview-header">{{ previewHeader }}</p>
+        <p v-if="previewOk === false" data-testid="preview-okfalse" class="sf-field__hint" style="margin: 8px 0 0">
+          当前策略不会写入响应头（可能是「不透传」或还没有机场余额数据）。
+        </p>
+        <SfNote tone="info" data-testid="strategy-risk-hint" style="margin-top: 14px">
+          策略只影响客户端显示的余额，不会改变各机场的真实配额。
+        </SfNote>
+      </div>
+    </section>
 
-  <!-- Block 3: traffic strategy -->
-  <v-card class="pa-4 mb-4" data-testid="block-strategy">
-    <v-card-title>流量余额聚合策略</v-card-title>
-    <v-card-text>
-      <v-select
-        v-model="preset"
-        :items="PRESET_VALUES.map((p) => ({ title: p, value: p }))"
-        label="整体预设"
-        hint="选预设会自动填入 4 个字段，仍可手工修改"
-        persistent-hint
-        data-testid="preset-select"
-        @update:model-value="onPresetChange"
-      />
-      <div class="text-caption text-medium-emphasis mb-2">{{ PRESET_LABELS[preset] }}</div>
-      <div v-if="ignoresFields" data-testid="preset-ignores-fields" class="text-warning mb-2">该预设使用单个机场的完整数据，不使用字段级策略。</div>
-      <div class="d-flex ga-2 flex-wrap">
-        <v-select v-model="upload" :items="FIELD_VALUES" label="上传" hint="上传流量策略" persistent-hint data-testid="upload-field" :disabled="ignoresFields" />
-        <v-select v-model="download" :items="FIELD_VALUES" label="下载" hint="下载流量策略" persistent-hint data-testid="download-field" :disabled="ignoresFields" />
-        <v-select v-model="total" :items="FIELD_VALUES" label="总量" hint="总流量策略" persistent-hint data-testid="total-field" :disabled="ignoresFields" />
-        <v-select v-model="expire" :items="FIELD_VALUES" label="到期" hint="到期时间策略" persistent-hint data-testid="expire-field" :disabled="ignoresFields" />
+    <!-- 刷新全部机场 -->
+    <section class="sf-panel sf-rise sf-d4" data-testid="block-refresh">
+      <div class="sf-panel__head">
+        <span class="sf-panel__title">刷新全部机场</span>
+        <span class="sf-spacer" />
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="refresh-btn" :disabled="refreshLoading" @click="refreshAll">
+          <IconRefresh :size="14" :stroke-width="1.8" :class="{ 'sb-spin': refreshLoading }" />
+          {{ refreshLoading ? '刷新中…' : '立即刷新全部机场' }}
+        </button>
       </div>
-      <div class="d-flex align-center ga-1 mb-2">
-        <span class="text-caption text-medium-emphasis" data-testid="field-zero-note">数值为 0 的机场不参与计算。</span>
-        <InfoTip text="未获取到流量信息的机场会被跳过；求和时其额度不会计入。" label="流量字段说明" />
-      </div>
-      <div class="d-flex ga-2 flex-wrap mb-2">
-        <v-btn size="small" variant="tonal" data-testid="quick-default" @click="applyQuick('sum/sum/sum/min')">求和</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-strict" @click="applyQuick('min/min/min/min')">最小值</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-optimistic" @click="applyQuick('max/max/max/max')">最大值</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-independent" @click="applyQuick('avg/avg/avg/avg')">平均值</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="quick-hidden" @click="applyQuick('none/none/none/none')">不透传</v-btn>
-      </div>
-      <div class="d-flex ga-2">
-        <v-btn data-testid="save-strategy-btn" :loading="savingStrategy" @click="saveStrategy">保存</v-btn>
-        <v-btn data-testid="preview-btn" variant="tonal" :loading="previewing" @click="previewStrategy">试算</v-btn>
-      </div>
-      <div v-if="previewUsage !== null" data-testid="preview-summary" class="preview-summary mt-3">
-        <div class="preview-item">
-          <span class="preview-label">上传</span>
-          <span class="preview-value">{{ formatBytes(previewUsage.upload ?? 0) }}</span>
+      <div class="sf-panel__body">
+        <p class="sf-field__hint" style="margin: 0 0 4px">
+          逐个请求机场的订阅地址，更新节点、流量与规则源。刷新失败时保留上一次成功获取的余额。
+        </p>
+        <div v-if="refreshError !== ''" data-testid="refresh-error" class="sf-field__error">{{ refreshError }}</div>
+        <p v-if="refreshResult !== null" data-testid="refresh-summary" class="sf-faint" style="font-size: 12.5px">
+          成功 {{ refreshResult.ok }} 个，失败 {{ refreshResult.fail }} 个
+        </p>
+        <div v-if="refreshResult !== null && (refreshResult.results?.length ?? 0) > 0" class="sf-table-wrap" data-testid="refresh-table">
+          <table class="sf-table">
+            <thead><tr><th>名称</th><th style="width: 70px">成功</th><th style="text-align: right; width: 80px">节点数</th><th>错误</th></tr></thead>
+            <tbody>
+              <tr v-for="r in refreshResult?.results ?? []" :key="r.airport_id" data-testid="refresh-row">
+                <td>{{ r.name }}</td>
+                <td>
+                  <span class="sf-status">
+                    <span class="sf-led" :class="r.ok ? 'sf-led--ok' : 'sf-led--danger'" />
+                    <span>{{ r.ok ? '是' : '否' }}</span>
+                  </span>
+                </td>
+                <td class="sf-table__num" style="text-align: right">{{ r.node_count }}</td>
+                <td><span class="sf-faint" style="font-size: 12px">{{ r.err }}</span></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div class="preview-item">
-          <span class="preview-label">下载</span>
-          <span class="preview-value">{{ formatBytes(previewUsage.download ?? 0) }}</span>
-        </div>
-        <div class="preview-item">
-          <span class="preview-label">总量</span>
-          <span class="preview-value">{{ formatBytes(previewUsage.total ?? 0) }}</span>
-        </div>
-        <div class="preview-item">
-          <span class="preview-label">到期</span>
-          <span class="preview-value">{{ formatExpire(previewUsage.expire ?? 0) }}</span>
-        </div>
+        <p v-if="refreshResult !== null && (refreshResult.results?.length ?? 0) === 0" data-testid="refresh-empty" class="sf-faint" style="font-size: 12.5px">
+          还没有刷新结果。
+        </p>
       </div>
-      <div v-if="previewOk === false" data-testid="preview-okfalse" class="text-medium-emphasis mt-1">
-        当前策略不会写入响应头（可能是「不透传」或还没有机场余额数据）。
-      </div>
-      <div data-testid="strategy-risk-hint" class="text-warning mt-3">
-        策略只影响客户端显示的余额，不会改变各机场的真实配额。
-      </div>
-    </v-card-text>
-  </v-card>
+    </section>
 
-  <!-- Block 4: refresh -->
-  <v-card class="pa-4 mb-4" data-testid="block-refresh">
-    <v-card-title>刷新全部机场</v-card-title>
-    <v-card-text>
-      <p class="text-body-2 mb-2">逐个请求机场的订阅地址，更新节点、流量与规则源。刷新失败时保留上一次成功获取的余额。</p>
-      <v-btn data-testid="refresh-btn" variant="tonal" :loading="refreshLoading" @click="refreshAll">立即刷新全部机场</v-btn>
-      <div v-if="refreshError !== ''" data-testid="refresh-error" class="text-error mt-2">{{ refreshError }}</div>
-      <div v-if="refreshResult !== null" data-testid="refresh-summary" class="mt-2">
-        成功 {{ refreshResult.ok }} 个，失败 {{ refreshResult.fail }} 个
-      </div>
-      <table v-if="refreshResult !== null" data-testid="refresh-table" class="w-100 mt-2">
-        <thead><tr><th>名称</th><th>成功</th><th>节点数</th><th>错误</th></tr></thead>
-        <tbody>
-          <tr v-for="r in (refreshResult?.results ?? [])" :key="r.airport_id" data-testid="refresh-row">
-            <td>{{ r.name }}</td>
-            <td>{{ r.ok ? '是' : '否' }}</td>
-            <td>{{ r.node_count }}</td>
-            <td data-testid="refresh-error">{{ r.err }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-if="refreshResult !== null && (refreshResult.results?.length ?? 0) === 0" data-testid="refresh-empty" class="text-medium-emphasis mt-2">
-        还没有刷新结果。
-      </div>
-    </v-card-text>
-  </v-card>
+    <!-- 令牌编辑 -->
+    <SfDialog :open="tokenDialog" :label="editingToken ? 'EDIT TOKEN' : 'CREATE TOKEN'" :title="editingToken ? '编辑令牌' : '新建令牌'" @close="tokenDialog = false">
+      <SfField hint="留空由系统生成，或填写唯一值" label="令牌">
+        <input v-model="tokenForm.token" class="sf-input sf-input--mono" data-testid="token-field" :disabled="editingToken !== null" spellcheck="false" />
+      </SfField>
+      <SfField hint="用于区分用途，例如设备名称" label="名称">
+        <input v-model="tokenForm.name" class="sf-input" data-testid="name-field" spellcheck="false" />
+      </SfField>
+      <SfField label="方案">
+        <span class="sf-select-wrap">
+          <select v-model="tokenForm.profile_id" class="sf-select" data-testid="token-profile">
+            <option v-for="opt in profileOptions" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+          </select>
+        </span>
+      </SfField>
+      <SfNote tone="info" data-testid="token-profile-hint">
+        令牌只作为访问凭据；目标格式、模板、管线与节点筛选由绑定的方案决定。
+      </SfNote>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" @click="tokenDialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="token-save" @click="saveToken">保存</button>
+      </template>
+    </SfDialog>
+  </div>
 </template>
+
 <style scoped>
-.preview-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.sb-spin {
+  animation: sb-rotate 0.9s linear infinite;
 }
-@media (min-width: 960px) {
-  .preview-summary {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+
+@keyframes sb-rotate {
+  to {
+    transform: rotate(360deg);
   }
 }
-.preview-item {
+
+.sb-urlbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--sf-border-strong);
+  border-radius: var(--sf-radius);
+  background: var(--sf-bg-deep);
+  flex-wrap: wrap;
+}
+
+.sb-urlbox__url {
+  flex: 1;
+  min-width: 200px;
+  font-size: 12.5px;
+  color: var(--sf-text);
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.sb-token {
+  font-family: var(--sf-font-mono);
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+
+.sb-strategy {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sb-preset-label {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  color: var(--sf-text-faint);
+  line-height: 1.6;
+}
+
+.sb-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  background: var(--sf-border);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  overflow: hidden;
+  margin-top: 12px;
+}
+
+.sb-preview__item {
+  background: var(--sf-surface-dim);
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--sf-border);
-  border-radius: 6px;
-  background: var(--sf-surface-raised);
 }
-.preview-label {
-  color: var(--sf-text-muted);
-  font-size: 12px;
+
+.sb-preview__label {
+  font: 500 10px/1.2 var(--sf-font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sf-text-faint);
 }
-.preview-value {
-  color: var(--sf-text);
-  font-weight: 600;
+
+.sb-preview__value {
+  font: 600 15px/1.3 var(--sf-font-display);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
-.token-table {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-}
-.token-table th,
-.token-table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--sf-border);
-  text-align: left;
-  vertical-align: middle;
-}
-.token-table th {
-  background: var(--sf-surface-raised);
+
+.sb-header {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius-sm);
+  background: var(--sf-bg-deep);
+  font-size: 11px;
   color: var(--sf-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-.token-table tbody tr:last-child td {
-  border-bottom: 0;
-}
-.token-table tbody tr:hover {
-  background: var(--sf-surface-raised);
-}
-.token-col-token { width: 24%; }
-.token-col-name { width: 20%; }
-.token-col-profile { width: auto; }
-.token-col-actions { width: 128px; }
-.token-value {
-  display: block;
-  overflow: hidden;
-  color: var(--sf-text);
-  font-family: var(--sf-font-mono);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.token-text {
-  display: block;
-  overflow: hidden;
-  color: var(--sf-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.token-actions {
-  text-align: right !important;
-  white-space: nowrap;
-}
-.token-empty {
-  padding: 18px 12px;
-  border: 1px dashed var(--sf-border);
-  border-radius: 8px;
-  color: var(--sf-text-muted);
-  text-align: center;
+  overflow-wrap: anywhere;
 }
 </style>

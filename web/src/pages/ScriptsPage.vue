@@ -2,13 +2,26 @@
 import { onMounted, ref } from 'vue'
 import { endpoints, type Script, type ScriptTestResult } from '../api/endpoints'
 import { errorDetail, errorMessage } from '../composables/useAsync'
-import { pageHelp, fieldHelp } from '../content/help'
-import { SCRIPTS_HELP } from '../content/help'
+import { fieldHelp, SCRIPTS_HELP } from '../content/help'
 import { formatDuration } from '../format'
-import PageHeader from '../components/PageHeader.vue'
-import AsyncSection from '../components/AsyncSection.vue'
-
-const help = pageHelp('scripts')
+import { notify } from '../composables/useNotify'
+import { confirmAction } from '../composables/useConfirm'
+import SfPageHead from '../components/ui/SfPageHead.vue'
+import SfField from '../components/ui/SfField.vue'
+import SfSwitch from '../components/ui/SfSwitch.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
+import SfNote from '../components/ui/SfNote.vue'
+import SfEmpty from '../components/ui/SfEmpty.vue'
+import {
+  IconBook2,
+  IconPlus,
+  IconRefresh,
+  IconPencil,
+  IconPlayerPlay,
+  IconTrash,
+  IconAlertTriangle,
+  IconCode,
+} from '@tabler/icons-vue'
 
 const loading = ref(false)
 const error = ref('')
@@ -27,10 +40,6 @@ const saving = ref(false)
 const saveError = ref('')
 // saveErrorDetail 存保存失败时的原始报文，供折叠详情展示（D-22）。
 const saveErrorDetail = ref('')
-
-// D-21：删除是破坏性操作，先记住待删脚本并弹确认框，确认后才真正删。
-const confirmOpen = ref(false)
-const pendingDelete = ref<Script | null>(null)
 
 const testDialog = ref(false)
 const testCode = ref('')
@@ -88,6 +97,7 @@ async function save(): Promise<void> {
       await endpoints.updateScript(editing.value.id, { name: formName.value, kind: formKind.value, code: formCode.value, enabled: formEnabled.value })
     }
     dialog.value = false
+    notify(editing.value === null ? '已新增脚本' : '已更新脚本')
     await load()
   } catch (err) {
     saveError.value = errorMessage(err)
@@ -97,19 +107,18 @@ async function save(): Promise<void> {
   }
 }
 
-// askDelete 不直接删，把目标记下来并弹确认框，防止误点（D-21）。
-function askDelete(s: Script): void {
-  pendingDelete.value = s
-  confirmOpen.value = true
-}
-
-async function doDelete(): Promise<void> {
-  const target = pendingDelete.value
-  if (target === null) return
+// 删除是破坏性操作，先确认再删。
+async function askDelete(s: Script): Promise<void> {
+  const ok = await confirmAction({
+    title: '确认删除脚本「' + s.name + '」？',
+    body: '删除脚本后无法恢复，引用它的管线步骤会失效。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
-    await endpoints.deleteScript(target.id)
-    confirmOpen.value = false
-    pendingDelete.value = null
+    await endpoints.deleteScript(s.id)
+    notify('已删除')
     await load()
   } catch (err) {
     error.value = errorMessage(err)
@@ -132,16 +141,12 @@ function toggleExamples(): void {
   exampleMenu.value = !exampleMenu.value
 }
 
-function onInsertExample(ex: { name: string; kind: 'filter' | 'operate'; code: string }): void {
-  formKind.value = ex.kind
-  formCode.value = ex.code
-  exampleMenu.value = false
-}
-
 function onExampleSelect(name: string): void {
   const ex = SCRIPTS_HELP.examples.find((e) => e.name === name)
   if (ex) {
-    onInsertExample(ex)
+    formKind.value = ex.kind
+    formCode.value = ex.code
+    exampleMenu.value = false
   }
 }
 
@@ -181,462 +186,488 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="scripts">
-    <template #actions>
-      <v-btn variant="tonal" prepend-icon="mdi-book-open-variant" data-testid="scripts-reference" @click="referenceOpen = true">脚本参考</v-btn>
-      <v-btn color="primary" prepend-icon="mdi-plus" data-testid="new-script" @click="openCreate">新建脚本</v-btn>
-      <v-btn variant="tonal" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
-    </template>
-  </PageHeader>
+  <div>
+    <SfPageHead>
+      <template #actions>
+        <button class="sf-btn sf-btn--ghost" type="button" data-testid="scripts-reference" @click="referenceOpen = true">
+          <IconBook2 :size="15" :stroke-width="1.7" />
+          脚本参考
+        </button>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="new-script" @click="openCreate">
+          <IconPlus :size="15" :stroke-width="2" />
+          新建脚本
+        </button>
+        <button class="sf-btn sf-btn--ghost" type="button" :disabled="loading" @click="load">
+          <IconRefresh :size="15" :stroke-width="1.8" :class="{ 'sc-spin': loading }" />
+          刷新
+        </button>
+      </template>
+    </SfPageHead>
 
-  <div class="script-note">
-    <v-icon size="18" icon="mdi-shield-check-outline" />
-    <span>脚本在服务端沙箱中执行，请只运行可信代码。</span>
-  </div>
+    <SfNote tone="info" class="sf-rise sf-d1" style="margin-bottom: 16px">
+      脚本在服务端沙箱中执行，请只运行可信代码。
+    </SfNote>
 
-  <v-dialog v-model="referenceOpen" max-width="760" scrollable data-testid="scripts-reference-dialog">
-    <v-card>
-      <v-card-title>脚本参考</v-card-title>
-      <v-card-text>
-        <p class="text-body-2 mb-3">{{ SCRIPTS_HELP.intro }}</p>
-        <div class="text-subtitle-2 mb-1">运行环境</div>
-        <ul class="help-list mb-4" data-testid="scripts-sandbox">
+    <div v-if="error !== ''" class="sf-note sf-note--danger sf-rise" style="margin-bottom: 16px">
+      <IconAlertTriangle :size="16" :stroke-width="1.8" class="sf-note__icon" />
+      <span class="sf-note__body">{{ error }}</span>
+      <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" @click="load">重试</button>
+    </div>
+
+    <div v-if="scripts.length === 0 && !loading && error === ''" class="sf-panel">
+      <SfEmpty title="暂无脚本" desc="脚本用于管线中的 filter.script / op.script 步骤；可以从「脚本参考」里的示例开始。">
+        <template #icon><IconCode :size="30" :stroke-width="1.4" /></template>
+        <template #action>
+          <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" @click="openCreate">
+            <IconPlus :size="14" :stroke-width="2" />
+            新建脚本
+          </button>
+        </template>
+      </SfEmpty>
+    </div>
+
+    <div v-else class="sf-table-wrap sf-rise sf-d1" data-testid="scripts-list">
+      <table class="sf-table">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>类型</th>
+            <th>状态</th>
+            <th style="text-align: right">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in scripts" :key="s.id" data-testid="script-row">
+            <td><span class="sc-name">{{ s.name }}</span></td>
+            <td><span class="sf-faint" style="font-size: 13px">{{ kindText(s.kind) }}</span></td>
+            <td>
+              <span class="sf-status">
+                <span class="sf-led" :class="s.enabled ? 'sf-led--ok' : 'sf-led--idle'" />
+                <span>{{ s.enabled ? '启用' : '停用' }}</span>
+              </span>
+            </td>
+            <td>
+              <span class="sf-table__actions">
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="script-test" @click="openTest(s)">
+                  <IconPlayerPlay :size="14" :stroke-width="1.8" />
+                  试运行
+                </button>
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="script-edit" @click="openEdit(s)">
+                  <IconPencil :size="14" :stroke-width="1.7" />
+                  编辑
+                </button>
+                <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm sf-btn--del" type="button" aria-label="删除" data-testid="script-delete" @click="askDelete(s)">
+                  <IconTrash :size="15" :stroke-width="1.7" />
+                </button>
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 编辑脚本 -->
+    <SfDialog :open="dialog" :label="editing === null ? 'CREATE SCRIPT' : 'EDIT SCRIPT'" :title="editing === null ? '新建脚本' : '编辑脚本'" wide @close="dialog = false">
+      <div class="sc-duo">
+        <SfField :hint="fieldHelp('script.name')?.hint ?? ''">
+          <template #label><span class="sf-field__label">名称</span></template>
+          <input v-model="formName" class="sf-input" data-testid="field-hint" spellcheck="false" />
+        </SfField>
+        <SfField label="类型">
+          <span class="sf-select-wrap">
+            <select v-model="formKind" class="sf-select">
+              <option value="filter">过滤脚本</option>
+              <option value="operate">改写脚本</option>
+            </select>
+          </span>
+        </SfField>
+      </div>
+      <SfNote tone="info" class="sc-kind-hint">
+        {{ SCRIPTS_HELP.returnRules.find((r) => r.kind === formKind)?.body }}：{{ SCRIPTS_HELP.returnRules.find((r) => r.kind === formKind)?.ret }}
+      </SfNote>
+
+      <SfField hint="只提供 node 变量，单次执行最长 5 秒。">
+        <template #label><span class="sf-field__label">脚本代码</span></template>
+        <textarea v-model="formCode" class="sf-textarea sc-code" rows="10" data-testid="script-code" spellcheck="false"></textarea>
+      </SfField>
+
+      <div class="sc-example-bar">
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="example-insert" @click="toggleExamples">
+          <IconCode :size="14" :stroke-width="1.8" />
+          插入示例
+        </button>
+        <span class="sf-field__hint">选择一个示例会替换当前代码和类型</span>
+      </div>
+      <div v-if="exampleMenu" class="sc-examples" data-testid="example-menu">
+        <button
+          v-for="ex in SCRIPTS_HELP.examples"
+          :key="ex.name"
+          type="button"
+          class="sc-example"
+          data-testid="example-item"
+          @click="onExampleSelect(ex.name)"
+        >
+          <span class="sc-example__head">
+            <span class="sc-example__name">{{ ex.name }}</span>
+            <span class="sf-badge" :class="ex.kind === 'filter' ? 'sf-badge--info' : 'sf-badge--accent'">{{ ex.kind === 'filter' ? '过滤' : '改写' }}</span>
+          </span>
+          <span class="sc-example__why">{{ ex.why }}</span>
+          <span v-if="ex.caution" data-testid="example-caution" class="sc-example__caution">{{ ex.caution }}</span>
+        </button>
+      </div>
+
+      <SfSwitch v-model="formEnabled" label="启用此脚本" />
+
+      <div v-if="saveError !== ''" class="sf-field__error" data-testid="script-save-error">{{ saveError }}</div>
+      <details v-if="saveErrorDetail !== ''" data-testid="script-save-error-detail" class="sc-detail">
+        <summary>查看错误详情</summary>
+        <pre>{{ saveErrorDetail }}</pre>
+      </details>
+
+      <template #foot>
+        <span class="sf-spacer" />
+        <button class="sf-btn sf-btn--subtle" type="button" @click="dialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存脚本' }}</button>
+      </template>
+    </SfDialog>
+
+    <!-- 试运行 -->
+    <SfDialog :open="testDialog" label="DRY RUN" title="试运行脚本" wide @close="testDialog = false">
+      <div data-testid="scripts-test">
+        <div class="sc-duo">
+          <SfField label="类型">
+            <span class="sf-select-wrap">
+              <select v-model="testKind" class="sf-select">
+                <option value="filter">过滤脚本</option>
+                <option value="operate">改写脚本</option>
+              </select>
+            </span>
+          </SfField>
+          <SfField label="超时（毫秒）">
+            <input v-model.number="testTimeout" class="sf-input sf-table__num" type="number" min="0" />
+          </SfField>
+        </div>
+        <SfField label="代码">
+          <textarea v-model="testCode" class="sf-textarea sc-code" rows="8" spellcheck="false"></textarea>
+        </SfField>
+        <SfField label="节点 JSON">
+          <textarea v-model="testNodeText" class="sf-textarea sc-code" rows="4" spellcheck="false"></textarea>
+        </SfField>
+
+        <div class="sc-test-head">
+          <span class="sf-label-mono">RESULT / 运行结果</span>
+          <span class="sf-spacer" />
+          <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" :disabled="testing" @click="runTest">
+            <IconPlayerPlay :size="14" :stroke-width="1.8" />
+            {{ testing ? '运行中…' : '运行' }}
+          </button>
+        </div>
+        <div v-if="testResult === null" class="sf-note" data-testid="test-result-empty">
+          点击「运行」后，这里会显示是否保留节点、字段变化与耗时。
+        </div>
+        <!-- D-23：结果区固定最大高度并可滚动，长结果不再被对话框底边裁切。 -->
+        <div v-else data-testid="test-result" class="sc-result">
+          <div class="sc-result__head">
+            <span class="sf-badge" :class="testResult.error ? 'sf-badge--danger' : 'sf-badge--ok'" data-testid="test-status">
+              {{ testResult.error ? '失败' : '成功' }}
+            </span>
+            <span class="sf-faint" style="font-size: 12px">耗时：{{ formatDuration(testResult.duration_ms) }}</span>
+          </div>
+          <div v-if="testResult.error" data-testid="test-error" class="sf-field__error">{{ testResult.error }}</div>
+          <div v-if="testResult.ok && testKind === 'filter'">
+            <span v-if="testResult.kept === true" data-testid="test-kept" class="sf-badge sf-badge--ok">保留</span>
+            <span v-else data-testid="test-dropped" class="sf-badge">丢弃</span>
+          </div>
+          <div v-if="testResult.ok && testKind === 'operate'">
+            <div class="sf-label-mono" style="margin-bottom: 8px">变更字段</div>
+            <div v-for="(val, key) in testResult.after ?? {}" :key="key" class="sc-change">
+              <code>{{ key }}</code>：{{ JSON.stringify((testResult.before ?? {})[key]) }} → {{ val === null ? '已删除' : JSON.stringify(val) }}
+            </div>
+            <div v-if="Object.keys(testResult.after ?? {}).length === 0" class="sf-faint" style="font-size: 12.5px">本次执行没有修改任何字段。</div>
+          </div>
+        </div>
+      </div>
+      <template #foot>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="test-close" @click="testDialog = false">关闭</button>
+      </template>
+    </SfDialog>
+
+    <!-- 脚本参考 -->
+    <SfDialog :open="referenceOpen" label="REFERENCE" title="脚本参考" wide @close="referenceOpen = false">
+      <p class="sc-ref-intro">{{ SCRIPTS_HELP.intro }}</p>
+      <div class="sc-ref-block">
+        <span class="sf-label-mono">运行环境</span>
+        <ul class="sc-ref-list" data-testid="scripts-sandbox">
           <li v-for="(s, i) in SCRIPTS_HELP.sandbox" :key="i" data-testid="scripts-sandbox-item">{{ s }}</li>
         </ul>
-        <div class="text-subtitle-2 mb-1">可用变量</div>
-        <div data-testid="scripts-variables">
-          <v-table density="compact" class="mb-4 sf-table-rows">
+      </div>
+      <div class="sc-ref-block">
+        <span class="sf-label-mono">可用变量</span>
+        <div class="sf-table-wrap" data-testid="scripts-variables">
+          <table class="sf-table">
             <thead><tr><th>变量</th><th>类型</th><th>可写</th><th>说明</th></tr></thead>
             <tbody>
               <tr v-for="v in SCRIPTS_HELP.variables" :key="v.name" data-testid="scripts-variable-row">
-                <td><code>{{ v.name }}</code></td>
-                <td>{{ v.type }}</td>
+                <td><code class="sf-mono">{{ v.name }}</code></td>
+                <td class="sf-faint">{{ v.type }}</td>
                 <td>{{ v.writable ? '可写' : '只读' }}</td>
-                <td>{{ v.explain }}</td>
+                <td class="sf-muted">{{ v.explain }}</td>
               </tr>
             </tbody>
-          </v-table>
+          </table>
         </div>
-        <div class="text-subtitle-2 mb-1">返回值规则</div>
-        <div data-testid="scripts-return-rules">
-          <div v-for="r in SCRIPTS_HELP.returnRules" :key="r.kind" class="return-card">
-            <div class="return-card__head">
-              <span class="return-card__title">{{ r.kind === 'filter' ? '过滤脚本' : '改写脚本' }}</span>
-              <v-chip size="x-small" variant="tonal">{{ r.body }}</v-chip>
-            </div>
-            <div class="return-row"><span class="return-label">返回值</span><span>{{ r.ret }}</span></div>
-            <div class="return-row"><span class="return-label">生效方式</span><span>{{ r.how }}</span></div>
-            <div class="return-code return-code--ok" data-testid="return-good">正确示例：{{ r.good }}</div>
-            <div class="return-code return-code--bad" data-testid="return-bad">错误示例：{{ r.bad }}</div>
+      </div>
+      <div class="sc-ref-block" data-testid="scripts-return-rules">
+        <span class="sf-label-mono">返回值规则</span>
+        <div v-for="r in SCRIPTS_HELP.returnRules" :key="r.kind" class="sc-return">
+          <div class="sc-return__head">
+            <span class="sc-return__title">{{ r.kind === 'filter' ? '过滤脚本' : '改写脚本' }}</span>
+            <span class="sf-badge sf-badge--accent">{{ r.body }}</span>
           </div>
+          <div class="sc-return__row"><span>返回值</span><span>{{ r.ret }}</span></div>
+          <div class="sc-return__row"><span>生效方式</span><span>{{ r.how }}</span></div>
+          <div class="sc-return__code sc-return__code--ok" data-testid="return-good">正确示例：{{ r.good }}</div>
+          <div class="sc-return__code sc-return__code--bad" data-testid="return-bad">错误示例：{{ r.bad }}</div>
         </div>
-        <div class="text-subtitle-2 mb-1">字段写回</div>
-        <ul class="help-list mb-0" data-testid="scripts-writeback">
+      </div>
+      <div class="sc-ref-block">
+        <span class="sf-label-mono">字段写回</span>
+        <ul class="sc-ref-list" data-testid="scripts-writeback">
           <li v-for="(w, i) in SCRIPTS_HELP.writeback" :key="i">{{ w }}</li>
         </ul>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="scripts-reference-close" @click="referenceOpen = false">关闭</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-  <AsyncSection
-    :loading="loading"
-    :error="error"
-    :error-detail="errorDetailText"
-    :empty="scripts.length === 0 ? (help.emptyState ?? false) : false"
-    :empty-text="'暂无脚本'"
-    @retry="load"
-  >
-    <v-table data-testid="scripts-list" class="scripts-table sf-table-rows">
-      <thead>
-        <tr>
-          <th>名称</th>
-          <th>类型</th>
-          <th>状态</th>
-          <th class="text-right">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="s in scripts" :key="s.id" data-testid="script-row">
-          <td>
-            <div class="script-name">{{ s.name }}</div>
-          </td>
-          <td><span class="script-kind">{{ kindText(s.kind) }}</span></td>
-          <td>
-            <span class="sf-status">
-              <span class="sf-status__dot" :class="s.enabled ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
-              <span>{{ s.enabled ? '启用' : '停用' }}</span>
-            </span>
-          </td>
-          <td class="sf-row-actions">
-            <v-btn size="small" variant="text" data-testid="script-edit" @click="openEdit(s)">编辑</v-btn>
-            <v-btn size="small" variant="text" data-testid="script-test" @click="openTest(s)">试运行</v-btn>
-            <v-btn size="small" variant="text" color="error" data-testid="script-delete" @click="askDelete(s)">删除</v-btn>
-          </td>
-        </tr>
-      </tbody>
-    </v-table>
-  </AsyncSection>
-
-  <!-- D-21：删除前二次确认，对齐机场/管线已有模式。 -->
-  <v-dialog v-model="confirmOpen" max-width="480">
-    <v-card>
-      <v-card-title>确认删除</v-card-title>
-      <v-card-text>
-        删除脚本「{{ pendingDelete?.name ?? '' }}」后无法恢复，确定继续？
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="script-confirm-cancel" @click="confirmOpen = false">取消</v-btn>
-        <v-btn color="error" data-testid="script-confirm-delete" @click="doDelete">删除</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-  <v-dialog v-model="dialog" max-width="760" scrollable>
-    <v-card>
-      <v-card-title>{{ editing === null ? '新建脚本' : '编辑脚本' }}</v-card-title>
-      <v-card-text class="script-dialog__body">
-        <div class="sf-form-section">
-          <div class="sf-form-section__head">
-            <span class="sf-form-section__title">基本信息</span>
-          </div>
-          <div class="sf-form-grid">
-            <v-text-field
-              v-model="formName"
-              label="名称"
-              :hint="fieldHelp('script.name')?.hint"
-              variant="outlined"
-              density="comfortable"
-              persistent-hint
-              data-testid="field-hint"
-            />
-            <v-select
-              v-model="formKind"
-              :items="[{ title: '过滤脚本', value: 'filter' }, { title: '改写脚本', value: 'operate' }]"
-              label="类型"
-              variant="outlined"
-              density="comfortable"
-              hide-details
-            />
-          </div>
-          <div class="script-kind-hint">
-            <v-icon size="16" icon="mdi-information-outline" />
-            <span>{{ SCRIPTS_HELP.returnRules.find((r) => r.kind === formKind)?.body }}：{{ SCRIPTS_HELP.returnRules.find((r) => r.kind === formKind)?.ret }}</span>
-          </div>
-        </div>
-
-        <div class="sf-form-section">
-          <div class="sf-form-section__head">
-            <span class="sf-form-section__title">脚本代码</span>
-            <span class="sf-form-section__caption">只提供 node 变量，单次执行最长 5 秒</span>
-          </div>
-          <v-textarea
-            v-model="formCode"
-            label="代码"
-            rows="10"
-            variant="outlined"
-            density="comfortable"
-            hide-details
-            spellcheck="false"
-            class="code-input"
-            data-testid="script-code"
-          />
-          <div class="example-toolbar">
-            <v-btn data-testid="example-insert" variant="tonal" size="small" prepend-icon="mdi-code-tags" @click="toggleExamples">插入示例</v-btn>
-            <span class="sf-form-section__caption">选择一个示例会替换当前代码和类型</span>
-          </div>
-          <div v-if="exampleMenu" class="example-panel" data-testid="example-menu">
-            <button
-              v-for="ex in SCRIPTS_HELP.examples"
-              :key="ex.name"
-              type="button"
-              class="example-option"
-              data-testid="example-item"
-              @click="onExampleSelect(ex.name)"
-            >
-              <span class="example-option__head">
-                <span class="example-option__name">{{ ex.name }}</span>
-                <v-chip size="x-small" variant="tonal">{{ ex.kind === 'filter' ? '过滤' : '改写' }}</v-chip>
-              </span>
-              <span class="example-option__why">{{ ex.why }}</span>
-              <span v-if="ex.caution" data-testid="example-caution" class="example-option__caution">{{ ex.caution }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="sf-form-section">
-          <div class="sf-form-section__head">
-            <span class="sf-form-section__title">状态</span>
-          </div>
-          <v-switch v-model="formEnabled" label="启用此脚本" color="primary" hide-details />
-        </div>
-
-        <div v-if="saveError !== ''" class="text-error mt-2" data-testid="script-save-error">{{ saveError }}</div>
-        <!-- D-22：主文案是可读的一句话，原始报文进折叠块。 -->
-        <details v-if="saveErrorDetail !== ''" data-testid="script-save-error-detail" class="mt-1">
-          <summary class="text-body-2 text-medium-emphasis">查看错误详情</summary>
-          <pre class="text-caption">{{ saveErrorDetail }}</pre>
-        </details>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="dialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="saving" @click="save">保存</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-  <v-dialog v-model="testDialog" max-width="760" scrollable>
-    <v-card>
-      <v-card-title>试运行脚本</v-card-title>
-      <v-card-text class="script-dialog__body">
-        <div data-testid="scripts-test">
-          <div class="sf-form-section">
-            <div class="sf-form-section__head">
-              <span class="sf-form-section__title">运行参数</span>
-              <span class="sf-form-section__caption">使用示例节点测试脚本行为，不会改动已保存的脚本</span>
-            </div>
-            <div class="sf-form-grid">
-              <v-select v-model="testKind" :items="[{ title: '过滤脚本', value: 'filter' }, { title: '改写脚本', value: 'operate' }]" label="类型" variant="outlined" density="comfortable" hide-details class="mb-3" />
-              <v-text-field v-model.number="testTimeout" label="超时（毫秒）" type="number" variant="outlined" density="comfortable" hide-details class="mb-3" />
-            </div>
-            <v-textarea v-model="testCode" label="代码" rows="8" variant="outlined" density="comfortable" hide-details spellcheck="false" class="code-input mb-3" />
-            <v-textarea v-model="testNodeText" label="节点 JSON" rows="4" variant="outlined" density="comfortable" hide-details spellcheck="false" class="code-input" />
-          </div>
-
-          <div class="sf-form-section">
-            <div class="sf-form-section__head">
-              <span class="sf-form-section__title">运行结果</span>
-              <v-spacer />
-              <v-btn color="primary" :loading="testing" prepend-icon="mdi-play" @click="runTest">运行</v-btn>
-            </div>
-            <div v-if="testResult === null" class="result-empty" data-testid="test-result-empty">
-              点击「运行」后，这里会显示是否保留节点、字段变化与耗时。
-            </div>
-            <!-- D-23：结果区固定最大高度并可滚动，长结果不再被对话框底边裁切。 -->
-            <div
-              v-else
-              data-testid="test-result"
-              class="test-result-scroll result-panel"
-            >
-              <div class="result-panel__head">
-                <v-chip :color="testResult.error ? 'error' : 'success'" size="small" variant="tonal" data-testid="test-status">
-                  {{ testResult.error ? '失败' : '成功' }}
-                </v-chip>
-                <span class="text-caption text-medium-emphasis">耗时：{{ formatDuration(testResult.duration_ms) }}</span>
-              </div>
-              <div v-if="testResult.error" data-testid="test-error" class="text-error">{{ testResult.error }}</div>
-              <div v-if="testResult.ok && testKind === 'filter'" class="mt-2">
-                <span v-if="testResult.kept === true" data-testid="test-kept" class="text-success">保留</span>
-                <span v-else data-testid="test-dropped" class="text-medium-emphasis">丢弃</span>
-              </div>
-              <div v-if="testResult.ok && testKind === 'operate'" class="mt-2">
-                <div class="text-subtitle-2 mb-1">变更字段</div>
-                <div v-for="(val, key) in (testResult.after ?? {})" :key="key" class="result-change">
-                  <code>{{ key }}</code>：{{ JSON.stringify((testResult.before ?? {})[key]) }} → {{ val === null ? '已删除' : JSON.stringify(val) }}
-                </div>
-                <div v-if="Object.keys(testResult.after ?? {}).length === 0" class="text-caption text-medium-emphasis">本次执行没有修改任何字段。</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="test-close" @click="testDialog = false">关闭</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      </div>
+      <template #foot>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="scripts-reference-close" @click="referenceOpen = false">关闭</button>
+      </template>
+    </SfDialog>
+  </div>
 </template>
 
 <style scoped>
-.help-list {
-  padding-left: 20px;
+.sc-spin {
+  animation: sc-rotate 0.9s linear infinite;
 }
-.script-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  border-left: 3px solid var(--sf-accent);
-  border-radius: 0 6px 6px 0;
-  background: var(--sf-surface-raised);
-  color: var(--sf-text-muted);
-  font-size: 13px;
+
+@keyframes sc-rotate {
+  to {
+    transform: rotate(360deg);
+  }
 }
-.scripts-table :deep(tbody td) {
-  height: 48px;
+
+.sc-name {
+  font-weight: 600;
 }
-.script-name {
-  font-weight: 500;
+
+.sc-duo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
 }
-.script-kind {
-  color: var(--sf-text-muted);
-  font-size: 13px;
+
+.sc-kind-hint {
+  margin-top: -6px;
 }
-.script-dialog__body {
-  max-height: 72vh;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-.script-kind-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--sf-surface-raised);
-  color: var(--sf-text-muted);
+
+.sc-code {
+  font-family: var(--sf-font-code);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.65;
 }
-.code-input :deep(textarea) {
-  font-family: var(--sf-font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.example-toolbar {
+
+.sc-example-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 10px;
 }
-.example-panel {
+
+.sc-examples {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 10px;
 }
+
 @media (max-width: 700px) {
-  .example-panel {
+  .sc-examples {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.example-option {
+
+.sc-example {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
   padding: 10px 12px;
   border: 1px solid var(--sf-border);
-  border-radius: 8px;
-  background: var(--sf-surface);
+  border-radius: var(--sf-radius);
+  background: var(--sf-surface-dim);
   color: var(--sf-text);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--sf-dur-micro), background var(--sf-dur-micro);
+  transition: border-color var(--sf-t-fast) var(--sf-ease), background var(--sf-t-fast) var(--sf-ease);
 }
-.example-option:hover {
-  border-color: var(--sf-accent);
-  background: var(--sf-surface-raised);
+
+.sc-example:hover {
+  border-color: var(--sf-accent-border);
+  background: var(--sf-accent-dim);
 }
-.example-option:focus-visible {
-  outline: 2px solid var(--sf-accent);
-  outline-offset: 2px;
-}
-.example-option__head {
+
+.sc-example__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   width: 100%;
 }
-.example-option__name {
+
+.sc-example__name {
   font-size: 13px;
   font-weight: 600;
 }
-.example-option__why {
+
+.sc-example__why {
   color: var(--sf-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
-.example-option__caution {
+
+.sc-example__caution {
   color: var(--sf-warn);
   font-size: 12px;
 }
-.result-empty {
-  padding: 18px 12px;
-  border: 1px dashed var(--sf-border);
-  border-radius: 8px;
-  background: var(--sf-surface-raised);
-  color: var(--sf-text-muted);
-  font-size: 13px;
-  text-align: center;
+
+.sc-detail {
+  font-size: 12.5px;
+  color: var(--sf-text-faint);
 }
-.result-panel {
-  padding: 12px;
+
+.sc-detail summary {
+  cursor: pointer;
+}
+
+.sc-detail pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
   border: 1px solid var(--sf-border);
-  border-radius: 8px;
-  background: var(--sf-surface);
-}
-.test-result-scroll {
-  max-height: 40vh;
-  overflow-y: auto;
+  border-radius: var(--sf-radius-sm);
+  background: var(--sf-bg-deep);
+  font-size: 11.5px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
-.result-panel__head {
+
+.sc-test-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-top: 4px;
 }
-.result-change {
-  padding: 4px 0;
-  border-bottom: 1px solid var(--sf-border);
-  font-family: var(--sf-font-mono);
+
+.sc-result {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  background: var(--sf-surface-dim);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.sc-result__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sc-change {
+  padding: 5px 0;
+  border-bottom: 1px solid oklch(from var(--sf-border) l c h / 0.55);
+  font-family: var(--sf-font-code);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
-.result-change:last-child {
+
+.sc-change:last-child {
   border-bottom: 0;
 }
-.return-card {
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--sf-border);
-  border-radius: 8px;
-  background: var(--sf-surface);
+
+.sc-ref-intro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--sf-text-muted);
 }
-.return-card__head {
+
+.sc-ref-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sc-ref-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--sf-text-muted);
+}
+
+.sc-return {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sc-return__head {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
 }
-.return-card__title {
+
+.sc-return__title {
   font-size: 13px;
   font-weight: 600;
 }
-.return-row {
+
+.sc-return__row {
   display: flex;
   gap: 10px;
-  margin-bottom: 4px;
   font-size: 13px;
+  line-height: 1.6;
 }
-.return-label {
+
+.sc-return__row span:first-child {
   flex: 0 0 64px;
-  color: var(--sf-text-muted);
+  color: var(--sf-text-faint);
+  font-size: 12px;
+  margin-top: 1px;
 }
-.return-code {
-  margin-top: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  font-family: var(--sf-font-mono);
+
+.sc-return__code {
+  padding: 6px 9px;
+  border-radius: var(--sf-radius-sm);
+  font-family: var(--sf-font-code);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.return-code--ok {
-  background: color-mix(in srgb, var(--sf-ok) 10%, transparent);
+
+.sc-return__code--ok {
+  background: var(--sf-ok-dim);
   color: var(--sf-ok);
 }
-.return-code--bad {
-  background: color-mix(in srgb, var(--sf-danger) 10%, transparent);
+
+.sc-return__code--bad {
+  background: var(--sf-danger-dim);
   color: var(--sf-danger);
 }
 </style>

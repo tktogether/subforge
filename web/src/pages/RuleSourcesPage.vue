@@ -3,13 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import { endpoints, type RuleSource, type RuleSourceUpdateResult, type RuleSourcesResponse, type SelfNode } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
-import { pageHelp, fieldHelp } from '../content/help'
-import PageHeader from '../components/PageHeader.vue'
-import AsyncSection from '../components/AsyncSection.vue'
-import InfoTip from '../components/InfoTip.vue'
+import { confirmAction } from '../composables/useConfirm'
+import { fieldHelp } from '../content/help'
+import SfPageHead from '../components/ui/SfPageHead.vue'
+import SfField from '../components/ui/SfField.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
+import SfEmpty from '../components/ui/SfEmpty.vue'
+import SfInfoTip from '../components/ui/SfInfoTip.vue'
 import { formatBytes } from '../format'
-
-const help = pageHelp('rule-sources')
+import { IconRefresh, IconPlus, IconDatabase, IconSearch, IconAlertTriangle } from '@tabler/icons-vue'
 
 const loading = ref(false)
 const error = ref('')
@@ -20,9 +22,6 @@ const defaultManifestPath = ref('')
 const outputDir = ref('')
 const exists = ref(false)
 const hint = ref('')
-
-const rollbackDialog = ref(false)
-const rollbackName = ref('')
 
 const mrsDialog = ref(false)
 const mrsName = ref('')
@@ -55,9 +54,6 @@ const outboundDialog = ref(false)
 const outboundName = ref('')
 const outboundValue = ref('')
 const outboundSaving = ref(false)
-const removeDialog = ref(false)
-const removeName = ref('')
-const removeSaving = ref(false)
 const renameDialog = ref(false)
 const renameName = ref('')
 const renameValue = ref('')
@@ -72,8 +68,6 @@ const updatingAll = ref(false)
 
 const updateResults = ref<RuleSourceUpdateResult[]>([])
 const showUpdateResults = ref(false)
-
-const emptyState = computed(() => help.emptyState)
 
 async function loadSelfNodes(): Promise<void> {
   try {
@@ -120,29 +114,24 @@ async function updateAll(): Promise<void> {
   }
 }
 
-function openRollback(name: string): void {
-  rollbackName.value = name
-  rollbackDialog.value = true
-}
-
-async function doRollback(): Promise<void> {
+async function doRollback(name: string): Promise<void> {
   if (updating.value) return
+  const ok = await confirmAction({
+    title: '确认回滚 ' + name + '？',
+    body: '回滚会把该规则源的当前版本换成上一个版本，订阅产物在下一次生成时才会变化。回滚只切换当前版本，不删除任何版本文件，也不改配置。',
+    confirmText: '确认回滚',
+  })
+  if (!ok) return
   updating.value = true
   try {
-    const r = await endpoints.rollbackRuleSource(rollbackName.value)
+    const r = await endpoints.rollbackRuleSource(name)
     notify('已回滚: ' + r.path, 'ok')
-    rollbackDialog.value = false
     await load()
   } catch (err) {
     notify(errorMessage(err), 'error')
   } finally {
     updating.value = false
   }
-}
-
-function cancelRollback(): void {
-  rollbackDialog.value = false
-  rollbackName.value = ''
 }
 
 function openMrs(name: string): void {
@@ -164,10 +153,6 @@ async function doMrs(): Promise<void> {
   } finally {
     updating.value = false
   }
-}
-
-function cancelMrs(): void {
-  mrsDialog.value = false
 }
 
 function openAdd(): void {
@@ -244,23 +229,20 @@ async function confirmRename(): Promise<void> {
   }
 }
 
-function openRemove(name: string): void {
-  removeName.value = name
-  removeDialog.value = true
-}
-
-async function confirmRemove(): Promise<void> {
-  if (removeSaving.value) return
-  removeSaving.value = true
+async function confirmRemove(name: string): Promise<void> {
+  const ok = await confirmAction({
+    title: '删除规则源「' + name + '」？',
+    body: '该源的本地版本文件不会被删除。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
-    await endpoints.removeRuleSource(removeName.value)
-    removeDialog.value = false
-    notify('已删除: ' + removeName.value, 'ok')
+    await endpoints.removeRuleSource(name)
+    notify('已删除: ' + name, 'ok')
     await load()
   } catch (err) {
     notify(errorMessage(err), 'error')
-  } finally {
-    removeSaving.value = false
   }
 }
 
@@ -330,14 +312,8 @@ const rulesSelected = ref<string[]>([])
 const rulesConflict = ref<'skip' | 'overwrite'>('skip')
 const rulesImporting = ref(false)
 
-const rulesPage = computed({
-  get: () => Math.floor(rulesOffset.value / rulesLimit) + 1,
-  set: (p: number) => {
-    rulesOffset.value = Math.max(0, (p - 1) * rulesLimit)
-    void loadRules()
-  },
-})
 const rulesTotalPages = computed(() => Math.max(1, Math.ceil(rulesTotal.value / rulesLimit)))
+const rulesPage = computed(() => Math.floor(rulesOffset.value / rulesLimit) + 1)
 
 async function loadRules(): Promise<void> {
   const src = rulesSource.value
@@ -381,6 +357,11 @@ function searchRules(): void {
 function clearRulesSearch(): void {
   rulesQuery.value = ''
   rulesOffset.value = 0
+  void loadRules()
+}
+
+function onRulesPage(next: number): void {
+  rulesOffset.value = Math.max(0, (next - 1) * rulesLimit)
   void loadRules()
 }
 
@@ -441,278 +422,431 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageHeader title="规则源" :subtitle="help.oneLiner" help-key="rule-sources">
-    <template #actions>
-      <v-btn data-testid="update-all" variant="tonal" :loading="updatingAll" :disabled="updating" @click="updateAll">全部更新</v-btn>
-      <v-btn data-testid="source-add" color="primary" variant="tonal" @click="openAdd">新增规则源</v-btn>
-    </template>
-  </PageHeader>
+  <div>
+    <SfPageHead title="规则源" desc="远程规则文件的版本化仓库：更新、回滚、生成 MRS，并把规则复制进自定义层。">
+      <template #actions>
+        <button class="sf-btn sf-btn--ghost" type="button" data-testid="update-all" :disabled="updating" @click="updateAll">
+          <IconRefresh :size="15" :stroke-width="1.8" :class="{ 'rs-spin': updatingAll }" />
+          {{ updatingAll ? '更新中…' : '全部更新' }}
+        </button>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="source-add" @click="openAdd">
+          <IconPlus :size="15" :stroke-width="2" />
+          新增规则源
+        </button>
+      </template>
+    </SfPageHead>
 
-  <v-dialog v-model="rulesDialog" max-width="900">
-    <v-card data-testid="source-rules-dialog">
-      <v-card-title>从规则源复制规则：{{ rulesSource?.label || rulesSource?.name }}</v-card-title>
-      <v-card-text>
-        <div class="text-caption text-medium-emphasis mb-2">
-          选中的规则会复制到自定义层；规则源后续更新或删除不影响已复制的规则。重复规则默认跳过，可改为覆盖。
-        </div>
-        <div class="d-flex ga-2 align-center mb-2 flex-wrap">
-          <v-text-field v-model="rulesQuery" label="搜索规则" density="compact" hide-details data-testid="source-rules-search" @keyup.enter="searchRules" />
-          <v-btn variant="tonal" data-testid="source-rules-search-btn" @click="searchRules">搜索</v-btn>
-          <v-btn variant="text" data-testid="source-rules-clear-search" @click="clearRulesSearch">清空</v-btn>
-        </div>
-        <v-alert v-if="rulesError !== ''" type="error" variant="tonal" class="mb-2">{{ rulesError }}</v-alert>
-        <v-progress-linear v-if="rulesLoading" indeterminate class="mb-2" />
-        <div class="rule-picker-list">
-          <v-table density="compact" data-testid="source-rules-table">
-            <thead>
-              <tr><th style="width: 48px"></th><th>规则</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="(rule, index) in rulesList" :key="index + '-' + rule" data-testid="source-rule-row">
-                <td>
-                  <v-checkbox :model-value="isRuleSelected(rule)" hide-details density="compact" data-testid="source-rule-check" @update:model-value="toggleRule(rule)" />
-                </td>
-                <td><code class="rule-source-rule">{{ rule }}</code></td>
-              </tr>
-            </tbody>
-          </v-table>
-          <div v-if="!rulesLoading && rulesList.length === 0" data-testid="source-rules-empty" class="text-medium-emphasis py-4 text-center">
-            没有匹配的规则
-          </div>
-        </div>
-        <div class="d-flex align-center ga-3 mt-2 flex-wrap">
-          <span class="text-body-2" data-testid="source-rules-count">共 {{ rulesTotal }} 条，已选 {{ rulesSelected.length }} 条</span>
-          <v-btn size="small" variant="text" data-testid="source-rules-select-page" @click="selectCurrentPage">全选本页</v-btn>
-          <v-btn size="small" variant="text" data-testid="source-rules-clear-selected" @click="clearSelectedRules">清空已选</v-btn>
-          <v-spacer />
-          <v-select
-            v-model="rulesConflict"
-            :items="[{ title: '重复时跳过', value: 'skip' }, { title: '重复时覆盖', value: 'overwrite' }]"
-            item-title="title"
-            item-value="value"
-            density="compact"
-            hide-details
-            style="max-width: 160px"
-            data-testid="source-rules-conflict"
-          />
-        </div>
-        <v-pagination
-          v-if="rulesTotalPages > 1"
-          v-model="rulesPage"
-          :length="rulesTotalPages"
-          :total-visible="7"
-          density="compact"
-          class="mt-2"
-          data-testid="source-rules-pagination"
-        />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="source-rules-cancel" @click="rulesDialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="rulesImporting" :disabled="rulesSelected.length === 0" data-testid="source-rules-import" @click="importSelectedRules">复制到自定义</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-      <!-- Manifest card -->
-    <v-card data-testid="manifest-card" class="mb-4">
-      <v-card-title>清单路径</v-card-title>
-      <v-card-text>
-        <div data-testid="manifest-path">生效路径：{{ manifestPath }}</div>
-        <div v-if="defaultManifestPath !== ''" data-testid="manifest-default-path">默认路径：{{ defaultManifestPath }}</div>
-        <div v-if="outputDir !== ''" data-testid="manifest-output-dir">输出目录：{{ outputDir }}</div>
-        <div v-if="!exists" data-testid="manifest-hint" class="text-warning mt-2">{{ hint }}</div>
-        <span v-if="exists" data-testid="manifest-exists" class="sf-status mt-2">
-          <span class="sf-status__dot sf-status__dot--ok"></span>
+    <!-- Manifest -->
+    <section class="sf-panel sf-rise sf-d1" data-testid="manifest-card" style="margin-bottom: 16px">
+      <div class="sf-panel__head">
+        <span class="sf-label-mono">MANIFEST / 清单</span>
+        <span class="sf-spacer" />
+        <span v-if="exists" data-testid="manifest-exists" class="sf-status">
+          <span class="sf-led sf-led--ok" />
           <span>已就绪</span>
         </span>
-      </v-card-text>
-    </v-card>
+      </div>
+      <div class="sf-panel__body rs-manifest">
+        <div class="rs-manifest__item" data-testid="manifest-path">
+          <span class="rs-manifest__label">生效路径</span>
+          <code class="sf-mono">{{ manifestPath }}</code>
+        </div>
+        <div v-if="defaultManifestPath !== ''" class="rs-manifest__item" data-testid="manifest-default-path">
+          <span class="rs-manifest__label">默认路径</span>
+          <code class="sf-mono">{{ defaultManifestPath }}</code>
+        </div>
+        <div v-if="outputDir !== ''" class="rs-manifest__item" data-testid="manifest-output-dir">
+          <span class="rs-manifest__label">输出目录</span>
+          <code class="sf-mono">{{ outputDir }}</code>
+        </div>
+        <div v-if="!exists" data-testid="manifest-hint" class="sf-note sf-note--warn" style="margin-top: 6px">{{ hint }}</div>
+      </div>
+    </section>
 
-<AsyncSection :loading="loading" :error="error" :empty="sources.length === 0 ? (emptyState ?? false) : false" empty-text="暂无规则源" @retry="load">
-    <!-- Source table -->
-    <v-table data-testid="source-table">
-      <thead>
-        <tr>
-          <th>名称</th>
-          <th>来源</th>
-          <th>规则数</th>
-          <th>更新时间</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="s in sources" :key="s.name" data-testid="source-row">
-          <td>
-            <v-btn variant="text" size="small" data-testid="source-rules" @click="openRules(s)">{{ s.label || s.name }}</v-btn>
-            <span v-if="s.airport_missing" class="text-warning text-caption ml-1" data-testid="source-airport-missing">机场已删除</span>
-          </td>
-          <td>
-            <div>{{ originText(s) }}</div>
-            <div v-if="s.outbound_node" class="text-caption text-medium-emphasis" data-testid="source-outbound">出网：{{ outboundLabel(s.outbound_node) }}</div>
-          </td>
-          <td>{{ s.rule_count ?? 0 }}</td>
-          <td>{{ updatedText(s.updated_at) }}</td>
-          <td>
-            <v-btn size="small" variant="text" data-testid="source-outbound-btn" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源的出网跟随机场设置' : '设置该规则源的出网节点'" @click="openOutbound(s)">出网</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-rename" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源名称跟随机场，请修改机场名称' : '重命名规则源'" @click="openRename(s)">改名</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-update" :loading="updatingOne === s.name" :disabled="updating" @click="updateOne(s.name)">更新</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="openRollback(s.name)">回滚</v-btn>
-            <v-btn size="small" variant="text" color="primary" data-testid="source-mrs" :disabled="updating || s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</v-btn>
-            <v-btn size="small" variant="text" data-testid="source-remove" :disabled="sources.length <= 1 || (s.origin === 'airport' && !s.airport_missing)" @click="openRemove(s.name)">删除</v-btn>
-          </td>
-        </tr>
-      </tbody>
-    </v-table>
+    <div v-if="error !== ''" class="sf-note sf-note--danger sf-rise" style="margin-bottom: 16px">
+      <IconAlertTriangle :size="16" :stroke-width="1.8" class="sf-note__icon" />
+      <span class="sf-note__body">{{ error }}</span>
+      <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" @click="load">重试</button>
+    </div>
+
+    <div v-if="sources.length === 0 && !loading && error === ''" class="sf-panel">
+      <SfEmpty title="暂无规则源" desc="添加远程规则文件地址，或从机场页导入订阅自带规则。">
+        <template #icon><IconDatabase :size="30" :stroke-width="1.4" /></template>
+        <template #action>
+          <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" @click="openAdd">
+            <IconPlus :size="14" :stroke-width="2" />
+            新增规则源
+          </button>
+        </template>
+      </SfEmpty>
+    </div>
+
+    <div v-else class="sf-table-wrap sf-rise sf-d2" data-testid="source-table">
+      <table class="sf-table">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>来源</th>
+            <th style="text-align: right">规则数</th>
+            <th>更新时间</th>
+            <th style="text-align: right">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading && sources.length === 0">
+            <td v-for="n in 5" :key="n"><span class="sf-skeleton" style="width: 60%" /></td>
+          </tr>
+          <tr v-for="s in sources" v-else :key="s.name" data-testid="source-row">
+            <td>
+              <button type="button" class="rs-name" data-testid="source-rules" @click="openRules(s)">{{ s.label || s.name }}</button>
+              <span v-if="s.airport_missing" class="sf-badge sf-badge--warn" style="margin-left: 8px" data-testid="source-airport-missing">机场已删除</span>
+            </td>
+            <td>
+              <div>{{ originText(s) }}</div>
+              <div v-if="s.outbound_node" class="sf-field__hint" style="margin: 0" data-testid="source-outbound">出网：{{ outboundLabel(s.outbound_node) }}</div>
+            </td>
+            <td class="sf-table__num" style="text-align: right">{{ s.rule_count ?? 0 }}</td>
+            <td class="sf-table__num">{{ updatedText(s.updated_at) }}</td>
+            <td>
+              <span class="sf-table__actions">
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-outbound-btn" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源的出网跟随机场设置' : '设置该规则源的出网节点'" @click="openOutbound(s)">出网</button>
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-rename" :disabled="updating || s.origin === 'airport'" :title="s.origin === 'airport' ? '机场规则源名称跟随机场，请修改机场名称' : '重命名规则源'" @click="openRename(s)">改名</button>
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-update" :disabled="updating" @click="updateOne(s.name)">{{ updatingOne === s.name ? '更新中…' : '更新' }}</button>
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-rollback" :disabled="updating || s.versions.length === 0" @click="doRollback(s.name)">回滚</button>
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-mrs" :disabled="updating || s.versions.length === 0" @click="openMrs(s.name)">生成 MRS</button>
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-remove" :disabled="sources.length <= 1 || (s.origin === 'airport' && !s.airport_missing)" style="color: var(--sf-danger)" @click="confirmRemove(s.name)">删除</button>
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <!-- Update results -->
-    <div v-if="showUpdateResults" data-testid="update-results" class="mt-4">
-      <v-card>
-        <v-card-title>更新结果</v-card-title>
-        <v-card-text>
-          <div v-for="(r, i) in updateResults" :key="i">
-            <div>来源：{{ r.source }}</div>
-            <div>版本：{{ r.version }}</div>
-            <div>路径：{{ r.path }}</div>
-            <span v-if="r.from_cache" data-testid="from-cache">命中缓存</span>
-            <div v-if="r.err !== ''" data-testid="source-update-error" class="text-error">{{ r.err }}</div>
-            <div v-if="r.err !== ''" class="text-caption text-medium-emphasis">该源保留上一版本，产物不受影响</div>
+    <section v-if="showUpdateResults" data-testid="update-results" class="sf-panel sf-rise" style="margin-top: 16px">
+      <div class="sf-panel__head">
+        <span class="sf-panel__title">更新结果</span>
+      </div>
+      <div class="sf-panel__body rs-results">
+        <div v-for="(r, i) in updateResults" :key="i" class="rs-result">
+          <div class="rs-result__head">
+            <span class="rs-result__name">{{ r.source }}</span>
+            <span class="sf-badge" :class="r.err !== '' ? 'sf-badge--danger' : r.from_cache ? 'sf-badge--info' : 'sf-badge--ok'">
+              {{ r.err !== '' ? '失败' : r.from_cache ? '命中缓存' : '已更新' }}
+            </span>
           </div>
-        </v-card-text>
-      </v-card>
-    </div>
-  </AsyncSection>
+          <div class="rs-result__meta">版本 {{ r.version }} · <code class="sf-mono">{{ r.path }}</code></div>
+          <div v-if="r.err !== ''" data-testid="source-update-error" class="rs-result__err">{{ r.err }}</div>
+          <div v-if="r.err !== ''" class="sf-field__hint">该源保留上一版本，产物不受影响</div>
+        </div>
+      </div>
+    </section>
 
-  <!-- Rollback confirm dialog -->
-  <v-dialog v-model="rollbackDialog" max-width="480">
-    <v-card>
-      <v-card-title>确认回滚 {{ rollbackName }}</v-card-title>
-      <v-card-text>
-        回滚会把该规则源的当前版本换成上一个版本，订阅产物在下一次生成时才会变化。回滚只切换当前版本，不删除任何版本文件，也不改配置。
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" :disabled="updating" @click="cancelRollback">取消</v-btn>
-        <v-btn color="primary" :loading="updating" :disabled="updating" @click="doRollback">确认回滚</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <!-- 规则挑选器 -->
+    <SfDialog :open="rulesDialog" label="PICK RULES" :title="'从规则源复制规则：' + (rulesSource?.label || rulesSource?.name || '')" wide @close="rulesDialog = false">
+      <p class="sf-field__hint" style="margin: 0">
+        选中的规则会复制到自定义层；规则源后续更新或删除不影响已复制的规则。重复规则默认跳过，可改为覆盖。
+      </p>
+      <div class="rs-picker-bar">
+        <span class="rs-picker-search">
+          <IconSearch :size="15" :stroke-width="1.8" class="rs-picker-icon" aria-hidden="true" />
+          <input
+            v-model="rulesQuery"
+            class="sf-input"
+            style="padding-left: 31px; height: 32px; font-size: 13px"
+            placeholder="搜索规则…"
+            data-testid="source-rules-search"
+            @keyup.enter="searchRules"
+          />
+        </span>
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="source-rules-search-btn" @click="searchRules">搜索</button>
+        <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-rules-clear-search" @click="clearRulesSearch">清空</button>
+        <span class="sf-spacer" />
+        <span class="sf-select-wrap" style="width: 150px">
+          <select v-model="rulesConflict" class="sf-select" data-testid="source-rules-conflict" style="height: 32px; font-size: 12.5px">
+            <option value="skip">重复时跳过</option>
+            <option value="overwrite">重复时覆盖</option>
+          </select>
+        </span>
+      </div>
 
-  <!-- MRS dialog -->
-  <v-dialog v-model="mrsDialog" max-width="480" data-testid="mrs-dialog">
-    <v-card>
-      <v-card-title>生成 MRS - {{ mrsName }}</v-card-title>
-      <v-card-text>
-        <v-select v-model="mrsBehavior" :items="['domain', 'ipcidr']" label="行为" :disabled="updating" />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" :disabled="updating" @click="cancelMrs">取消</v-btn>
-        <v-btn color="primary" :loading="updating" :disabled="updating" @click="doMrs">生成</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      <div v-if="rulesError !== ''" class="sf-note sf-note--danger">{{ rulesError }}</div>
 
-  <!-- Add rule source dialog -->
-  <v-dialog v-model="addDialog" max-width="520">
-    <v-card data-testid="add-dialog">
-      <v-card-title>新增规则源</v-card-title>
-      <v-card-text>
-        <div class="sf-form-label">名称 <InfoTip text="留空时使用订阅地址的最后一段。" label="名称" /></div>
-        <v-text-field data-testid="add-name" v-model="addName" hide-details class="mb-3" />
-        <div class="sf-form-label">订阅地址 <InfoTip text="规则文件的 http 或 https 地址。" example="https://example.com/rules.yaml" label="订阅地址" /></div>
-        <v-text-field data-testid="add-url" v-model="addUrl" hide-details class="mb-3" />
-        <div class="sf-form-label">输入格式 <InfoTip text="可选 ini、clash 或 auto；留空时自动识别。" label="输入格式" /></div>
-        <v-text-field data-testid="add-format" v-model="addFormat" hide-details class="mb-3" />
-        <div class="sf-form-label">出网节点 <InfoTip :text="outboundHelp?.hint ?? ''" label="出网节点" /></div>
-        <v-select
-          v-model="addOutbound"
-          :items="outboundItems"
-          item-title="title"
-          item-value="value"
-          data-testid="add-outbound"
-          hide-details
-        />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn data-testid="add-cancel" variant="text" @click="addDialog = false">取消</v-btn>
-        <v-btn data-testid="add-confirm" :loading="addSaving" @click="confirmAdd">添加</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      <div class="rs-picker-list" data-testid="source-rules-table">
+        <div v-if="rulesLoading" style="padding: 14px; display: flex; flex-direction: column; gap: 8px">
+          <span v-for="n in 6" :key="n" class="sf-skeleton" :style="{ width: 30 + n * 9 + '%' }" />
+        </div>
+        <template v-else>
+          <label
+            v-for="(rule, index) in rulesList"
+            :key="index + '-' + rule"
+            class="rs-picker-row"
+            data-testid="source-rule-row"
+          >
+            <input type="checkbox" class="sf-checkbox" :checked="isRuleSelected(rule)" data-testid="source-rule-check" @change="toggleRule(rule)" />
+            <code class="rs-picker-rule">{{ rule }}</code>
+          </label>
+          <div v-if="rulesList.length === 0" data-testid="source-rules-empty" class="rs-picker-empty">
+            没有匹配的规则
+          </div>
+        </template>
+      </div>
 
-  <!-- 出网节点 dialog -->
-  <v-dialog v-model="outboundDialog" max-width="460">
-    <v-card data-testid="source-outbound-dialog">
-      <v-card-title>设置出网节点 - {{ outboundName }}</v-card-title>
-      <v-card-text>
-        <v-select
-          v-model="outboundValue"
-          :items="outboundItems"
-          item-title="title"
-          item-value="value"
-          label="出网节点"
-          :hint="outboundHelp?.hint"
-          persistent-hint
-          data-testid="source-outbound-select"
-        />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="source-outbound-cancel" @click="outboundDialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="outboundSaving" data-testid="source-outbound-confirm" @click="confirmOutbound">保存</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      <div class="rs-picker-foot">
+        <span class="sf-pagination__info" data-testid="source-rules-count">共 {{ rulesTotal }} 条 · 已选 {{ rulesSelected.length }} 条</span>
+        <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-rules-select-page" @click="selectCurrentPage">全选本页</button>
+        <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" data-testid="source-rules-clear-selected" @click="clearSelectedRules">清空已选</button>
+        <span class="sf-spacer" />
+        <span v-if="rulesTotalPages > 1" class="sf-toolbar" data-testid="source-rules-pagination">
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" :disabled="rulesPage <= 1" @click="onRulesPage(rulesPage - 1)">‹ 上一页</button>
+          <span class="sf-pagination__info">{{ rulesPage }} / {{ rulesTotalPages }}</span>
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" :disabled="rulesPage >= rulesTotalPages" @click="onRulesPage(rulesPage + 1)">下一页 ›</button>
+        </span>
+      </div>
 
-  <!-- Remove rule source dialog -->
-  <v-dialog v-model="renameDialog" max-width="460">
-    <v-card>
-      <v-card-title>重命名规则源</v-card-title>
-      <v-card-text>
-        <v-text-field v-model="renameValue" label="新名称" hint="引用该规则源的方案会自动更新绑定" variant="outlined" density="comfortable" persistent-hint data-testid="source-rename-input" />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="source-rename-cancel" @click="renameDialog = false">取消</v-btn>
-        <v-btn color="primary" :loading="renameSaving" :disabled="renameValue.trim() === '' || renameValue.trim() === renameName" data-testid="source-rename-confirm" @click="confirmRename">保存</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="source-rules-cancel" @click="rulesDialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" :disabled="rulesSelected.length === 0 || rulesImporting" data-testid="source-rules-import" @click="importSelectedRules">
+          {{ rulesImporting ? '复制中…' : '复制到自定义' }}
+        </button>
+      </template>
+    </SfDialog>
 
-  <v-dialog v-model="removeDialog" max-width="420">
-    <v-card data-testid="remove-dialog">
-      <v-card-title>删除规则源</v-card-title>
-      <v-card-text>确定删除「{{ removeName }}」？该源的本地版本文件不会被删除。</v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn data-testid="remove-cancel" variant="text" @click="removeDialog = false">取消</v-btn>
-        <v-btn data-testid="remove-confirm" :loading="removeSaving" @click="confirmRemove">删除</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <!-- MRS -->
+    <SfDialog :open="mrsDialog" label="GENERATE MRS" :title="'生成 MRS - ' + mrsName" @close="mrsDialog = false">
+      <SfField label="行为" hint="domain=域名集；ipcidr=IP 段集。">
+        <span class="sf-select-wrap">
+          <select v-model="mrsBehavior" class="sf-select" :disabled="updating">
+            <option value="domain">domain</option>
+            <option value="ipcidr">ipcidr</option>
+          </select>
+        </span>
+      </SfField>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" :disabled="updating" @click="mrsDialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" :disabled="updating" @click="doMrs">生成</button>
+      </template>
+    </SfDialog>
+
+    <!-- 新增规则源 -->
+    <SfDialog :open="addDialog" label="ADD SOURCE" title="新增规则源" @close="addDialog = false">
+      <SfField hint="留空时使用订阅地址的最后一段。">
+        <template #label><span class="sf-field__label">名称 <SfInfoTip text="留空时使用订阅地址的最后一段。" /></span></template>
+        <input v-model="addName" class="sf-input" data-testid="add-name" spellcheck="false" />
+      </SfField>
+      <SfField>
+        <template #label><span class="sf-field__label">订阅地址</span></template>
+        <input v-model="addUrl" class="sf-input sf-input--mono" data-testid="add-url" placeholder="https://example.com/rules.yaml" spellcheck="false" />
+      </SfField>
+      <SfField hint="可选 ini、clash 或 auto；留空时自动识别。">
+        <template #label><span class="sf-field__label">输入格式</span></template>
+        <input v-model="addFormat" class="sf-input sf-input--mono" data-testid="add-format" spellcheck="false" />
+      </SfField>
+      <SfField :hint="outboundHelp?.hint ?? ''">
+        <template #label><span class="sf-field__label">出网节点 <SfInfoTip :text="outboundHelp?.hint ?? ''" /></span></template>
+        <span class="sf-select-wrap">
+          <select v-model="addOutbound" class="sf-select" data-testid="add-outbound">
+            <option v-for="opt in outboundItems" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+          </select>
+        </span>
+      </SfField>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="add-cancel" @click="addDialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="add-confirm" :disabled="addSaving" @click="confirmAdd">{{ addSaving ? '添加中…' : '添加' }}</button>
+      </template>
+    </SfDialog>
+
+    <!-- 出网节点 -->
+    <SfDialog :open="outboundDialog" label="OUTBOUND" :title="'设置出网节点 - ' + outboundName" @close="outboundDialog = false">
+      <SfField :hint="outboundHelp?.hint ?? ''" label="出网节点">
+        <span class="sf-select-wrap">
+          <select v-model="outboundValue" class="sf-select" data-testid="source-outbound-select">
+            <option v-for="opt in outboundItems" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+          </select>
+        </span>
+      </SfField>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="source-outbound-cancel" @click="outboundDialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" :disabled="outboundSaving" data-testid="source-outbound-confirm" @click="confirmOutbound">保存</button>
+      </template>
+    </SfDialog>
+
+    <!-- 重命名 -->
+    <SfDialog :open="renameDialog" label="RENAME" title="重命名规则源" @close="renameDialog = false">
+      <SfField hint="引用该规则源的方案会自动更新绑定" label="新名称">
+        <input v-model="renameValue" class="sf-input" data-testid="source-rename-input" spellcheck="false" />
+      </SfField>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="source-rename-cancel" @click="renameDialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" :disabled="renameValue.trim() === '' || renameValue.trim() === renameName || renameSaving" data-testid="source-rename-confirm" @click="confirmRename">保存</button>
+      </template>
+    </SfDialog>
+  </div>
 </template>
 
 <style scoped>
-.sf-form-label {
+.rs-spin {
+  animation: rs-rotate 0.9s linear infinite;
+}
+
+@keyframes rs-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rs-manifest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rs-manifest__item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rs-manifest__label {
+  flex: none;
+  width: 62px;
+  font-size: 12px;
+  color: var(--sf-text-faint);
+}
+
+.rs-manifest__item code {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.rs-name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sf-accent);
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: oklch(from var(--sf-accent) l c h / 0.4);
+}
+
+.rs-name:hover {
+  text-decoration-color: var(--sf-accent);
+}
+
+.rs-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rs-result {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rs-result__head {
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-height: 24px;
-  margin-bottom: 2px;
-  font-size: 13px;
-  color: var(--sf-text-muted);
+  gap: 10px;
 }
-.rule-picker-list {
-  max-height: 50vh;
+
+.rs-result__name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.rs-result__meta {
+  font-size: 12px;
+  color: var(--sf-text-faint);
+  overflow-wrap: anywhere;
+}
+
+.rs-result__err {
+  font-size: 12.5px;
+  color: var(--sf-danger);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.rs-picker-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rs-picker-search {
+  position: relative;
+  display: inline-flex;
+  width: 240px;
+}
+
+.rs-picker-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--sf-text-faint);
+  pointer-events: none;
+}
+
+.rs-picker-list {
+  max-height: 46vh;
   overflow-y: auto;
   border: 1px solid var(--sf-border);
-  border-radius: 8px;
+  border-radius: var(--sf-radius);
+  background: var(--sf-bg-deep);
 }
-.rule-source-rule {
-  white-space: pre-wrap;
-  word-break: break-all;
+
+.rs-picker-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid oklch(from var(--sf-border) l c h / 0.45);
+  cursor: pointer;
+  transition: background var(--sf-t-fast) var(--sf-ease);
+}
+
+.rs-picker-row:hover {
+  background: var(--sf-surface-dim);
+}
+
+.rs-picker-row:last-child {
+  border-bottom: 0;
+}
+
+.rs-picker-row input {
+  margin-top: 2px;
+}
+
+.rs-picker-rule {
+  font-family: var(--sf-font-code);
   font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--sf-text-muted);
+}
+
+.rs-picker-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--sf-text-faint);
+  font-size: 13px;
+}
+
+.rs-picker-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 </style>

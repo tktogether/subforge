@@ -1,14 +1,26 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import PageHeader from '../components/PageHeader.vue'
-import AsyncSection from '../components/AsyncSection.vue'
-import InfoTip from '../components/InfoTip.vue'
-import { pageHelp } from '../content/help'
+import SfPageHead from '../components/ui/SfPageHead.vue'
+import SfField from '../components/ui/SfField.vue'
+import SfSwitch from '../components/ui/SfSwitch.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
+import SfNote from '../components/ui/SfNote.vue'
+import SfEmpty from '../components/ui/SfEmpty.vue'
+import SfInfoTip from '../components/ui/SfInfoTip.vue'
 import { endpoints, type FinalGroupConfig, type FinalGroupPreview, type Profile } from '../api/endpoints'
 import { notify } from '../composables/useNotify'
 import { errorMessage } from '../composables/useAsync'
-
-const help = pageHelp('profiles')
+import { confirmAction } from '../composables/useConfirm'
+import {
+  IconPlus,
+  IconRefresh,
+  IconPencil,
+  IconTrash,
+  IconChevronUp,
+  IconChevronDown,
+  IconX,
+  IconScanEye,
+} from '@tabler/icons-vue'
 
 // 模板列的显示上限：超过就截断，完整内容放在 title 里。
 const TEMPLATE_MAX = 60
@@ -43,38 +55,6 @@ const LAYER_LABELS: Record<string, string> = {
 }
 
 const FINAL_GROUP_DEFAULT_NAME = '🚀 节点选择'
-
-function defaultFinalGroup(): FinalGroupConfig {
-  return {
-    enabled: false,
-    mode: 'auto',
-    name: FINAL_GROUP_DEFAULT_NAME,
-    include_direct: true,
-    keep_source_terminals: false,
-    overrides: {},
-  }
-}
-
-const EMPTY_PROFILE: Profile = {
-  id: 0,
-  name: '',
-  description: '',
-  config: '',
-  pipeline: '',
-  target: '',
-  include: '',
-  exclude: '',
-  enabled: true,
-  sort_order: 0,
-  rule_layers: [...RULE_LAYER_KEYS],
-  rule_sources: [],
-  airport_ids: null,
-  self_node_ids: null,
-  group_layers: [...GROUP_LAYER_KEYS],
-  final_group: defaultFinalGroup(),
-  rule_count: 0,
-  group_count: 0,
-}
 
 const profiles = ref<Profile[]>([])
 const profilePage = ref(1)
@@ -259,21 +239,6 @@ async function openFinalGroupPreview(): Promise<void> {
 const ruleLayers = ref<LayerRow[]>(defaultLayers(RULE_LAYER_KEYS))
 const groupLayers = ref<LayerRow[]>(defaultLayers(GROUP_LAYER_KEYS))
 
-const confirmOpen = ref(false)
-const deleteTarget = ref<Profile>(EMPTY_PROFILE)
-const conflictDialogOpen = ref(false)
-
-const headers = [
-  { key: 'name', title: '名称' },
-  { key: 'config', title: '模板' },
-  { key: 'pipeline', title: '最终处理' },
-  { key: 'rule_layers', title: '规则层' },
-  { key: 'group_layers', title: '分组层' },
-  { key: 'rule_sources', title: '规则源', sortable: false },
-  { key: 'enabled', title: '启用' },
-  { key: 'actions', title: '操作' },
-]
-
 // 规则层只有自定义与模板；机场规则是规则源，在下方显式绑定。
 // 分组层保留机场层：机场自带分组仍由导入路径维护。
 function defaultLayers(keys: LayerKey[]): LayerRow[] {
@@ -347,6 +312,10 @@ const layerEditors = computed<LayerEditorConfig[]>(() => [
 const profilePageCount = computed(() => Math.max(1, Math.ceil(profiles.value.length / profilePageSize.value)))
 watch([profiles, profilePageSize], () => {
   profilePage.value = Math.min(profilePage.value, profilePageCount.value)
+})
+const pagedProfiles = computed(() => {
+  const start = (profilePage.value - 1) * profilePageSize.value
+  return profiles.value.slice(start, start + profilePageSize.value)
 })
 
 function setProfilePageSize(next: number): void {
@@ -456,6 +425,7 @@ function moveRuleSource(index: number, delta: number): void {
 // ---- 跨源重复规则提示 ----
 const sourceConflictTotal = ref(0)
 const sourceConflictSamples = ref<{ type: string; param: string; first: string; second: string }[]>([])
+const conflictDialogOpen = ref(false)
 let conflictTimer: ReturnType<typeof setTimeout> | undefined
 
 async function checkSourceConflicts(): Promise<void> {
@@ -505,6 +475,10 @@ function pipelineText(pipeline: string): string {
 function layerText(layers: string[] | undefined): string {
   if (!Array.isArray(layers) || layers.length === 0) return '默认'
   return layers.map((k) => LAYER_LABELS[k] ?? k).join(' → ')
+}
+
+function toggleId(list: number[], id: number): number[] {
+  return list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
 }
 
 function openCreate(): void {
@@ -615,20 +589,16 @@ async function save(): Promise<void> {
   }
 }
 
-function askDelete(row: Profile): void {
-  deleteTarget.value = row
-  confirmOpen.value = true
-}
-
-function cancelDelete(): void {
-  confirmOpen.value = false
-}
-
-async function confirmDelete(): Promise<void> {
-  const target = deleteTarget.value
-  confirmOpen.value = false
+async function askDelete(row: Profile): Promise<void> {
+  const ok = await confirmAction({
+    title: '确认删除方案「' + row.name + '」？',
+    body: '删除方案后不可恢复；使用该方案的订阅令牌会回退到未绑定状态。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
-    await endpoints.deleteProfile(target.id)
+    await endpoints.deleteProfile(row.id)
     notify('已删除')
     await load()
   } catch (err) {
@@ -636,742 +606,647 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-load()
-loadRuleSourceOptions()
-loadPipelineOptions()
+void load()
+void loadRuleSourceOptions()
+void loadPipelineOptions()
 </script>
 
 <template>
-  <div class="profiles-page">
-    <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="profiles">
+  <div>
+    <SfPageHead title="方案" desc="方案 = 节点来源 + 规则层 + 分组层 + 输出格式，订阅令牌绑定后按方案生效。">
       <template #actions>
-        <v-btn color="primary" prepend-icon="mdi-plus" data-testid="profile-new" @click="openCreate">
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="profile-new" @click="openCreate">
+          <IconPlus :size="15" :stroke-width="2" />
           新增
-        </v-btn>
-        <v-btn variant="text" prepend-icon="mdi-refresh" data-testid="profile-refresh" @click="load">
+        </button>
+        <button class="sf-btn sf-btn--ghost" type="button" data-testid="profile-refresh" :disabled="loading" @click="load">
+          <IconRefresh :size="15" :stroke-width="1.8" :class="{ 'pf-spin': loading }" />
           刷新
-        </v-btn>
+        </button>
       </template>
-    </PageHeader>
+    </SfPageHead>
 
-    <AsyncSection
-      :loading="loading && profiles.length === 0"
-      :error="error"
-      :empty="profiles.length === 0"
-      empty-text="还没有订阅方案"
-      @retry="load"
-    >
-      <div class="profiles-table-bar">
-        <span class="text-caption text-medium-emphasis">共 {{ profiles.length }} 条</span>
-        <v-spacer />
-        <v-select
-          :model-value="profilePageSize"
-          :items="[10, 25, 50, 100]"
-          label="每页条数"
-          density="compact"
-          variant="outlined"
-          hide-details
-          data-testid="profile-page-size"
-          class="profiles-page-size"
-          @update:model-value="setProfilePageSize"
-        />
+    <div v-if="error !== ''" class="sf-note sf-note--danger sf-rise" style="margin-bottom: 16px">
+      <span class="sf-note__body">{{ error }}</span>
+      <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" @click="load">重试</button>
+    </div>
+
+    <div v-if="profiles.length === 0 && !loading && error === ''" class="sf-panel">
+      <SfEmpty title="还没有订阅方案" desc="新增一个方案，把节点来源、规则与输出格式组装成可订阅的配置。" />
+    </div>
+
+    <template v-else>
+      <div class="pf-bar sf-rise sf-d1">
+        <span class="sf-pagination__info">共 {{ profiles.length }} 条</span>
+        <span class="sf-spacer" />
+        <span class="sf-select-wrap" style="width: 96px">
+          <select class="sf-select pf-size" data-testid="profile-page-size" :value="String(profilePageSize)" @change="setProfilePageSize(Number(($event.target as HTMLSelectElement).value))">
+            <option v-for="n in [10, 25, 50, 100]" :key="n" :value="String(n)">{{ n }}</option>
+          </select>
+        </span>
       </div>
-      <v-data-table
-        :page="profilePage"
-        :items-per-page="profilePageSize"
-        :items="profiles"
-        :headers="headers"
-        :items-per-page-options="[10, 25, 50, 100]"
-        density="comfortable"
-        hover
-        data-testid="profile-table"
-        class="profiles-table"
-      >
-        <template #item.name="{ item }">
-          <span data-testid="profile-row">{{ item.name }}</span>
-        </template>
-        <template #item.config="{ item }">
-          <span class="profiles-truncate" :title="item.config">{{ templateText(item.config) }}</span>
-        </template>
-        <template #item.pipeline="{ item }">
-          <span>{{ pipelineText(item.pipeline) }}</span>
-        </template>
-        <template #item.rule_layers="{ item }">
-          <span data-testid="profile-rule-layers-text">{{ layerText(item.rule_layers) }}</span>
-        </template>
-        <template #item.group_layers="{ item }">
-          <span data-testid="profile-group-layers-text">{{ layerText(item.group_layers) }}</span>
-        </template>
-        <template #item.rule_sources="{ item }">
-          <span :data-testid="'profile-rule-sources-text-' + item.id">
-            {{ (item.rule_sources ?? []).join('、') || '默认' }}
+
+      <div class="sf-table-wrap sf-rise sf-d1" data-testid="profile-table">
+        <table class="sf-table">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>模板</th>
+              <th>最终处理</th>
+              <th>规则层</th>
+              <th>分组层</th>
+              <th>规则源</th>
+              <th style="width: 80px">启用</th>
+              <th style="width: 96px; text-align: right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading && profiles.length === 0">
+              <td v-for="n in 8" :key="n"><span class="sf-skeleton" style="width: 60%" /></td>
+            </tr>
+            <tr v-for="item in pagedProfiles" v-else :key="item.id" data-testid="profile-row">
+              <td><span style="font-weight: 600">{{ item.name }}</span></td>
+              <td><span class="pf-truncate sf-mono" :title="item.config">{{ templateText(item.config) }}</span></td>
+              <td><span class="sf-faint" style="font-size: 12.5px">{{ pipelineText(item.pipeline) }}</span></td>
+              <td><span data-testid="profile-rule-layers-text" style="font-size: 12.5px">{{ layerText(item.rule_layers) }}</span></td>
+              <td><span data-testid="profile-group-layers-text" style="font-size: 12.5px">{{ layerText(item.group_layers) }}</span></td>
+              <td>
+                <span :data-testid="'profile-rule-sources-text-' + item.id" class="pf-truncate" :title="(item.rule_sources ?? []).join('、')">
+                  {{ (item.rule_sources ?? []).join('、') || '默认' }}
+                </span>
+              </td>
+              <td>
+                <span class="sf-status">
+                  <span class="sf-led" :class="item.enabled ? 'sf-led--ok' : 'sf-led--idle'" />
+                  <span>{{ item.enabled ? '启用' : '停用' }}</span>
+                </span>
+              </td>
+              <td>
+                <span class="sf-table__actions">
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="编辑" data-testid="profile-edit" @click="openEdit(item)">
+                    <IconPencil :size="15" :stroke-width="1.7" />
+                  </button>
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm sf-btn--del" type="button" aria-label="删除" data-testid="profile-delete" @click="askDelete(item)">
+                    <IconTrash :size="15" :stroke-width="1.7" />
+                  </button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="profiles.length > profilePageSize" class="sf-pagination" style="border: none; padding: 12px 2px">
+        <span class="sf-pagination__info">PAGE {{ profilePage }} / {{ profilePageCount }}</span>
+        <span class="sf-spacer" />
+        <button class="sf-btn sf-btn--ghost sf-btn--icon sf-btn--sm" type="button" aria-label="上一页" :disabled="profilePage <= 1" @click="profilePage = profilePage - 1">‹</button>
+        <button class="sf-btn sf-btn--ghost sf-btn--icon sf-btn--sm" type="button" aria-label="下一页" :disabled="profilePage >= profilePageCount" @click="profilePage = profilePage + 1">›</button>
+      </div>
+    </template>
+
+    <!-- 编辑方案 -->
+    <SfDialog :open="dialog" :label="editingId === 0 ? 'CREATE PROFILE' : 'EDIT PROFILE'" :title="editingId === 0 ? '新建方案' : '编辑方案'" wide @close="dialog = false">
+      <div class="pf-row">
+        <SfField label="名称">
+          <input v-model="draft.name" class="sf-input" data-testid="profile-name" spellcheck="false" />
+        </SfField>
+        <SfField label="说明">
+          <input v-model="draft.description" class="sf-input" data-testid="profile-description" spellcheck="false" />
+        </SfField>
+      </div>
+      <div class="pf-row">
+        <SfField label="模板" hint="留空时使用默认模板">
+          <input v-model="draft.config" class="sf-input sf-input--mono" data-testid="profile-config" spellcheck="false" />
+        </SfField>
+        <SfField label="最终处理管线" hint="各来源先按自己的管线处理并合并，这条管线最后执行；留空不处理。">
+          <span class="sf-select-wrap">
+            <select v-model="draft.pipeline" class="sf-select" data-testid="profile-pipeline">
+              <option value="">不处理</option>
+              <option v-for="item in pipelineItems" :key="item.value" :value="item.value">{{ item.title }}</option>
+            </select>
           </span>
-        </template>
-        <template #item.enabled="{ item }">
-          <span class="sf-status">
-            <span class="sf-status__dot" :class="item.enabled ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
-            <span>{{ item.enabled ? '启用' : '停用' }}</span>
+        </SfField>
+      </div>
+      <div class="pf-row">
+        <SfField hint="留空时使用 clash.meta。">
+          <template #label><span class="sf-field__label">目标格式 <SfInfoTip text="留空时使用 clash.meta。" /></span></template>
+          <span class="sf-select-wrap">
+            <select v-model="draft.target" class="sf-select" data-testid="profile-target">
+              <option value="">默认（clash.meta）</option>
+              <option v-for="t in targetOptions" :key="t" :value="t">{{ t }}</option>
+            </select>
           </span>
-        </template>
-        <template #item.actions="{ item }">
-          <v-btn
-            icon="mdi-pencil"
-            size="small"
-            variant="text"
-            data-testid="profile-edit"
-            @click="openEdit(item)"
-          />
-          <v-btn
-            icon="mdi-delete"
-            size="small"
-            variant="text"
-            color="error"
-            data-testid="profile-delete"
-            @click="askDelete(item)"
-          />
-        </template>
-      </v-data-table>
-    </AsyncSection>
-
-    <v-dialog v-model="dialog" max-width="760">
-      <v-card>
-        <v-card-title>{{ editingId === 0 ? '新建方案' : '编辑方案' }}</v-card-title>
-        <v-card-text class="profile-dialog__body">
-          <div class="profile-form-row">
-            <v-text-field
-              v-model="draft.name"
-              label="名称"
-              variant="outlined"
-              density="comfortable"
-              class="mb-2"
-              data-testid="profile-name"
-            />
-            <v-text-field
-              v-model="draft.description"
-              label="说明"
-              variant="outlined"
-              density="comfortable"
-              class="mb-2"
-              data-testid="profile-description"
-            />
-          </div>
-          <div class="profile-form-row">
-            <v-text-field
-              v-model="draft.config"
-              label="模板"
-              hint="留空时使用默认模板"
-              variant="outlined"
-              density="comfortable"
-              hide-details
-              class="mb-3"
-              data-testid="profile-config"
-            />
-            <v-select
-              v-model="draft.pipeline"
-              :items="pipelineItems"
-              label="最终处理管线"
-              hint="各来源先按自己的管线处理并合并，这条管线最后执行；留空不处理。"
-              variant="outlined"
-              density="comfortable"
-              persistent-hint
-              clearable
-              class="mb-3"
-              data-testid="profile-pipeline"
-            />
-          </div>
-          <div class="profile-form-row">
-            <div class="mb-3">
-              <div class="sf-form-label">
-                <span>目标格式</span>
-                <InfoTip text="留空时使用 clash.meta。" label="目标格式" />
-              </div>
-              <v-select
-                v-model="draft.target"
-                :items="targetOptions"
-                variant="outlined"
-                density="comfortable"
-                clearable
-                hide-details
-                data-testid="profile-target"
-              />
-            </div>
-            <div class="profile-form-row__switch mb-3">
-              <v-switch
-                v-model="draft.enabled"
-                label="启用"
-                color="primary"
-                hide-details
-                data-testid="profile-enabled"
-              />
-            </div>
-          </div>
-          <div class="profile-form-row">
-            <div class="mb-3">
-              <div class="sf-form-label">
-                <span>包含节点</span>
-                <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不筛选。" example="香港,日本" label="包含节点" />
-              </div>
-              <v-text-field
-                v-model="draft.include"
-                variant="outlined"
-                density="comfortable"
-                hide-details
-                data-testid="profile-include"
-              />
-            </div>
-            <div class="mb-3">
-              <div class="sf-form-label">
-                <span>排除节点</span>
-                <InfoTip text="按节点名称匹配的逗号分隔正则；留空表示不排除。" example="过期,剩余" label="排除节点" />
-              </div>
-              <v-text-field
-                v-model="draft.exclude"
-                variant="outlined"
-                density="comfortable"
-                hide-details
-                data-testid="profile-exclude"
-              />
-            </div>
-          </div>
-          <div class="mb-3">
-            <div class="sf-form-label">
-              <span>规则源（顺序即优先级）</span>
-              <InfoTip text="同一匹配条件出现在多个规则源时，按列表顺序由先出现的源生效。机场规则源显示为「机场规则 · 名称」。" label="规则源优先级" />
-            </div>
-            <div class="sf-source-list" data-testid="profile-rule-sources">
-              <div
-                v-for="(name, index) in draft.rule_sources"
-                :key="name"
-                class="sf-source-row"
-                :data-testid="'profile-rule-source-row-' + name"
-              >
-                <span class="sf-source-priority">{{ index + 1 }}</span>
-                <span class="sf-source-name">{{ sourceTitle(name) }}</span>
-                <span class="sf-source-meta">{{ sourceMeta(name) }}</span>
-                <v-btn
-                  icon="mdi-chevron-up"
-                  size="x-small"
-                  variant="text"
-                  :disabled="index === 0"
-                  :data-testid="'profile-rule-source-up-' + name"
-                  @click="moveRuleSource(index, -1)"
-                />
-                <v-btn
-                  icon="mdi-chevron-down"
-                  size="x-small"
-                  variant="text"
-                  :disabled="index === draft.rule_sources.length - 1"
-                  :data-testid="'profile-rule-source-down-' + name"
-                  @click="moveRuleSource(index, 1)"
-                />
-                <v-btn
-                  icon="mdi-close"
-                  size="x-small"
-                  variant="text"
-                  :data-testid="'profile-rule-source-remove-' + name"
-                  @click="removeRuleSource(name)"
-                />
-              </div>
-              <div v-if="draft.rule_sources.length === 0" class="sf-source-empty text-medium-emphasis" data-testid="profile-rule-sources-empty">
-                未绑定规则源
-              </div>
-            </div>
-            <v-btn
-              size="small"
-              variant="tonal"
-              prepend-icon="mdi-plus"
-              class="mt-2"
-              data-testid="profile-rule-source-add"
-              @click="openSourcePicker"
-            >
-              添加规则源
-            </v-btn>
-            <v-alert
-              v-if="sourceConflictTotal > 0"
-              type="warning"
-              variant="tonal"
-              density="compact"
-              class="mt-2"
-              data-testid="profile-source-conflicts"
-            >
-              发现 {{ sourceConflictTotal }} 条跨源重复规则，当前按列表顺序由先出现的源生效。
-              <v-btn
-                v-if="sourceConflictSamples.length > 0"
-                variant="text"
-                size="small"
-                class="ml-2"
-                data-testid="profile-source-conflicts-detail"
-                @click="conflictDialogOpen = true"
-              >查看示例</v-btn>
-            </v-alert>
-          </div>
-          <v-divider class="mb-3" />
-          <div class="text-subtitle-2 mb-1">统一最终选择组</div>
-          <div class="d-flex align-center ga-2 mb-2">
-            <v-switch
-              v-model="draft.final_group_enabled"
-              label="统一各来源的最终节点选择组"
-              color="primary"
-              density="compact"
-              hide-details
-              data-testid="profile-final-group-enabled"
-            />
-            <InfoTip
-              text="开启后，机场、模板与规则源各自的最终节点选择组会归并为一个组；服务分组（Netflix、ChatGPT 等）保留。关闭时行为不变。"
-              label="统一最终选择组"
-            />
-          </div>
-          <template v-if="draft.final_group_enabled">
-            <div class="profile-form-row">
-              <v-select
-                v-model="draft.final_group_mode"
-                :items="finalGroupModeOptions"
-                label="统一组"
-                hint="自动指定使用标准名；自定义名称可沿用已有最终组或新建组。"
-                variant="outlined"
-                density="comfortable"
-                persistent-hint
-                class="mb-3"
-                data-testid="profile-final-group-mode"
-              />
-              <v-text-field
-                v-model="draft.final_group_name"
-                :disabled="draft.final_group_mode === 'auto'"
-                label="统一组名称"
-                hint="规则目标与分组成员都会指向这个名字；不能与普通服务组重名。"
-                variant="outlined"
-                density="comfortable"
-                persistent-hint
-                class="mb-3"
-                data-testid="profile-final-group-name"
-              />
-            </div>
-            <div class="d-flex align-center flex-wrap ga-3 mb-3">
-              <v-switch
-                v-model="draft.final_group_include_direct"
-                label="包含 DIRECT"
-                color="primary"
-                density="compact"
-                hide-details
-                data-testid="profile-final-group-direct"
-              />
-              <v-switch
-                v-model="draft.final_group_keep_source_terminals"
-                label="保留来源最终组为子选项"
-                color="primary"
-                density="compact"
-                hide-details
-                data-testid="profile-final-group-keep"
-              />
-              <v-btn
-                size="small"
-                variant="tonal"
-                prepend-icon="mdi-magnify-scan"
-                data-testid="profile-final-group-preview"
-                @click="openFinalGroupPreview"
-              >
-                预览识别结果
-              </v-btn>
-            </div>
-          </template>
-          <v-divider class="mb-3" />
-          <div class="text-subtitle-2 mb-1">节点来源</div>
-          <div class="d-flex align-center ga-1 mb-2">
-            <v-switch
-              v-model="draft.limit_sources"
-              label="限制机场与自建节点来源"
-              color="primary"
-              density="compact"
-              hide-details
-              data-testid="profile-limit-sources"
-            />
-            <InfoTip text="关闭时使用全部启用的来源；开启后只使用下方选择的来源，均不选择表示不使用该类来源。" label="节点来源" />
-          </div>
-          <div class="profile-form-row">
-            <v-select
-              v-model="draft.airport_ids"
-              :items="airportOptions"
-              :disabled="!draft.limit_sources"
-              label="机场来源"
-              multiple
-              chips
-              closable-chips
-              variant="outlined"
-              density="comfortable"
-              data-testid="profile-airports"
-              class="mb-2"
-            />
-            <v-select
-              v-model="draft.self_node_ids"
-              :items="selfNodeOptions"
-              :disabled="!draft.limit_sources"
-              label="自建节点来源"
-              multiple
-              chips
-              closable-chips
-              variant="outlined"
-              density="comfortable"
-              data-testid="profile-self-nodes"
-              class="mb-2"
-            />
-          </div>
-
-          <div class="profile-form-row profile-form-row--layers">
-            <div v-for="editor in layerEditors" :key="editor.testid" class="mb-3" :data-testid="editor.testid">
-            <div class="sf-form-label">
-              <span>{{ editor.caption }}</span>
-              <InfoTip :text="editor.hint" :label="editor.caption" />
-            </div>
-            <div class="sf-layer-editor">
-            <div
-              v-for="(row, index) in editor.rows"
-              :key="row.key"
-              class="sf-layer-row"
-              :data-testid="editor.prefix + '-layer-row-' + row.key"
-            >
-              <v-checkbox
-                v-model="row.enabled"
-                hide-details
-                density="compact"
-                :data-testid="editor.prefix + '-layer-toggle-' + row.key"
-              />
-              <span class="sf-layer-name">{{ LAYER_LABELS[row.key] }}</span>
-              <span class="sf-layer-priority">{{ layerPriority(editor.rows, row.key) }}</span>
-              <v-btn
-                v-if="editor.move"
-                icon="mdi-chevron-up"
-                size="x-small"
-                variant="text"
-                :disabled="index === 0 || (editor.lockTemplate && row.key === 'template')"
-                :data-testid="editor.prefix + '-layer-up-' + row.key"
-                @click="editor.move(index, -1)"
-              />
-              <v-btn
-                v-if="editor.move"
-                icon="mdi-chevron-down"
-                size="x-small"
-                variant="text"
-                :disabled="index === editor.rows.length - 1 || (editor.lockTemplate && row.key === 'template')"
-                :data-testid="editor.prefix + '-layer-down-' + row.key"
-                @click="editor.move(index, 1)"
-              />
-            </div>
-            </div>
-            <div v-if="editor.note !== ''" class="sf-layer-note">{{ editor.note }}</div>
-          </div>
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" data-testid="profile-cancel" @click="dialog = false">取消</v-btn>
-          <v-btn color="primary" data-testid="profile-save" @click="save">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-dialog v-model="sourcePickerOpen" max-width="560">
-    <v-card data-testid="profile-source-picker">
-      <v-card-title>添加规则源</v-card-title>
-      <v-card-text>
-        <v-text-field v-model="sourceSearch" label="搜索规则源" density="compact" hide-details data-testid="profile-source-search" class="mb-2" />
-        <div class="sf-source-picker-list">
-          <v-list v-if="filteredSourceOptions.length > 0">
-            <v-list-item v-for="opt in filteredSourceOptions" :key="opt.value" data-testid="profile-source-option">
-              <template #prepend>
-                <v-checkbox
-                  :model-value="sourcePicked.includes(opt.value)"
-                  hide-details
-                  density="compact"
-                  :data-testid="'profile-source-check-' + opt.value"
-                  @update:model-value="toggleSourcePick(opt.value)"
-                />
-              </template>
-              <v-list-item-title>{{ opt.title }}</v-list-item-title>
-              <v-list-item-subtitle>{{ (opt.origin === 'airport' ? '机场' : '远程') + ' · ' + (opt.ruleCount ?? 0) + ' 条' }}</v-list-item-subtitle>
-            </v-list-item>
-          </v-list>
-          <div v-else class="text-medium-emphasis py-4 text-center" data-testid="profile-source-empty">没有可添加的规则源</div>
+        </SfField>
+        <div class="pf-switch-box">
+          <SfSwitch v-model="draft.enabled" label="启用" data-testid="profile-enabled" />
         </div>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="profile-source-cancel" @click="sourcePickerOpen = false">取消</v-btn>
-        <v-btn color="primary" :disabled="sourcePicked.length === 0" data-testid="profile-source-confirm" @click="addPickedSources">添加</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      </div>
+      <div class="pf-row">
+        <SfField hint="按节点名称匹配的逗号分隔正则；留空表示不筛选。">
+          <template #label><span class="sf-field__label">包含节点 <SfInfoTip text="按节点名称匹配的逗号分隔正则；留空表示不筛选。示例：香港,日本" /></span></template>
+          <input v-model="draft.include" class="sf-input sf-input--mono" data-testid="profile-include" spellcheck="false" />
+        </SfField>
+        <SfField hint="按节点名称匹配的逗号分隔正则；留空表示不排除。">
+          <template #label><span class="sf-field__label">排除节点 <SfInfoTip text="按节点名称匹配的逗号分隔正则；留空表示不排除。示例：过期,剩余" /></span></template>
+          <input v-model="draft.exclude" class="sf-input sf-input--mono" data-testid="profile-exclude" spellcheck="false" />
+        </SfField>
+      </div>
 
-  <v-dialog v-model="conflictDialogOpen" max-width="640" scrollable data-testid="profile-source-conflicts-dialog">
-    <v-card>
-      <v-card-title>跨源重复规则示例</v-card-title>
-      <v-card-text>
-        <p class="text-body-2 text-medium-emphasis mb-3">
-          以下匹配条件同时存在于两个规则源。订阅生成时按规则源顺序取先出现的定义。
-        </p>
-        <v-table density="compact">
+      <!-- 规则源 -->
+      <div class="pf-section">
+        <div class="pf-section__head">
+          <span class="sf-label-mono">RULE SOURCES / 规则源（顺序即优先级）</span>
+          <SfInfoTip text="同一匹配条件出现在多个规则源时，按列表顺序由先出现的源生效。机场规则源显示为「机场规则 · 名称」。" />
+          <span class="sf-spacer" />
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="profile-rule-source-add" @click="openSourcePicker">
+            <IconPlus :size="14" :stroke-width="2" />
+            添加规则源
+          </button>
+        </div>
+        <div class="pf-source-list" data-testid="profile-rule-sources">
+          <div
+            v-for="(name, index) in draft.rule_sources"
+            :key="name"
+            class="pf-source-row"
+            :data-testid="'profile-rule-source-row-' + name"
+          >
+            <span class="pf-source-priority sf-mono">{{ String(index + 1).padStart(2, '0') }}</span>
+            <span class="pf-source-name">{{ sourceTitle(name) }}</span>
+            <span class="pf-source-meta">{{ sourceMeta(name) }}</span>
+            <span class="sf-table__actions">
+              <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="上移" :disabled="index === 0" :data-testid="'profile-rule-source-up-' + name" @click="moveRuleSource(index, -1)">
+                <IconChevronUp :size="15" :stroke-width="1.7" />
+              </button>
+              <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="下移" :disabled="index === draft.rule_sources.length - 1" :data-testid="'profile-rule-source-down-' + name" @click="moveRuleSource(index, 1)">
+                <IconChevronDown :size="15" :stroke-width="1.7" />
+              </button>
+              <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm sf-btn--del" type="button" aria-label="移除" :data-testid="'profile-rule-source-remove-' + name" @click="removeRuleSource(name)">
+                <IconX :size="15" :stroke-width="1.7" />
+              </button>
+            </span>
+          </div>
+          <div v-if="draft.rule_sources.length === 0" class="pf-source-empty" data-testid="profile-rule-sources-empty">
+            未绑定规则源
+          </div>
+        </div>
+        <SfNote v-if="sourceConflictTotal > 0" tone="warn" data-testid="profile-source-conflicts" style="margin-top: 10px">
+          发现 {{ sourceConflictTotal }} 条跨源重复规则，当前按列表顺序由先出现的源生效。
+          <button v-if="sourceConflictSamples.length > 0" class="sf-btn sf-btn--ghost sf-btn--sm" type="button" style="margin-left: 10px" data-testid="profile-source-conflicts-detail" @click="conflictDialogOpen = true">查看示例</button>
+        </SfNote>
+      </div>
+
+      <!-- 统一最终选择组 -->
+      <div class="pf-section">
+        <div class="pf-section__head">
+          <span class="sf-label-mono">FINAL GROUP / 统一最终选择组</span>
+          <SfInfoTip text="开启后，机场、模板与规则源各自的最终节点选择组会归并为一个组；服务分组（Netflix、ChatGPT 等）保留。关闭时行为不变。" />
+        </div>
+        <SfSwitch v-model="draft.final_group_enabled" label="统一各来源的最终节点选择组" data-testid="profile-final-group-enabled" />
+        <template v-if="draft.final_group_enabled">
+          <div class="pf-row" style="margin-top: 12px">
+            <SfField label="统一组" hint="自动指定使用标准名；自定义名称可沿用已有最终组或新建组。">
+              <span class="sf-select-wrap">
+                <select v-model="draft.final_group_mode" class="sf-select" data-testid="profile-final-group-mode">
+                  <option v-for="opt in finalGroupModeOptions" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+                </select>
+              </span>
+            </SfField>
+            <SfField label="统一组名称" hint="规则目标与分组成员都会指向这个名字；不能与普通服务组重名。">
+              <input v-model="draft.final_group_name" class="sf-input" data-testid="profile-final-group-name" :disabled="draft.final_group_mode === 'auto'" spellcheck="false" />
+            </SfField>
+          </div>
+          <div class="sf-toolbar" style="margin-top: 4px">
+            <SfSwitch v-model="draft.final_group_include_direct" label="包含 DIRECT" data-testid="profile-final-group-direct" />
+            <SfSwitch v-model="draft.final_group_keep_source_terminals" label="保留来源最终组为子选项" data-testid="profile-final-group-keep" />
+            <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="profile-final-group-preview" @click="openFinalGroupPreview">
+              <IconScanEye :size="14" :stroke-width="1.8" />
+              预览识别结果
+            </button>
+          </div>
+        </template>
+      </div>
+
+      <!-- 节点来源 -->
+      <div class="pf-section">
+        <div class="pf-section__head">
+          <span class="sf-label-mono">NODE SOURCES / 节点来源</span>
+          <SfInfoTip text="关闭时使用全部启用的来源；开启后只使用下方选择的来源，均不选择表示不使用该类来源。" />
+        </div>
+        <SfSwitch v-model="draft.limit_sources" label="限制机场与自建节点来源" data-testid="profile-limit-sources" />
+        <template v-if="draft.limit_sources">
+          <div class="pf-row" style="margin-top: 12px">
+            <div class="pf-multiselect" data-testid="profile-airports">
+              <span class="sf-field__label">机场来源</span>
+              <label v-for="opt in airportOptions" :key="opt.value" class="pf-check">
+                <input type="checkbox" class="sf-checkbox" :checked="draft.airport_ids.includes(opt.value)" @change="draft.airport_ids = toggleId(draft.airport_ids, opt.value)" />
+                <span>{{ opt.title }}</span>
+              </label>
+              <span v-if="airportOptions.length === 0" class="sf-faint" style="font-size: 12.5px">暂无机场</span>
+            </div>
+            <div class="pf-multiselect" data-testid="profile-self-nodes">
+              <span class="sf-field__label">自建节点来源</span>
+              <label v-for="opt in selfNodeOptions" :key="opt.value" class="pf-check">
+                <input type="checkbox" class="sf-checkbox" :checked="draft.self_node_ids.includes(opt.value)" @change="draft.self_node_ids = toggleId(draft.self_node_ids, opt.value)" />
+                <span>{{ opt.title }}</span>
+              </label>
+              <span v-if="selfNodeOptions.length === 0" class="sf-faint" style="font-size: 12.5px">暂无自建节点</span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- 层编辑器 -->
+      <div v-for="editor in layerEditors" :key="editor.testid" class="pf-section" :data-testid="editor.testid">
+        <div class="pf-section__head">
+          <span class="sf-label-mono">{{ editor.caption }}</span>
+          <SfInfoTip :text="editor.hint" />
+        </div>
+        <div class="pf-layers">
+          <div
+            v-for="(row, index) in editor.rows"
+            :key="row.key"
+            class="pf-layer-row"
+            :data-testid="editor.prefix + '-layer-row-' + row.key"
+          >
+            <input
+              type="checkbox"
+              class="sf-checkbox"
+              v-model="row.enabled"
+              :data-testid="editor.prefix + '-layer-toggle-' + row.key"
+              :aria-label="editor.caption + ' · ' + LAYER_LABELS[row.key]"
+            />
+            <span class="pf-layer-name">{{ LAYER_LABELS[row.key] }}</span>
+            <span class="pf-layer-priority sf-mono">{{ layerPriority(editor.rows, row.key) }}</span>
+            <span class="sf-spacer" />
+            <template v-if="editor.move !== undefined">
+              <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="上移" :disabled="index === 0 || (editor.lockTemplate && row.key === 'template')" :data-testid="editor.prefix + '-layer-up-' + row.key" @click="editor.move(index, -1)">
+                <IconChevronUp :size="15" :stroke-width="1.7" />
+              </button>
+              <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="下移" :disabled="index === editor.rows.length - 1 || (editor.lockTemplate && row.key === 'template')" :data-testid="editor.prefix + '-layer-down-' + row.key" @click="editor.move(index, 1)">
+                <IconChevronDown :size="15" :stroke-width="1.7" />
+              </button>
+            </template>
+          </div>
+        </div>
+        <div v-if="editor.note !== ''" class="sf-field__hint">{{ editor.note }}</div>
+      </div>
+
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="profile-cancel" @click="dialog = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="profile-save" @click="save">保存</button>
+      </template>
+    </SfDialog>
+
+    <!-- 规则源挑选器 -->
+    <SfDialog :open="sourcePickerOpen" label="PICK SOURCES" title="添加规则源" @close="sourcePickerOpen = false">
+      <input v-model="sourceSearch" class="sf-input" placeholder="搜索规则源…" data-testid="profile-source-search" />
+      <div class="pf-picker-list" data-testid="profile-source-picker">
+        <template v-if="filteredSourceOptions.length > 0">
+          <label v-for="opt in filteredSourceOptions" :key="opt.value" class="pf-picker-row" data-testid="profile-source-option">
+            <input
+              type="checkbox"
+              class="sf-checkbox"
+              :checked="sourcePicked.includes(opt.value)"
+              :data-testid="'profile-source-check-' + opt.value"
+              @change="toggleSourcePick(opt.value)"
+            />
+            <span class="pf-picker-body">
+              <span class="pf-picker-title">{{ opt.title }}</span>
+              <span class="sf-faint" style="font-size: 12px">{{ (opt.origin === 'airport' ? '机场' : '远程') + ' · ' + (opt.ruleCount ?? 0) + ' 条' }}</span>
+            </span>
+          </label>
+        </template>
+        <div v-else class="pf-picker-empty" data-testid="profile-source-empty">没有可添加的规则源</div>
+      </div>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="profile-source-cancel" @click="sourcePickerOpen = false">取消</button>
+        <button class="sf-btn sf-btn--primary" type="button" :disabled="sourcePicked.length === 0" data-testid="profile-source-confirm" @click="addPickedSources">添加</button>
+      </template>
+    </SfDialog>
+
+    <!-- 冲突示例 -->
+    <SfDialog :open="conflictDialogOpen" label="CONFLICTS" title="跨源重复规则示例" wide @close="conflictDialogOpen = false">
+      <p class="sf-field__hint" style="margin: 0">
+        以下匹配条件同时存在于两个规则源。订阅生成时按规则源顺序取先出现的定义。
+      </p>
+      <div class="sf-table-wrap">
+        <table class="sf-table">
           <thead>
             <tr><th>类型</th><th>参数</th><th>先出现</th><th>后出现</th></tr>
           </thead>
           <tbody>
             <tr v-for="(s, i) in sourceConflictSamples" :key="i">
-              <td>{{ s.type }}</td>
-              <td>{{ s.param }}</td>
+              <td class="sf-mono" style="font-size: 12px">{{ s.type }}</td>
+              <td class="sf-mono" style="font-size: 12px">{{ s.param }}</td>
               <td>{{ s.first }}</td>
               <td>{{ s.second }}</td>
             </tr>
           </tbody>
-        </v-table>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" data-testid="profile-source-conflicts-close" @click="conflictDialogOpen = false">关闭</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+        </table>
+      </div>
+      <template #foot>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="profile-source-conflicts-close" @click="conflictDialogOpen = false">关闭</button>
+      </template>
+    </SfDialog>
 
-  <v-dialog v-model="finalGroupPreviewOpen" max-width="820" scrollable>
-    <v-card data-testid="profile-final-group-preview-dialog">
-      <v-card-title>统一最终选择组预览</v-card-title>
-      <v-card-text>
-        <div v-if="finalGroupPreviewLoading" class="text-medium-emphasis py-4" data-testid="profile-final-group-preview-loading">
-          正在读取分组与规则源…
+    <!-- 统一组预览 -->
+    <SfDialog :open="finalGroupPreviewOpen" label="FINAL GROUP PREVIEW" title="统一最终选择组预览" wide @close="finalGroupPreviewOpen = false">
+      <div v-if="finalGroupPreviewLoading" class="sf-faint" data-testid="profile-final-group-preview-loading" style="padding: 12px 0">
+        正在读取分组与规则源…
+      </div>
+      <template v-else-if="finalGroupPreview">
+        <div class="pf-preview-lead">
+          统一组：<b>{{ finalGroupPreview.report.unified_name }}</b>
+          <span class="sf-faint">（{{ finalGroupPreview.report.generated ? '将新建' : '复用已有分组' }}；分组 {{ finalGroupPreview.report.groups_before }} → {{ finalGroupPreview.report.groups_after }}；改写规则 {{ finalGroupPreview.report.rewritten_rules }} 条）</span>
         </div>
-        <template v-else-if="finalGroupPreview">
-          <div class="text-body-2 mb-3">
-            统一组：<strong>{{ finalGroupPreview.report.unified_name }}</strong>
-            <span class="text-medium-emphasis">
-              （{{ finalGroupPreview.report.generated ? '将新建' : '复用已有分组' }}；
-              分组 {{ finalGroupPreview.report.groups_before }} → {{ finalGroupPreview.report.groups_after }}；
-              改写规则 {{ finalGroupPreview.report.rewritten_rules }} 条）
-            </span>
-          </div>
-          <v-table density="compact" class="mb-3" data-testid="profile-final-group-preview-terminals">
+        <div class="sf-table-wrap" data-testid="profile-final-group-preview-terminals">
+          <table class="sf-table">
             <thead>
-              <tr><th>来源</th><th>识别到的最终组</th><th>依据</th><th>来源覆盖</th></tr>
+              <tr><th>来源</th><th>识别到的最终组</th><th>依据</th><th style="min-width: 180px">来源覆盖</th></tr>
             </thead>
             <tbody>
               <tr v-for="t in finalGroupPreview.report.terminals" :key="t.source + t.group">
-                <td class="text-caption">{{ t.source }}</td>
+                <td class="sf-faint" style="font-size: 12px">{{ t.source }}</td>
                 <td>{{ t.group }}</td>
-                <td class="text-caption">{{ t.evidence }}</td>
-                <td style="min-width: 180px">
-                  <v-select
-                    :model-value="overrideValue(t.source)"
-                    :items="overrideOptions(t.source)"
-                    density="compact"
-                    variant="outlined"
-                    hide-details
-                    :data-testid="'profile-final-group-override-' + t.source"
-                    @update:model-value="setOverride(t.source, $event)"
-                  />
+                <td class="sf-faint" style="font-size: 12px">{{ t.evidence }}</td>
+                <td>
+                  <span class="sf-select-wrap">
+                    <select
+                      class="sf-select"
+                      style="height: 30px; font-size: 12.5px"
+                      :value="overrideValue(t.source)"
+                      :data-testid="'profile-final-group-override-' + t.source"
+                      @change="setOverride(t.source, ($event.target as HTMLSelectElement).value)"
+                    >
+                      <option v-for="opt in overrideOptions(t.source)" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+                    </select>
+                  </span>
                 </td>
               </tr>
               <tr v-if="finalGroupPreview.report.terminals.length === 0">
-                <td colspan="4" class="text-medium-emphasis">未识别到来源最终组；保存后仍会把 MATCH 指向统一组。</td>
+                <td colspan="4" class="sf-faint" style="text-align: center">未识别到来源最终组；保存后仍会把 MATCH 指向统一组。</td>
               </tr>
             </tbody>
-          </v-table>
-          <div v-if="finalGroupPreview.report.rule_sources.length > 0" class="mb-3">
-            <div class="text-subtitle-2 mb-1">规则源</div>
-            <v-table density="compact" data-testid="profile-final-group-preview-rule-sources">
+          </table>
+        </div>
+        <div v-if="finalGroupPreview.report.rule_sources.length > 0">
+          <div class="sf-label-mono" style="margin-bottom: 8px">规则源</div>
+          <div class="sf-table-wrap" data-testid="profile-final-group-preview-rule-sources">
+            <table class="sf-table">
               <thead>
-                <tr><th>来源</th><th>兜底目标</th><th>选择目标</th><th>影响规则</th><th>覆盖选择目标</th></tr>
+                <tr><th>来源</th><th>兜底目标</th><th>选择目标</th><th style="text-align: right">影响规则</th><th style="min-width: 160px">覆盖选择目标</th></tr>
               </thead>
               <tbody>
                 <tr v-for="rs in finalGroupPreview.report.rule_sources" :key="rs.name">
-                  <td>{{ rs.name }}</td>
+                  <td class="sf-mono" style="font-size: 12px">{{ rs.name }}</td>
                   <td>{{ rs.final_target || '—' }}</td>
                   <td>{{ (rs.selection_targets ?? []).join('、') || '—' }}</td>
-                  <td>{{ rs.affected_rules ?? 0 }}</td>
-                  <td style="min-width: 160px">
-                    <v-text-field
-                      :model-value="ruleOverrideText(rs.name)"
-                      density="compact"
-                      variant="outlined"
-                      hide-details
+                  <td class="sf-table__num" style="text-align: right">{{ rs.affected_rules ?? 0 }}</td>
+                  <td>
+                    <input
+                      class="sf-input sf-input--mono"
+                      style="height: 30px; font-size: 12px"
+                      :value="ruleOverrideText(rs.name)"
                       placeholder="留空=自动；逗号分隔"
                       :data-testid="'profile-final-group-rule-override-' + rs.name"
-                      @update:model-value="setRuleOverrideText(rs.name, $event)"
+                      @input="setRuleOverrideText(rs.name, ($event.target as HTMLInputElement).value)"
                     />
                   </td>
                 </tr>
               </tbody>
-            </v-table>
+            </table>
           </div>
-          <v-alert
-            v-if="finalGroupPreview.warnings.length > 0"
-            type="info"
-            variant="tonal"
-            density="compact"
-            class="mb-2"
-            data-testid="profile-final-group-preview-warnings"
-          >
-            <div v-for="w in finalGroupPreview.warnings" :key="w">{{ w }}</div>
-          </v-alert>
-          <div class="text-caption text-medium-emphasis">
-            将删除：{{ finalGroupPreview.report.removed_groups.join('、') || '无' }}；
-            引用统一组的分组改写 {{ finalGroupPreview.report.rewritten_group_refs }} 处。
-            修改来源覆盖后请点「重新识别」。
-          </div>
-        </template>
-      </v-card-text>
-      <v-card-actions>
-        <v-btn variant="text" data-testid="profile-final-group-preview-close" @click="finalGroupPreviewOpen = false">关闭</v-btn>
-        <v-spacer />
-        <v-btn
-          color="primary"
-          variant="tonal"
-          :disabled="finalGroupPreviewLoading"
-          data-testid="profile-final-group-preview-refresh"
-          @click="openFinalGroupPreview"
-        >重新识别</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-  <v-dialog v-model="confirmOpen" max-width="420">
-      <v-card>
-        <v-card-title>确认删除</v-card-title>
-        <v-card-text>删除方案「{{ deleteTarget.name }}」后不可恢复，确定继续？</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" data-testid="profile-delete-cancel" @click="cancelDelete">取消</v-btn>
-          <v-btn color="error" data-testid="profile-delete-confirm" @click="confirmDelete">删除</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+        </div>
+        <SfNote v-if="finalGroupPreview.warnings.length > 0" tone="info" data-testid="profile-final-group-preview-warnings">
+          <span v-for="w in finalGroupPreview.warnings" :key="w" style="display: block">{{ w }}</span>
+        </SfNote>
+        <p class="sf-field__hint" style="margin: 0">
+          将删除：{{ finalGroupPreview.report.removed_groups.join('、') || '无' }}；引用统一组的分组改写 {{ finalGroupPreview.report.rewritten_group_refs }} 处。修改来源覆盖后请点「重新识别」。
+        </p>
+      </template>
+      <template #foot>
+        <button class="sf-btn sf-btn--subtle" type="button" data-testid="profile-final-group-preview-close" @click="finalGroupPreviewOpen = false">关闭</button>
+        <button class="sf-btn sf-btn--primary" type="button" :disabled="finalGroupPreviewLoading" data-testid="profile-final-group-preview-refresh" @click="openFinalGroupPreview">
+          <IconRefresh :size="14" :stroke-width="1.8" />
+          重新识别
+        </button>
+      </template>
+    </SfDialog>
   </div>
 </template>
 
 <style scoped>
-/* 方案弹窗字段较多：双列排布压缩高度，内容超出时在弹窗内滚动。 */
-.profile-dialog__body {
-  max-height: 78vh;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+.pf-spin {
+  animation: pf-rotate 0.9s linear infinite;
 }
-.profile-form-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0 16px;
-  align-items: start;
-}
-.profile-form-row__switch {
-  display: flex;
-  align-items: center;
-  min-height: 56px;
-  padding-top: 18px;
-}
-.profile-form-row--layers {
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-@media (max-width: 700px) {
-  .profile-form-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
-  .profile-form-row__switch {
-    min-height: 0;
-    padding-top: 0;
+
+@keyframes pf-rotate {
+  to {
+    transform: rotate(360deg);
   }
 }
-.profiles-table-bar {
+
+.pf-bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
-.profiles-page-size {
-  max-width: 132px;
+
+.pf-size {
+  height: 28px;
+  font-size: 12.5px;
+  padding: 0 26px 0 8px;
 }
-.profiles-table :deep(.v-data-table-footer__items-per-page) {
-  display: none;
-}
-.profiles-table {
-  border: 1px solid var(--sf-border);
-  border-radius: var(--sf-radius);
-}
-.profiles-truncate {
+
+.pf-truncate {
   display: inline-block;
-  max-width: 380px;
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
+  font-size: 12px;
 }
-.sf-form-label {
+
+.pf-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.pf-switch-box {
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-height: 24px;
-  margin-bottom: 4px;
-  font-size: 13px;
-  color: var(--sf-text-muted);
+  padding-top: 20px;
 }
-.sf-layer-editor {
-  border: 1px solid var(--sf-border);
-  border-radius: var(--sf-radius);
-  padding: 4px 8px;
-}
-.sf-layer-row {
+
+.pf-section {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 10px;
-  min-height: 36px;
-  padding: 2px 0;
+  padding-top: 14px;
+  border-top: 1px solid oklch(from var(--sf-border) l c h / 0.55);
 }
-.sf-layer-name {
-  min-width: 72px;
-}
-.sf-layer-priority {
-  font-size: 12px;
-  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
-  min-width: 72px;
-}
-.sf-layer-note {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
-}
-.sf-source-list {
-  border: 1px solid var(--sf-border, rgba(0, 0, 0, 0.12));
-  border-radius: 8px;
-  overflow: hidden;
-}
-.sf-source-row {
+
+.pf-section__head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--sf-border, rgba(0, 0, 0, 0.08));
+  flex-wrap: wrap;
 }
-.sf-source-row:last-child {
+
+.pf-source-list {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  overflow: hidden;
+}
+
+.pf-source-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid oklch(from var(--sf-border) l c h / 0.5);
+  background: var(--sf-surface-dim);
+}
+
+.pf-source-row:last-child {
   border-bottom: 0;
 }
-.sf-source-priority {
-  width: 20px;
-  text-align: center;
-  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
-  font-size: 12px;
+
+.pf-source-priority {
+  color: var(--sf-accent);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  flex: none;
 }
-.sf-source-name {
+
+.pf-source-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
 }
-.sf-source-meta {
-  color: var(--sf-text-muted, rgba(0, 0, 0, 0.6));
+
+.pf-source-meta {
+  color: var(--sf-text-faint);
   font-size: 12px;
   white-space: nowrap;
 }
-.sf-source-empty {
-  padding: 10px;
+
+.pf-source-empty {
+  padding: 12px;
+  font-size: 13px;
+  color: var(--sf-text-faint);
+}
+
+.pf-layers {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  overflow: hidden;
+}
+
+.pf-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 12px;
+  border-bottom: 1px solid oklch(from var(--sf-border) l c h / 0.5);
+  background: var(--sf-surface-dim);
+}
+
+.pf-layer-row:last-child {
+  border-bottom: 0;
+}
+
+.pf-layer-name {
+  min-width: 72px;
+  font-weight: 600;
   font-size: 13px;
 }
-.sf-source-picker-list {
+
+.pf-layer-priority {
+  font-size: 10.5px;
+  color: var(--sf-text-faint);
+  letter-spacing: 0.06em;
+}
+
+.pf-multiselect {
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--sf-surface-dim);
+}
+
+.pf-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pf-picker-list {
   max-height: 40vh;
   overflow-y: auto;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+}
+
+.pf-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid oklch(from var(--sf-border) l c h / 0.5);
+  cursor: pointer;
+  transition: background var(--sf-t-fast) var(--sf-ease);
+}
+
+.pf-picker-row:hover {
+  background: var(--sf-surface-dim);
+}
+
+.pf-picker-row:last-child {
+  border-bottom: 0;
+}
+
+.pf-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pf-picker-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.pf-picker-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--sf-text-faint);
+  font-size: 13px;
+}
+
+.pf-preview-lead {
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.pf-preview-lead b {
+  color: var(--sf-accent);
 }
 </style>

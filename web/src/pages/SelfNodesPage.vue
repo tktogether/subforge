@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { pageHelp } from '../content/help'
-import ResourcePage from '../components/ResourcePage.vue'
-import NodePreviewDialog from '../components/NodePreviewDialog.vue'
+import { IconEye } from '@tabler/icons-vue'
+import SfResourcePage from '../components/ui/SfResourcePage.vue'
+import SfNodePreview from '../components/ui/SfNodePreview.vue'
+import SfField from '../components/ui/SfField.vue'
 import { endpoints, type NodePreviewResult } from '../api/endpoints'
 import { notify } from '../composables/useNotify'
 import { errorMessage } from '../composables/useAsync'
-
-const help = pageHelp('self-nodes')
 
 const pipeline = ref('')
 const pipelineOptions = ref<{ title: string; value: string }[]>([])
@@ -16,6 +15,7 @@ const previewOpen = ref(false)
 const previewLoading = ref(false)
 const previewError = ref('')
 const previewResult = ref<NodePreviewResult | null>(null)
+const formatsOpen = ref(false)
 
 async function previewProcess(): Promise<void> {
   previewOpen.value = true
@@ -30,6 +30,7 @@ async function previewProcess(): Promise<void> {
     previewLoading.value = false
   }
 }
+
 const pipelineItems = computed(() => {
   const items = [...pipelineOptions.value]
   const current = pipeline.value.trim()
@@ -67,8 +68,8 @@ onMounted(() => {
 
 const selfNodeColumns = [
   { key: 'name', title: '名称' },
-  { key: 'link', title: '链接' },
-  { key: 'enabled', title: '启用' },
+  { key: 'link', title: '链接', mono: true, width: '40%' },
+  { key: 'enabled', title: '启用', width: '110px' },
 ]
 
 const selfNodeFields = [
@@ -77,79 +78,137 @@ const selfNodeFields = [
   { key: 'enabled', label: '启用', type: 'switch', hint: '关闭后不参与输出' },
 ]
 
-const resource: any = {
-  list: endpoints.listSelfNodes,
-  create: endpoints.createSelfNode,
-  update: (item: any) => endpoints.updateSelfNode(item.id, item),
-  remove: (item: any) => endpoints.deleteSelfNode(item.id),
+const resource = {
+  list: endpoints.listSelfNodes as unknown as () => Promise<Record<string, unknown>[]>,
+  create: (item: Record<string, unknown>) => endpoints.createSelfNode(item as unknown as Parameters<typeof endpoints.createSelfNode>[0]) as unknown as Promise<unknown>,
+  update: (item: Record<string, unknown>) => endpoints.updateSelfNode(item['id'] as number, item as unknown as Parameters<typeof endpoints.updateSelfNode>[1]) as unknown as Promise<unknown>,
+  remove: (item: Record<string, unknown>) => endpoints.deleteSelfNode(item['id'] as number) as unknown as Promise<unknown>,
 }
 </script>
 
 <template>
-  <div class="self-nodes-page">
-    <p class="text-body-2 text-medium-emphasis mb-3">
-      自建节点与机场节点合并输出。分享链接需为标准格式，保存时会校验名称、链接与必要字段。
-    </p>
+  <div>
 
-    <v-card class="mb-4 pa-4" data-testid="self-source-card">
-      <div class="text-subtitle-2 mb-1">自建节点处理</div>
-      <div class="text-caption text-medium-emphasis mb-3">
-        所有选中的自建节点作为同一个来源，先经过这条管线，再与机场来源合并；留空表示不处理。
-      </div>
-      <div class="d-flex align-start ga-3">
-        <v-select
-          v-model="pipeline"
-          :items="pipelineItems"
-          label="处理管线"
-          variant="outlined"
-          density="comfortable"
-          hide-details
-          clearable
-          data-testid="self-source-pipeline"
-          class="self-source-select"
-        />
-        <v-btn color="primary" :loading="pipelineSaving" data-testid="self-source-save" @click="saveSourcePipeline">保存</v-btn>
-        <v-btn variant="tonal" prepend-icon="mdi-eye-outline" data-testid="self-preview-process" @click="previewProcess">预览处理</v-btn>
-      </div>
-    </v-card>
-
-    <ResourcePage
-      title="自建节点"
-      :subtitle="help.oneLiner"
-      help-key="self-nodes"
+    <SfResourcePage
+      page-title="自建节点"
       :columns="selfNodeColumns"
       :fields="selfNodeFields"
       :resource="resource"
-      :empty="help.emptyState"
-    />
+      empty-title="还没有自建节点"
+      empty-desc="添加一条标准分享链接（ss:// / vmess:// / vless:// / trojan:// / hysteria2://）。"
+    >
+      <template #cell-link="{ value }">
+        <span class="sf-mono link-cell" :title="String(value)">{{ value }}</span>
+      </template>
+    </SfResourcePage>
 
-    <v-expansion-panels class="mt-4" data-testid="self-node-formats">
-      <v-expansion-panel>
-        <v-expansion-panel-title>查看格式示例</v-expansion-panel-title>
-        <v-expansion-panel-text>
-          <ul class="text-body-2">
+    <section class="sf-panel sf-rise sf-d1" data-testid="self-source-card" style="margin-bottom: 16px">
+      <div class="sf-panel__head">
+        <span class="sf-panel__title">自建节点处理</span>
+      </div>
+      <div class="sf-panel__body">
+        <p class="sf-field__hint" style="margin: 0 0 12px">
+          自建节点先经过这条管线，再与机场来源合并；留空表示不处理。
+        </p>
+        <div class="source-row">
+          <SfField label="处理管线" style="max-width: 360px; flex: 1 1 240px">
+            <span class="sf-select-wrap">
+              <select v-model="pipeline" class="sf-select" data-testid="self-source-pipeline">
+                <option value="">不处理</option>
+                <option v-for="item in pipelineItems" :key="item.value" :value="item.value">{{ item.title }}</option>
+              </select>
+            </span>
+          </SfField>
+          <button class="sf-btn sf-btn--primary" type="button" data-testid="self-source-save" :disabled="pipelineSaving" @click="saveSourcePipeline">
+            {{ pipelineSaving ? '保存中…' : '保存管线' }}
+          </button>
+          <button class="sf-btn sf-btn--ghost" type="button" data-testid="self-preview-process" @click="previewProcess">
+            <IconEye :size="15" :stroke-width="1.7" />
+            预览处理
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="sf-panel sf-rise sf-d2" style="margin-top: 16px" data-testid="self-node-formats">
+      <button type="button" class="formats-head" @click="formatsOpen = !formatsOpen">
+        <span class="sf-panel__title">查看格式示例</span>
+        <span class="sf-badge">ss:// vmess:// vless://</span>
+      </button>
+      <div class="sf-collapse" :class="{ 'is-open': formatsOpen }">
+        <div class="sf-collapse__inner">
+          <ul class="formats-list">
             <li><code>ss://base64(method:password)@server:port#名称</code></li>
             <li><code>vmess://base64({...})</code></li>
             <li><code>vless://uuid@server:port?encryption=none&security=tls#名称</code></li>
             <li><code>trojan://password@server:port?sni=example.com#名称</code></li>
           </ul>
-          <p class="text-caption text-medium-emphasis mb-0">以上均为示例，请替换成自己的服务器信息。</p>
-        </v-expansion-panel-text>
-      </v-expansion-panel>
-    </v-expansion-panels>
-    <NodePreviewDialog
-      v-model="previewOpen"
+          <p class="sf-field__hint" style="margin: 0; padding: 0 18px 16px">以上均为示例，请替换成自己的服务器信息。</p>
+        </div>
+      </div>
+    </section>
+
+    <SfNodePreview
+      :open="previewOpen"
       title="自建节点处理预览"
       :loading="previewLoading"
       :error="previewError"
       :result="previewResult"
+      @close="previewOpen = false"
     />
   </div>
 </template>
 
 <style scoped>
-.self-source-select {
-  max-width: 360px;
-  flex: 1 1 240px;
+.source-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.link-cell {
+  display: inline-block;
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-size: 12px;
+}
+
+.formats-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  background: none;
+  border: none;
+  color: var(--sf-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.formats-list {
+  margin: 0;
+  padding: 4px 18px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.formats-list code {
+  font-family: var(--sf-font-code);
+  font-size: 12.5px;
+  color: var(--sf-text-muted);
+  background: var(--sf-surface-dim);
+  border: 1px solid var(--sf-border);
+  border-radius: 3px;
+  padding: 2px 7px;
+  display: inline-block;
+  overflow-wrap: anywhere;
 }
 </style>
