@@ -18,9 +18,13 @@
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@mdi/font": "^7.4.47",
     "vue": "^3.5.44",
     "vue-router": "^4.5.0",
+    "@tabler/icons-vue": "^3.35.0",
+    "@fontsource-variable/tektur": "^5.2.5",
+    "@fontsource-variable/archivo": "^5.2.5",
+    "@fontsource-variable/martian-mono": "^5.2.5",
+    "@mdi/font": "^7.4.47",
     "vuetify": "^3.13.7"
   },
   "devDependencies": {

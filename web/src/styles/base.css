@@ -1,26 +1,73 @@
-/* base.css — D1 Instrument 全局基础层（排版 / 焦点 / 动效 / 工具类） */
-/* 令牌来源：web/src/design/tokens.css（W1） */
+/* base.css — 深空管制台全局基础层（排版 / 焦点 / 质感 / 动效降级） */
+/* 令牌来源：web/src/design/tokens.css */
 
 html {
   scroll-behavior: smooth;
+  /* 始终保留纵向滚动通道：配合隐藏滚动条，弹窗锁 body 滚动时布局宽度不变（防位移） */
+  overflow-y: scroll;
+  /* 禁用移动端字体自动放大：宽表格滚动时文字不再被吹爆（Android font boosting） */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* 全局边盒模型：此前由 Vuetify 提供，剥离后必须自己声明，
+   否则 width:100% + padding 会把容器撑出父级产生横向溢出。 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body,
 #app {
   font-family: var(--sf-font-sans);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
   background: var(--sf-bg);
   color: var(--sf-text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* 背景质感：坐标网格，固定不随滚动 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 坐标网格：32px 方格，向边缘淡出 */
+body::before {
+  background-image:
+    linear-gradient(var(--sf-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--sf-grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+  -webkit-mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 40%, transparent 100%);
+}
+
+#app {
+  position: relative;
+  z-index: 1;
 }
 
 code,
 kbd,
 pre,
 samp {
-  font-family: var(--sf-font-mono);
+  font-family: var(--sf-font-code);
+}
+
+/* 标题字：展示体只给少量英文与数字；中文回退黑体 */
+h1,
+h2,
+h3 {
+  line-height: 1.3;
+  font-weight: 650;
+  letter-spacing: 0.01em;
 }
 
 ::selection {
@@ -28,24 +75,21 @@ samp {
   color: var(--sf-accent-fg);
 }
 
-/* 细滚动条 */
+/* 滚动条：全局隐藏（页面级与内部滚动区），滚轮 / 触控板 / 拖拽滚动不受影响 */
+html {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
 * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--sf-border-strong) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-*::-webkit-scrollbar-thumb {
-  background: var(--sf-border-strong);
-  border-radius: 4px;
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* 焦点：2px 实线 + 2px offset，禁止 outline: none */
@@ -54,7 +98,7 @@ samp {
   outline-offset: 2px;
 }
 
-/* reduced-motion 降级 */
+/* reduced-motion 降级：状态直接到位 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

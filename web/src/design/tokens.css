@@ -1,76 +1,135 @@
 /*
- * SubForge 设计令牌 —— 高对比中性蓝
+ * SubForge 设计令牌 —— 深空管制台（DEEP-RANGE CONSOLE）
  *
  * 【唯一真值源】本文件是 SubForge 设计令牌的唯一真值源；上层样式（web/src/styles/**、
  * 组件 <style>、内联样式）只许通过 var(--sf-*) 引用，不得再写字面色值或另立同名变量。
  *
- * 【对比度目标】正文与次级文字在浅色/深色背景上均达到 WCAG AA；主按钮文字、
- * 状态色与焦点轮廓满足 4.5:1；输入框轮廓与开关轨道满足非文本 3:1。
+ * 【方向】工业科幻管制台：石墨蓝黑底、信号琥珀主色、磷光绿只作状态色。
+ * 面是哑光的，光只给"活着的东西"——状态灯、聚焦、活跃项。
  *
- * 【主题命中】data-theme=dark、Vuetify 的 v-theme--dark，以及主题名 subforgeDark
- * 对应的类共用同一份深色值。
+ * 【对比度目标】正文与次级文字对背景 ≥ WCAG AA；主按钮文字 ≥ 4.5:1；
+ * 输入框轮廓与状态灯满足非文本 3:1。
  *
- * 【反模式红线】无纯黑色值、无毛玻璃滤镜、无渐变文字、无外部样式导入、无字体下载。
+ * 【反模式红线】无纯黑纯白、无毛玻璃滤镜、无渐变文字、无外部样式导入、无字体 CDN。
  */
 
-/* ===== 语义令牌：浅色主题 ===== */
+/* ===== 语义令牌：深色（默认，管制台夜班） ===== */
 :root {
-  --sf-bg: #EEF2F7;
-  --sf-bg-subtle: #E3E9F1;
-  --sf-surface: #FFFFFF;
-  --sf-surface-raised: #F5F8FC;
-  --sf-border: #C9D2DE;
-  --sf-border-strong: #7C8A9E;
-  --sf-text: #0F172A;
-  --sf-text-muted: #334155;
-  --sf-text-faint: #5B6B80;
-  --sf-accent: #174C80;
-  --sf-accent-hover: #103A63;
-  --sf-accent-strong: #0B2A4A;
-  --sf-accent-fg: #FFFFFF;
-  --sf-ok: #15803D;
-  --sf-warn: #9A5B00;
-  --sf-danger: #B42318;
-  --sf-info: #0E7490;
-  --sf-tooltip-bg: #0F172A;
-  --sf-tooltip-fg: #F8FAFC;
-  --sf-tooltip-border: #334155;
-  --sf-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
-  --sf-radius: 6px;
+  color-scheme: dark;
+
+  /* 表面：石墨蓝，永远比纯黑多一点蓝 */
+  --sf-bg: oklch(0.165 0.014 250);
+  --sf-bg-deep: oklch(0.132 0.013 250);
+  --sf-surface: oklch(0.205 0.016 250);
+  --sf-surface-dim: oklch(0.183 0.015 250);
+  --sf-surface-raised: oklch(0.247 0.017 250);
+  --sf-border: oklch(0.315 0.018 250);
+  --sf-border-strong: oklch(0.465 0.02 250);
+  --sf-grid-line: oklch(0.85 0.02 250 / 0.045);
+
+  /* 文字 */
+  --sf-text: oklch(0.93 0.008 250);
+  --sf-text-muted: oklch(0.73 0.012 250);
+  --sf-text-faint: oklch(0.565 0.015 250);
+
+  /* 主信号：信号琥珀（工业橙-金），按钮/链接/选中 */
+  --sf-accent: oklch(0.775 0.135 70);
+  --sf-accent-hover: oklch(0.82 0.125 75);
+  --sf-accent-press: oklch(0.715 0.14 65);
+  --sf-accent-fg: oklch(0.16 0.03 70);
+  --sf-accent-dim: oklch(0.775 0.135 70 / 0.13);
+  --sf-accent-border: oklch(0.775 0.135 70 / 0.38);
+
+  /* 状态：绿=存活，黄=注意，红=故障，蓝=中性信息 */
+  --sf-ok: oklch(0.775 0.145 155);
+  --sf-ok-dim: oklch(0.775 0.145 155 / 0.12);
+  --sf-warn: oklch(0.845 0.125 95);
+  --sf-warn-dim: oklch(0.845 0.125 95 / 0.12);
+  --sf-danger: oklch(0.705 0.17 28);
+  --sf-danger-dim: oklch(0.705 0.17 28 / 0.13);
+  --sf-info: oklch(0.765 0.06 240);
+  --sf-info-dim: oklch(0.765 0.06 240 / 0.12);
+
+  /* 反色层 */
+  --sf-tooltip-bg: oklch(0.93 0.008 250);
+  --sf-tooltip-fg: oklch(0.175 0.015 250);
+  --sf-tooltip-border: oklch(0.75 0.01 250);
+
+  /* 光效：只给活跃与聚焦 */
+  --sf-glow-accent: 0 0 0 1px oklch(0.775 0.135 70 / 0.45), 0 0 18px oklch(0.775 0.135 70 / 0.3);
+  --sf-glow-ok: 0 0 8px oklch(0.775 0.145 155 / 0.6);
+  --sf-glow-warn: 0 0 8px oklch(0.845 0.125 95 / 0.55);
+  --sf-glow-danger: 0 0 8px oklch(0.705 0.17 28 / 0.6);
+  --sf-shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 8px 24px oklch(0 0 0 / 0.32);
+  --sf-shadow-pop: 0 4px 14px oklch(0 0 0 / 0.45), 0 18px 48px oklch(0 0 0 / 0.38);
+
+  /* 形状：工业小圆角 */
+  --sf-radius: 4px;
+  --sf-radius-sm: 3px;
+  --sf-radius-lg: 6px;
+
+  /* 字体：展示 Tektur / 正文 Archivo / 数据 Martian Mono；CJK 走系统黑体 */
+  --sf-font-display: 'Tektur Variable', 'Archivo Variable', 'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+  --sf-font-sans: 'Archivo Variable', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  --sf-font-mono: 'Martian Mono Variable', 'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace;
+  --sf-font-code: 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Consolas, 'Microsoft YaHei', monospace;
+
+  /* 动效 */
+  --sf-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --sf-ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --sf-t-fast: 130ms;
+  --sf-t-med: 220ms;
+  --sf-t-slow: 360ms;
+
+  /* 布局 */
+  --sf-rail-w: 236px;
+  --sf-rail-w-compact: 68px;
+  --sf-topbar-h: 52px;
+  --sf-shell-max: 1400px;
   --sf-space: 16px;
-  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
-  --sf-font-sans: 'Geist', 'DM Sans', 'Sora', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif;
-  --sf-ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --sf-shell: 1280px;
 }
 
-/* ===== 语义令牌：深色主题 ===== */
-[data-theme="dark"],
-.v-theme--dark,
-html.v-theme--subforgeDark,
-.v-theme--subforgeDark {
-  --sf-bg: #0B1220;
-  --sf-bg-subtle: #101A2C;
-  --sf-surface: #162033;
-  --sf-surface-raised: #1D2A40;
-  --sf-border: #334155;
-  --sf-border-strong: #7C8DA6;
-  --sf-text: #F1F5F9;
-  --sf-text-muted: #CBD5E1;
-  --sf-text-faint: #A3B2C7;
-  --sf-accent: #8BB8FF;
-  --sf-accent-hover: #B3D1FF;
-  --sf-accent-strong: #174C80;
-  --sf-accent-fg: #08111F;
-  --sf-ok: #5BD68A;
-  --sf-warn: #F5C451;
-  --sf-danger: #FF9B90;
-  --sf-info: #6FD8E8;
-  --sf-tooltip-bg: #F1F5F9;
-  --sf-tooltip-fg: #0B1220;
-  --sf-tooltip-border: #CBD5E1;
-  --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
-  --sf-radius: 6px;
-  --sf-space: 16px;
-  --sf-font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+/* ===== 语义令牌：浅色（工程图纸·日班） ===== */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --sf-bg: oklch(0.955 0.007 85);
+  --sf-bg-deep: oklch(0.925 0.009 85);
+  --sf-surface: oklch(0.985 0.004 85);
+  --sf-surface-dim: oklch(0.945 0.007 85);
+  --sf-surface-raised: oklch(1 0 0);
+  --sf-border: oklch(0.865 0.012 85);
+  --sf-border-strong: oklch(0.70 0.015 85);
+  --sf-grid-line: oklch(0.30 0.02 250 / 0.055);
+
+  --sf-text: oklch(0.245 0.02 255);
+  --sf-text-muted: oklch(0.40 0.018 255);
+  --sf-text-faint: oklch(0.545 0.015 255);
+
+  --sf-accent: oklch(0.545 0.15 55);
+  --sf-accent-hover: oklch(0.50 0.16 55);
+  --sf-accent-press: oklch(0.47 0.155 55);
+  --sf-accent-fg: oklch(0.985 0.005 85);
+  --sf-accent-dim: oklch(0.545 0.15 55 / 0.10);
+  --sf-accent-border: oklch(0.545 0.15 55 / 0.42);
+
+  --sf-ok: oklch(0.525 0.135 155);
+  --sf-ok-dim: oklch(0.525 0.135 155 / 0.10);
+  --sf-warn: oklch(0.545 0.115 85);
+  --sf-warn-dim: oklch(0.545 0.115 85 / 0.11);
+  --sf-danger: oklch(0.505 0.185 28);
+  --sf-danger-dim: oklch(0.505 0.185 28 / 0.10);
+  --sf-info: oklch(0.50 0.09 240);
+  --sf-info-dim: oklch(0.50 0.09 240 / 0.10);
+
+  --sf-tooltip-bg: oklch(0.245 0.02 255);
+  --sf-tooltip-fg: oklch(0.955 0.007 85);
+  --sf-tooltip-border: oklch(0.40 0.018 255);
+
+  --sf-glow-accent: 0 0 0 1px oklch(0.545 0.15 55 / 0.5), 0 0 14px oklch(0.545 0.15 55 / 0.22);
+  --sf-glow-ok: 0 0 6px oklch(0.525 0.135 155 / 0.45);
+  --sf-glow-warn: 0 0 6px oklch(0.545 0.115 85 / 0.4);
+  --sf-glow-danger: 0 0 6px oklch(0.505 0.185 28 / 0.45);
+  --sf-shadow: 0 1px 2px oklch(0.25 0.02 255 / 0.08), 0 8px 24px oklch(0.25 0.02 255 / 0.08);
+  --sf-shadow-pop: 0 4px 14px oklch(0.25 0.02 255 / 0.14), 0 18px 48px oklch(0.25 0.02 255 / 0.12);
 }

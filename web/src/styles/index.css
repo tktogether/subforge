@@ -1,4 +1,4 @@
-/* 全局样式层入口 — 由 W5 接入 main.ts；令牌来源：web/src/design/tokens.css（W1） */
+/* 全局样式层入口；令牌来源：web/src/design/tokens.css */
 @import "./base.css";
-@import "./vuetify-overrides.css";
+@import "./components.css";
 @import "./utilities.css";

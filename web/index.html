@@ -4,8 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SubForge</title>
-    <meta name="theme-color" content="#0F172A" />
+    <meta name="theme-color" content="#141a22" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      /* 首帧底色：JS 应用 data-theme 前，先按系统偏好给一个不闪的底 */
+      html { background: #141a22; }
+      @media (prefers-color-scheme: light) {
+        html:not([data-theme]) { background: #f2f0ea; }
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
