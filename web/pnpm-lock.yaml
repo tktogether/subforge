@@ -17,9 +17,6 @@ importers:
       '@fontsource-variable/tektur':
         specifier: ^5.2.5
         version: 5.3.0
-      '@mdi/font':
-        specifier: ^7.4.47
-        version: 7.4.47
       '@tabler/icons-vue':
         specifier: ^3.35.0
         version: 3.50.0(vue@3.5.44(typescript@5.9.3))
@@ -29,9 +26,6 @@ importers:
       vue-router:
         specifier: ^4.5.0
         version: 4.6.4(vue@3.5.44(typescript@5.9.3))
-      vuetify:
-        specifier: ^3.13.7
-        version: 3.13.7(typescript@5.9.3)(vue@3.5.44(typescript@5.9.3))
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -159,9 +153,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@mdi/font@7.4.47':
-    resolution: {integrity: sha512-43MtGpd585SNzHZPcYowu/84Vz2a2g31TvPMTm9uTiCSWzaheQySUcSyUH/46fPnuPQWof2yd0pGBtzee/IQWw==}
 
   '@one-ini/wasm@0.2.1':
     resolution: {integrity: sha512-TUqERXGNTifZ9y2g3wPxQrw3HpHv/02DsW3D90T9x0hhonrL1ZqpSmNrU2XkoIq0fP1N6gZfVQzy2Fw1ZvGBNg==}
@@ -831,21 +822,6 @@ packages:
       typescript:
         optional: true
 
-  vuetify@3.13.7:
-    resolution: {integrity: sha512-HJ93r7kPRz9U1Xfd4vqseG1lL98LAG9a25jDZ+P4x9VEmK+ucpbQ56r2tTqeIUlCOxrl3FCmjNYL82WeRtOosA==}
-    peerDependencies:
-      typescript: '>=4.7'
-      vite-plugin-vuetify: '>=2.1.0'
-      vue: ^3.5.0
-      webpack-plugin-vuetify: '>=3.1.0'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-      vite-plugin-vuetify:
-        optional: true
-      webpack-plugin-vuetify:
-        optional: true
-
   w3c-xmlserializer@6.0.0:
     resolution: {integrity: sha512-4Nsy8K5Tr6SPDH9jhKJOHf7ChDrc1zufZTVSF7x72hwuEXBqxqk9G6cK+K2NRUtB3iELRJqjXb4JPDMBjMTl2Q==}
     engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0}
@@ -950,8 +926,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
-
-  '@mdi/font@7.4.47': {}
 
   '@one-ini/wasm@0.2.1': {}
 
@@ -1506,12 +1480,6 @@ snapshots:
       '@vue/runtime-dom': 3.5.44
       '@vue/server-renderer': 3.5.44
       '@vue/shared': 3.5.44
-    optionalDependencies:
-      typescript: 5.9.3
-
-  vuetify@3.13.7(typescript@5.9.3)(vue@3.5.44(typescript@5.9.3)):
-    dependencies:
-      vue: 3.5.44(typescript@5.9.3)
     optionalDependencies:
       typescript: 5.9.3
 
