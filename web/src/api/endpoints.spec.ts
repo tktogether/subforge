@@ -31,6 +31,22 @@ describe('endpoints', () => {
     expect(result).toEqual(data)
   })
 
+  it('versionInfo → GET /api/version', async () => {
+    const data = { name: 'subforge', version: 'v0.6.0', startedAt: 't', uptime: '1m', time: 't' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.versionInfo()
+    expect(fetchMock).toHaveBeenCalledWith('/api/version', expect.objectContaining({ method: 'GET' }))
+    expect(result).toEqual(data)
+  })
+
+  it('configs → GET /api/configs', async () => {
+    const data = { configs: ['a.yaml'], default: 'a.yaml' }
+    fetchMock.mockResolvedValue(respond(data))
+    const result = await endpoints.configs()
+    expect(fetchMock).toHaveBeenCalledWith('/api/configs', expect.objectContaining({ method: 'GET' }))
+    expect(result).toEqual(data)
+  })
+
   it('getSelfSourcePipeline → GET /api/self-nodes/pipeline', async () => {
     const data = { pipeline: 'pre' }
     fetchMock.mockResolvedValue(respond(data))

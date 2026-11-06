@@ -8,6 +8,7 @@ import {
   useThemeMode,
   applyTheme,
   documentThemeFor,
+  watchSystemTheme,
 } from './useThemeMode'
 
 function createMemoryStorage(initial: Record<string, string> = {}): Storage {
@@ -225,5 +226,84 @@ describe('applyTheme（首帧与运行时切换共用）', () => {
       expect((root.documentElement.dataset as Record<string, string>).theme).toBe('light')
     }
     vi.unstubAllGlobals()
+  })
+})
+
+describe('themeStateFor 与持久层对齐', () => {
+  it('storage 被外部改写后，再次取用会刷新共享 refs', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    const storage = createMemoryStorage({ [THEME_STORAGE_KEY]: 'light' })
+    const api = useThemeMode(storage)
+    expect(api.mode.value).toBe('light')
+
+    storage.setItem(THEME_STORAGE_KEY, 'dark')
+    const again = useThemeMode(storage)
+
+    expect(again.mode.value).toBe('dark')
+    expect(again.isDark.value).toBe(true)
+    expect(api.mode.value).toBe('dark')
+  })
+})
+
+describe('watchSystemTheme（跟随系统实时切换）', () => {
+  function stubMatchMedia(initial: boolean) {
+    const listeners: Array<() => void> = []
+    let matches = initial
+    vi.stubGlobal('matchMedia', () => ({
+      get matches() {
+        return matches
+      },
+      addEventListener: (_type: string, callback: () => void) => {
+        listeners.push(callback)
+      },
+    }))
+    return {
+      listeners,
+      flip(next: boolean) {
+        matches = next
+      },
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('system 模式下系统切深色，共享 isDark 跟随', () => {
+    const media = stubMatchMedia(false)
+    const storage = createMemoryStorage({ [THEME_STORAGE_KEY]: 'system' })
+    const api = useThemeMode(storage)
+    expect(api.isDark.value).toBe(false)
+
+    watchSystemTheme(storage)
+    media.flip(true)
+    media.listeners.forEach((callback) => callback())
+
+    expect(api.isDark.value).toBe(true)
+  })
+
+  it('非 system 模式忽略系统变化', () => {
+    const media = stubMatchMedia(false)
+    const storage = createMemoryStorage({ [THEME_STORAGE_KEY]: 'dark' })
+    const api = useThemeMode(storage)
+
+    watchSystemTheme(storage)
+    media.flip(false)
+    media.listeners.forEach((callback) => callback())
+
+    expect(api.isDark.value).toBe(true)
+  })
+
+  it('storage 尚未建立状态时系统变化不抛错', () => {
+    const media = stubMatchMedia(true)
+    const storage = createMemoryStorage()
+
+    watchSystemTheme(storage)
+    expect(() => media.listeners.forEach((callback) => callback())).not.toThrow()
+  })
+
+  it('matchMedia 缺失时直接返回', () => {
+    vi.stubGlobal('matchMedia', undefined)
+    expect(() => watchSystemTheme(createMemoryStorage())).not.toThrow()
   })
 })
