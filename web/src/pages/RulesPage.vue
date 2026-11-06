@@ -4,24 +4,40 @@ import { endpoints, type ProxyGroup, type RuleInput, type RuleProvider, type Sug
 import { errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { useCrud, type CrudResource } from '../composables/useCrud'
-import PageHeader from '../components/PageHeader.vue'
-import InfoTip from '../components/InfoTip.vue'
+import { confirmAction } from '../composables/useConfirm'
 import { fieldHelp } from '../content/help'
-import AsyncSection from '../components/AsyncSection.vue'
+import SfPageHead from '../components/ui/SfPageHead.vue'
+import SfTabs from '../components/ui/SfTabs.vue'
+import SfField from '../components/ui/SfField.vue'
+import SfSwitch from '../components/ui/SfSwitch.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
+import SfEmpty from '../components/ui/SfEmpty.vue'
+import SfPagination from '../components/ui/SfPagination.vue'
+import SfNote from '../components/ui/SfNote.vue'
+import SfInfoTip from '../components/ui/SfInfoTip.vue'
+import {
+  IconPlus,
+  IconRefresh,
+  IconPencil,
+  IconTrash,
+  IconSearch,
+  IconAlertTriangle,
+  IconFilter,
+} from '@tabler/icons-vue'
 
 // Tab
-const tab = ref(0)
+const tab = ref('rules')
+const tabs = [
+  { value: 'rules', label: '规则行' },
+  { value: 'providers', label: '规则集' },
+  { value: 'suggestions', label: '规则建议' },
+]
 
 // ---------------------------------------------------------------------------
 // Block 1: 规则行（D-09）
-// 这里不再复用 ResourcePage.vue：多选列要长在规则表行里，而 ResourcePage 是
-// 共享组件（不在本次可改范围）。表格在本页自建，但 1:1 保留了 ResourcePage
-// 之前提供的 data-testid（table/add/refresh/edit/delete/dialog-*/confirm-*/
-// field-*）与列顺序（类型/参数/目标分组/解析DNS/启用/来源），E2E t3a 的
-// RL-01..RL-08 选择器契约不受影响。
+// 服务端分页 + 服务端筛选；选择列长在表格行里，testid 契约与列顺序保持不变。
 // ---------------------------------------------------------------------------
 
-// 表格行 = 规则本体 + 后端带出的展示字段（group_name/source）
 type RuleRow = RuleInput & { id?: number; group_name?: string; source?: string }
 
 // 来源筛选（CONTRACT-V2 §6.2）：null = 全部来源（请求不带参数），'' = 自定义，
@@ -29,8 +45,6 @@ type RuleRow = RuleInput & { id?: number; group_name?: string; source?: string }
 const sourceFilter = ref<string | null>(null)
 const ruleSourceCounts = ref<{ source: string; count: number }[]>([])
 
-// 来源下拉选项：全部来源 / 自定义 / 历史来源。轻量端点只返回 source+count，
-// 不再为了下拉去拉全量规则。
 const sourceOptions = computed<{ title: string; value: string | null }[]>(() => [
   { title: '全部来源', value: null },
   { title: '自定义', value: '' },
@@ -84,8 +98,34 @@ const {
   destroy: destroyRule,
 } = useCrud<RuleRow>(rulesResource)
 
-// 筛选条件全部走服务端：enabled/q/source 改变后重置到第一页再取数。
 const selectedRuleIds = ref<number[]>([])
+
+const allPageSelected = computed(() => {
+  const ids = rules.value.map((r) => r.id as number)
+  return ids.length > 0 && ids.every((id) => selectedRuleIds.value.includes(id))
+})
+const somePageSelected = computed(() => {
+  const ids = rules.value.map((r) => r.id as number)
+  return ids.some((id) => selectedRuleIds.value.includes(id))
+})
+
+function toggleAllPage(): void {
+  const ids = rules.value.map((r) => r.id as number)
+  if (allPageSelected.value) {
+    selectedRuleIds.value = selectedRuleIds.value.filter((id) => !ids.includes(id))
+  } else {
+    selectedRuleIds.value = [...new Set([...selectedRuleIds.value, ...ids])]
+  }
+}
+
+function toggleRow(id: number | undefined): void {
+  if (id === undefined) return
+  if (selectedRuleIds.value.includes(id)) {
+    selectedRuleIds.value = selectedRuleIds.value.filter((x) => x !== id)
+  } else {
+    selectedRuleIds.value = [...selectedRuleIds.value, id]
+  }
+}
 
 function setEnabledFilter(value: 'all' | 'enabled' | 'disabled'): void {
   ruleEnabledFilter.value = value
@@ -96,6 +136,11 @@ function setEnabledFilter(value: 'all' | 'enabled' | 'disabled'): void {
 function setRulePageSize(next: number): void {
   rulePageSize.value = next
   rulePage.value = 1
+  void loadRules()
+}
+
+function onRulePage(offset: number): void {
+  rulePage.value = Math.floor(offset / rulePageSize.value) + 1
   void loadRules()
 }
 
@@ -110,39 +155,12 @@ watch(ruleSearch, () => {
   }, 300)
 })
 
-const ruleHeaders = [
-  { key: 'rule_type', title: '类型' },
-  { key: 'rule_param', title: '参数' },
-  { key: 'group_name', title: '目标分组' },
-  { key: 'resolve_dns', title: '解析DNS' },
-  { key: 'enabled', title: '启用' },
-  { key: 'source', title: '来源' },
-  { key: 'actions', title: '操作' },
-]
-
-// 操作列单元格挂类（vuetify-overrides.css 据此做「单行不折 + 紧凑按钮」）。
-function cellPropsFor(data: { column?: { key?: string | null } }): Record<string, string> {
-  return data.column?.key === 'actions' ? { class: 'sf-table__actions' } : {}
-}
-
 const rulesEmpty = computed(() => ruleTotal.value === 0 && !rulesLoading.value)
-
-function reloadRules(): void {
-  void loadRules()
-}
 
 // 新增/编辑弹窗
 const ruleDialog = ref(false)
 const ruleDraft = ref<RuleRow>({ rule_type: '', rule_param: '', rule_config: 0, resolve_dns: true, enabled: true })
 const editingRule = ref<RuleRow | null>(null)
-
-// 单条删除确认
-const ruleConfirmOpen = ref(false)
-const pendingRuleDelete = ref<RuleRow | null>(null)
-
-// 批量删除确认
-const bulkDeleteOpen = ref(false)
-const bulkBusy = ref(false)
 
 function blankRule(): RuleRow {
   return {
@@ -157,11 +175,6 @@ function blankRule(): RuleRow {
 function fieldHint(key: string): string {
   const h = fieldHelp(key)
   return h !== undefined && h.hint !== undefined ? h.hint : ''
-}
-
-function fieldExample(key: string): string {
-  const h = fieldHelp(key)
-  return h !== undefined && h.example !== undefined ? h.example : ''
 }
 
 function openRuleCreate(): void {
@@ -187,19 +200,11 @@ async function submitRule(): Promise<void> {
   }
 }
 
-function askRuleDelete(row: RuleRow): void {
-  pendingRuleDelete.value = row
-  ruleConfirmOpen.value = true
-}
-
-async function doRuleDelete(): Promise<void> {
-  const row = pendingRuleDelete.value
-  ruleConfirmOpen.value = false
-  if (row === null) {
-    return
-  }
-  const ok = await destroyRule(row)
-  notify(ok ? '已删除' : rulesError.value, ok ? 'ok' : 'error')
+async function askRuleDelete(row: RuleRow): Promise<void> {
+  const ok = await confirmAction({ title: '确认删除该规则？', body: '删除后不可恢复。', confirmText: '删除', danger: true })
+  if (!ok) return
+  const done = await destroyRule(row)
+  notify(done ? '已删除' : rulesError.value, done ? 'ok' : 'error')
 }
 
 // 批量启停：POST /api/rules/bulk { ids, enabled } -> { updated }
@@ -220,14 +225,22 @@ async function bulkSetEnabled(enabled: boolean): Promise<void> {
 }
 
 // 批量删除：POST /api/rules/bulk { ids, delete: true } -> { deleted }
+const bulkBusy = ref(false)
+
 async function bulkDelete(): Promise<void> {
   const ids = [...selectedRuleIds.value]
   if (ids.length === 0 || bulkBusy.value) return
+  const ok = await confirmAction({
+    title: '确认批量删除？',
+    body: '将删除 ' + ids.length + ' 条规则，删除后不可恢复。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   bulkBusy.value = true
   try {
     const res = await endpoints.bulkRules({ ids, delete: true })
     notify('已删除 ' + (res.deleted ?? ids.length) + ' 条', 'ok')
-    bulkDeleteOpen.value = false
     selectedRuleIds.value = []
     await loadRules()
   } catch (err) {
@@ -237,12 +250,12 @@ async function bulkDelete(): Promise<void> {
   }
 }
 
-
 // Block 2: rule providers
 const providersLoading = ref(false)
 const providersError = ref('')
 const providers = ref<RuleProvider[]>([])
 const providerEnabledFilter = ref<string>('all')
+const providerRaw = ref<number | null>(null)
 
 async function loadProviders(): Promise<void> {
   providersLoading.value = true
@@ -290,7 +303,6 @@ async function loadGroups(): Promise<void> {
 // 按来源整批操作（历史来源兼容）：必须走带 source 的 bulk 接口，
 // 不允许「拉全量再在前端筛 id」。
 const sourceBusy = ref(false)
-const sourceDeleteOpen = ref(false)
 
 function sourceTarget(): string | null {
   const filter = sourceFilter.value
@@ -314,15 +326,16 @@ async function sourceEnableAll(enabled: boolean): Promise<void> {
   }
 }
 
-function openSourceDelete(): void {
-  if (sourceTarget() === null || sourceBusy.value) return
-  sourceDeleteOpen.value = true
-}
-
-async function confirmSourceDelete(): Promise<void> {
+async function sourceDeleteAll(): Promise<void> {
   const source = sourceTarget()
-  sourceDeleteOpen.value = false
   if (source === null || sourceBusy.value) return
+  const ok = await confirmAction({
+    title: '确认按来源删除？',
+    body: '将删除来源 “' + source + '” 的 ' + ruleTotal.value + ' 条规则，此操作不可撤销。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   sourceBusy.value = true
   try {
     const res = await endpoints.bulkRules({ source, sourcePrefix: false, delete: true })
@@ -336,7 +349,7 @@ async function confirmSourceDelete(): Promise<void> {
   }
 }
 
-// Block 4: suggestions
+// Block 3: suggestions
 const suggestionsLoading = ref(false)
 const suggestionsError = ref('')
 const suggestions = ref<Suggestion[]>([])
@@ -393,6 +406,7 @@ async function applySuggestions(): Promise<void> {
 // 切换来源筛选：重置到第一页再取数。
 watch(sourceFilter, () => {
   rulePage.value = 1
+  selectedRuleIds.value = []
   void loadRules()
 })
 
@@ -412,300 +426,407 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageHeader title="规则" subtitle="管理分流规则、规则集与规则建议" help-key="rules">
-    <template #actions>
-      <template v-if="tab === 0">
-        <v-btn color="primary" prepend-icon="mdi-plus" data-testid="add" @click="openRuleCreate">新增</v-btn>
-        <v-btn variant="text" prepend-icon="mdi-refresh" data-testid="refresh" @click="reloadRules">刷新</v-btn>
+  <div>
+    <SfPageHead title="规则" desc="管理分流规则、规则集与规则建议。">
+      <template #actions>
+        <template v-if="tab === 'rules'">
+          <button class="sf-btn sf-btn--primary" type="button" data-testid="add" @click="openRuleCreate">
+            <IconPlus :size="15" :stroke-width="2" />
+            新增
+          </button>
+          <button class="sf-btn sf-btn--ghost" type="button" data-testid="refresh" :disabled="rulesLoading" @click="loadRules()">
+            <IconRefresh :size="15" :stroke-width="1.8" :class="{ 'rl-spin': rulesLoading }" />
+            刷新
+          </button>
+        </template>
       </template>
-    </template>
-  </PageHeader>
-  <div class="mb-4 d-flex ga-2 align-center flex-wrap">
-    <v-select
-      v-model="sourceFilter"
-      :items="sourceOptions"
-      item-title="title"
-      item-value="value"
-      label="来源筛选"
-      density="compact"
-      variant="outlined"
-      hide-details
-      style="max-width: 260px"
-      data-testid="rules-source-filter"
-    ></v-select>
-    <span class="text-caption text-medium-emphasis">全部来源不筛选；自定义为手工录入或从规则源复制的规则。</span>
-  </div>
-  <v-tabs v-model="tab" class="mb-4">
-    <v-tab>规则行</v-tab>
-    <v-tab>规则集</v-tab>
-    <v-tab>规则建议</v-tab>
-  </v-tabs>
+    </SfPageHead>
 
-  <!-- Block 1: 规则行 -->
-  <div v-if="tab === 0">
-    <div class="mb-2 d-flex ga-2 align-center flex-wrap">
-        <v-text-field
-          v-model="ruleSearch"
-          label="搜索规则"
-          data-testid="rule-search"
-          density="compact"
-          variant="outlined"
-          hide-details
-          style="max-width: 260px"
-        ></v-text-field>
-        <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-all" @click="setEnabledFilter('all')">全部</v-btn>
-        <v-btn size="small" variant="tonal" class="mr-2" data-testid="filter-enabled" @click="setEnabledFilter('enabled')">已启用</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="filter-disabled" @click="setEnabledFilter('disabled')">已停用</v-btn>
-        <v-select
-          :model-value="rulePageSize"
-          :items="[25, 50, 100]"
-          label="每页条数"
-          density="compact"
-          variant="outlined"
-          hide-details
-          data-testid="rule-page-size"
-          class="rule-page-size"
-          @update:model-value="setRulePageSize"
-        />
-        <v-spacer></v-spacer>
-        <span class="text-caption text-medium-emphasis" data-testid="rule-selection-count">筛选命中 {{ ruleTotal }} 条 · 已选 {{ selectedRuleIds.length }} 条</span>
-      </div>
+    <SfTabs v-model="tab" :tabs="tabs" class="sf-rise sf-d1" style="margin-bottom: 18px" />
 
-      <div v-if="selectedRuleIds.length > 0" class="mb-2 d-flex ga-2 align-center" data-testid="bulk-bar">
-        <span class="text-body-2" data-testid="bulk-selected-count">已选 {{ selectedRuleIds.length }} 条</span>
-        <v-btn size="small" color="primary" data-testid="bulk-enable" :loading="bulkBusy" @click="bulkSetEnabled(true)">批量启用</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="bulk-disable" :loading="bulkBusy" @click="bulkSetEnabled(false)">批量禁用</v-btn>
-        <v-btn size="small" color="error" data-testid="bulk-delete" :loading="bulkBusy" @click="bulkDeleteOpen = true">批量删除</v-btn>
-      </div>
-
-      <div v-if="sourceReady" class="mb-2 d-flex ga-2 align-center flex-wrap" data-testid="source-batch-bar">
-        <span class="text-caption text-medium-emphasis">当前来源整批：</span>
-        <v-btn size="small" color="success" data-testid="enable-source-all" :loading="sourceBusy" @click="sourceEnableAll(true)">启用全部</v-btn>
-        <v-btn size="small" variant="tonal" data-testid="disable-source-all" :loading="sourceBusy" @click="sourceEnableAll(false)">停用全部</v-btn>
-        <v-btn size="small" color="error" data-testid="delete-source-all" :loading="sourceBusy" @click="openSourceDelete">删除全部</v-btn>
-      </div>
-
-    <AsyncSection
-      :loading="rulesLoading"
-      :error="rulesError"
-      :empty="rulesEmpty"
-      empty-text="暂无数据"
-      @retry="reloadRules"
-    >
-      <v-data-table-server
-        :page="rulePage"
-        :items-per-page="rulePageSize"
-        :items="rules"
-        :headers="ruleHeaders"
-        :items-length="ruleTotal"
-        :items-per-page-options="[25, 50, 100]"
-        :cell-props="cellPropsFor"
-        show-select
-        select-strategy="all"
-        v-model="selectedRuleIds"
-        item-value="id"
-        density="comfortable"
-        hover
-        data-testid="table"
-        class="resource-table"
-      >
-        <template #item.enabled="{ value }">
-          <span class="sf-status">
-            <span class="sf-status__dot" :class="value ? 'sf-status__dot--ok' : 'sf-status__dot--muted'"></span>
-            <span>{{ value ? '启用' : '停用' }}</span>
-          </span>
-        </template>
-        <template #item.actions="{ item }">
-          <v-btn
-            icon="mdi-pencil"
-            size="small"
-            variant="text"
-            data-testid="edit"
-            @click="openRuleEdit(item)"
-          ></v-btn>
-          <v-btn
-            icon="mdi-delete"
-            size="small"
-            variant="text"
-            color="error"
-            data-testid="delete"
-            @click="askRuleDelete(item)"
-          ></v-btn>
-        </template>
-      </v-data-table-server>
-    </AsyncSection>
-
-    <!-- 新增/编辑规则 -->
-    <v-dialog v-model="ruleDialog" max-width="560">
-      <v-card>
-        <v-card-title>{{ editingRule === null ? '新增' : '编辑' }}</v-card-title>
-        <v-card-text>
-          <div class="sf-rule-field">
-            <div class="sf-rule-field__label">类型 <InfoTip :text="fieldHint('rule_type')" :example="fieldExample('rule_type')" label="规则类型" /></div>
-            <v-text-field v-model="ruleDraft.rule_type" variant="outlined" density="comfortable" hide-details data-testid="field-text" />
-          </div>
-          <div class="sf-rule-field">
-            <div class="sf-rule-field__label">参数 <InfoTip :text="fieldHint('rule_param')" :example="fieldExample('rule_param')" label="规则参数" /></div>
-            <v-text-field v-model="ruleDraft.rule_param" variant="outlined" density="comfortable" hide-details data-testid="field-text" />
-          </div>
-          <div class="sf-rule-field">
-            <div class="sf-rule-field__label">目标分组 <InfoTip :text="fieldHint('rule_config')" label="目标分组" /></div>
-            <v-select
-              v-model="ruleDraft.rule_config"
-              :items="groupOptions"
-              item-title="title"
-              item-value="value"
-              variant="outlined"
-              density="comfortable"
-              hide-details
-              data-testid="field-select"
-            />
-          </div>
-          <div class="sf-rule-field sf-rule-field--switch">
-            <span>解析 DNS</span>
-            <InfoTip :text="fieldHint('resolve_dns')" label="解析 DNS" />
-            <v-spacer />
-            <v-switch v-model="ruleDraft.resolve_dns" color="primary" hide-details data-testid="field-switch" />
-          </div>
-          <div class="sf-rule-field sf-rule-field--switch">
-            <span>启用</span>
-            <InfoTip :text="fieldHint('enabled')" label="启用" />
-            <v-spacer />
-            <v-switch v-model="ruleDraft.enabled" color="primary" hide-details data-testid="field-switch" />
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" data-testid="dialog-cancel" @click="ruleDialog = false">取消</v-btn>
-          <v-btn color="primary" data-testid="dialog-submit" @click="submitRule">保存</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- 单条删除二次确认 -->
-    <v-dialog v-model="ruleConfirmOpen" max-width="420">
-      <v-card>
-        <v-card-title>确认删除</v-card-title>
-        <v-card-text>删除后不可恢复，确定继续？</v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" data-testid="confirm-cancel" @click="ruleConfirmOpen = false">取消</v-btn>
-          <v-btn color="error" data-testid="confirm-delete" @click="doRuleDelete">删除</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- 批量删除二次确认（文案含「删除」与数量） -->
-    <v-dialog v-model="bulkDeleteOpen" max-width="420">
-      <v-card>
-        <v-card-title>确认批量删除</v-card-title>
-        <v-card-text data-testid="bulk-confirm-text">将删除 {{ selectedRuleIds.length }} 条规则，删除后不可恢复，确定继续？</v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn variant="text" data-testid="bulk-confirm-cancel" @click="bulkDeleteOpen = false">取消</v-btn>
-          <v-btn color="error" data-testid="bulk-confirm-delete" @click="bulkDelete">删除</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-  </div>
-
-  <!-- Block 2: 规则集 -->
-  <div v-if="tab === 1">
-    <AsyncSection :loading="providersLoading" :error="providersError" :empty="providers.length === 0" empty-text="暂无规则集" @retry="loadProviders">
-      <div class="mb-2">
-        <v-btn size="small" variant="tonal" class="mr-2" @click="providerEnabledFilter = 'all'; loadProviders()">全部</v-btn>
-        <v-btn size="small" variant="tonal" class="mr-2" @click="providerEnabledFilter = 'enabled'; loadProviders()">已启用</v-btn>
-        <v-btn size="small" variant="tonal" @click="providerEnabledFilter = 'disabled'; loadProviders()">已停用</v-btn>
-      </div>
-      <v-list>
-        <v-list-item v-for="p in providers" :key="p.id" :title="p.name" :subtitle="p.source + (p.enabled ? ' · 启用' : ' · 禁用')">
-          <template #append>
-            <v-switch :model-value="p.enabled" density="compact" :hide-details="true"
-              data-testid="provider-switch" :loading="togglingProvider === p.id"
-              @update:model-value="toggleProvider(p, $event as boolean)"></v-switch>
-          </template>
-        </v-list-item>
-      </v-list>
-      <v-expansion-panels class="mt-2">
-        <v-expansion-panel v-for="p in providers" :key="'raw-' + p.id" :title="p.name + ' raw_json'">
-          <v-expansion-panel-text eager>
-            <pre class="text-caption">{{ p.raw_json }}</pre>
-          </v-expansion-panel-text>
-        </v-expansion-panel>
-      </v-expansion-panels>
-    </AsyncSection>
-  </div>
-
-  <!-- 按来源整批删除二次确认（历史来源兼容） -->
-  <v-dialog v-model="sourceDeleteOpen" max-width="420" data-testid="confirm-source-delete">
-    <v-card>
-      <v-card-title>确认按来源删除</v-card-title>
-      <v-card-text data-testid="confirm-source-delete-text">将删除来源 “{{ sourceFilter }}” 的 {{ ruleTotal }} 条规则，此操作不可撤销。</v-card-text>
-      <v-card-actions>
-        <v-spacer></v-spacer>
-        <v-btn variant="text" data-testid="confirm-source-delete-cancel" @click="sourceDeleteOpen = false">取消</v-btn>
-        <v-btn color="error" data-testid="confirm-source-delete-ok" @click="confirmSourceDelete">删除</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-  <!-- Block 3: 规则建议 -->
-  <div v-if="tab === 2">
-    <v-card v-if="suggestionsUnsupported" data-testid="suggestions-unsupported" class="pa-4">
-      <div class="text-h6">规则建议队列未启用</div>
-      <div class="mt-2">建议由定时任务生成；当前进程未启用调度器。</div>
-      <v-btn size="small" color="primary" class="mt-2" @click="loadSuggestions">重试</v-btn>
-    </v-card>
-    <AsyncSection v-else :loading="suggestionsLoading" :error="suggestionsError" :empty="suggestions.length === 0" empty-text="暂无建议" @retry="loadSuggestions">
-      <div class="mb-2">
-        <v-btn size="small" color="primary" @click="applySuggestions">应用已确认建议</v-btn>
-      </div>
-      <v-card v-for="(s, i) in suggestions" :key="i" data-testid="suggestion-card" class="pa-4 mb-2">
-        <div class="text-subtitle-1">{{ s.Anomaly.Type }}</div>
-        <div class="text-medium-emphasis">{{ s.Anomaly.Message }}</div>
-        <pre class="text-caption mt-2">{{ s.Rule }}</pre>
-        <div class="mt-2">{{ s.Reason }}</div>
-        <div class="text-caption text-medium-emphasis mt-2">{{ s.Anomaly.Source }} · {{ s.Anomaly.Timestamp }}</div>
-        <span v-if="s.AutoApply === true" class="sf-status mt-2">
-          <span class="sf-status__dot sf-status__dot--muted"></span>
-          <span>自动应用</span>
+    <!-- Block 1: 规则行 -->
+    <div v-if="tab === 'rules'">
+      <div class="rl-toolbar sf-rise sf-d1">
+        <span class="sf-select-wrap rl-source">
+          <select v-model="sourceFilter" class="sf-select" data-testid="rules-source-filter">
+            <option v-for="opt in sourceOptions" :key="String(opt.value)" :value="opt.value">{{ opt.title }}</option>
+          </select>
         </span>
-        <div class="text-caption text-medium-emphasis mt-2">确认后仍需点击「应用已确认建议」才会写入规则。</div>
-        <div class="mt-2">
-          <v-btn size="small" color="success" class="mr-2" data-testid="suggestion-confirm" @click="confirmSuggestion(i)">确认</v-btn>
-          <v-btn size="small" color="error" data-testid="suggestion-reject" @click="rejectSuggestion(i)">拒绝</v-btn>
+        <span class="rl-search-wrap">
+          <IconSearch :size="15" :stroke-width="1.8" class="rl-search-icon" aria-hidden="true" />
+          <input v-model="ruleSearch" class="sf-input rl-search" placeholder="搜索规则…" data-testid="rule-search" />
+        </span>
+        <span class="sf-seg" role="group" aria-label="启用筛选">
+          <button type="button" class="sf-seg__btn" :class="{ 'is-active': ruleEnabledFilter === 'all' }" data-testid="filter-all" @click="setEnabledFilter('all')">全部</button>
+          <button type="button" class="sf-seg__btn" :class="{ 'is-active': ruleEnabledFilter === 'enabled' }" data-testid="filter-enabled" @click="setEnabledFilter('enabled')">已启用</button>
+          <button type="button" class="sf-seg__btn" :class="{ 'is-active': ruleEnabledFilter === 'disabled' }" data-testid="filter-disabled" @click="setEnabledFilter('disabled')">已停用</button>
+        </span>
+        <span class="sf-select-wrap rl-size">
+          <select class="sf-select" :value="String(rulePageSize)" data-testid="rule-page-size" @change="setRulePageSize(Number(($event.target as HTMLSelectElement).value))">
+            <option v-for="n in [25, 50, 100]" :key="n" :value="String(n)">{{ n }} 条/页</option>
+          </select>
+        </span>
+        <span class="sf-spacer" />
+        <span class="sf-faint" style="font-size: 12px" data-testid="rule-selection-count">命中 {{ ruleTotal }} 条 · 已选 {{ selectedRuleIds.length }} 条</span>
+      </div>
+      <p class="sf-field__hint" style="margin: 0 0 12px">「自定义」为手工录入或从规则源复制的规则；其余来源随导入更新。</p>
+
+      <div v-if="selectedRuleIds.length > 0" class="sf-note sf-note--info rl-bulkbar" data-testid="bulk-bar">
+        <span data-testid="bulk-selected-count">已选 {{ selectedRuleIds.length }} 条</span>
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="bulk-enable" :disabled="bulkBusy" @click="bulkSetEnabled(true)">批量启用</button>
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="bulk-disable" :disabled="bulkBusy" @click="bulkSetEnabled(false)">批量禁用</button>
+        <button class="sf-btn sf-btn--danger sf-btn--sm" type="button" data-testid="bulk-delete" :disabled="bulkBusy" @click="bulkDelete()">批量删除</button>
+      </div>
+
+      <div v-if="sourceReady" class="sf-note rl-bulkbar" data-testid="source-batch-bar">
+        <span>当前来源「{{ sourceFilter }}」整批：</span>
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="enable-source-all" :disabled="sourceBusy" @click="sourceEnableAll(true)">启用全部</button>
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="disable-source-all" :disabled="sourceBusy" @click="sourceEnableAll(false)">停用全部</button>
+        <button class="sf-btn sf-btn--danger sf-btn--sm" type="button" data-testid="delete-source-all" :disabled="sourceBusy" @click="sourceDeleteAll()">删除全部</button>
+      </div>
+
+      <div v-if="rulesError !== ''" class="sf-note sf-note--danger" style="margin-bottom: 12px">
+        <IconAlertTriangle :size="16" :stroke-width="1.8" class="sf-note__icon" />
+        <span class="sf-note__body">{{ rulesError }}</span>
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" @click="loadRules()">重试</button>
+      </div>
+
+      <div v-if="rulesEmpty && rulesError === ''" class="sf-panel">
+        <SfEmpty title="暂无规则" desc="新增一条规则，或从机场页 / 规则源页导入。">
+          <template #icon><IconFilter :size="30" :stroke-width="1.4" /></template>
+        </SfEmpty>
+      </div>
+
+      <div v-else class="sf-table-wrap" data-testid="table">
+        <table class="sf-table sf-table--scroll">
+          <thead>
+            <tr>
+              <th style="width: 38px">
+                <input
+                  type="checkbox"
+                  class="sf-checkbox"
+                  aria-label="全选本页"
+                  :checked="allPageSelected"
+                  :indeterminate="!allPageSelected && somePageSelected"
+                  @change="toggleAllPage"
+                />
+              </th>
+              <th style="width: 132px">类型</th>
+              <th>参数</th>
+              <th>目标分组</th>
+              <th style="width: 84px">解析DNS</th>
+              <th style="width: 84px">启用</th>
+              <th style="width: 150px">来源</th>
+              <th style="width: 92px; text-align: right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="rulesLoading && rules.length === 0">
+              <td v-for="n in 8" :key="n"><span class="sf-skeleton" style="width: 60%" /></td>
+            </tr>
+            <tr v-for="row in rules" v-else :key="row.id">
+              <td>
+                <input
+                  type="checkbox"
+                  class="sf-checkbox"
+                  :aria-label="'选择规则 #' + row.id"
+                  :checked="selectedRuleIds.includes(row.id as number)"
+                  @change="toggleRow(row.id)"
+                />
+              </td>
+              <td><span class="sf-mono" style="font-size: 12px; white-space: nowrap">{{ row.rule_type }}</span></td>
+              <td><span class="sf-mono rl-param" :title="row.rule_param">{{ row.rule_param }}</span></td>
+              <td>{{ row.group_name !== undefined && row.group_name !== '' ? row.group_name : '—' }}</td>
+              <td>
+                <span class="sf-status">
+                  <span class="sf-led" :class="row.resolve_dns ? 'sf-led--info' : 'sf-led--idle'" />
+                  <span class="sf-faint">{{ row.resolve_dns ? '是' : '否' }}</span>
+                </span>
+              </td>
+              <td>
+                <span class="sf-status">
+                  <span class="sf-led" :class="row.enabled ? 'sf-led--ok' : 'sf-led--idle'" />
+                  <span>{{ row.enabled ? '启用' : '停用' }}</span>
+                </span>
+              </td>
+              <td><span class="sf-faint" style="font-size: 12px">{{ row.source === undefined || row.source === '' ? '自定义' : row.source }}</span></td>
+              <td>
+                <span class="sf-table__actions">
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm" type="button" aria-label="编辑" data-testid="edit" @click="openRuleEdit(row)">
+                    <IconPencil :size="15" :stroke-width="1.7" />
+                  </button>
+                  <button class="sf-btn sf-btn--subtle sf-btn--icon sf-btn--sm sf-btn--del" type="button" aria-label="删除" data-testid="delete" @click="askRuleDelete(row)">
+                    <IconTrash :size="15" :stroke-width="1.7" />
+                  </button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <SfPagination :total="ruleTotal" :limit="rulePageSize" :offset="(rulePage - 1) * rulePageSize" @update:offset="onRulePage" />
+      </div>
+
+      <!-- 新增/编辑规则 -->
+      <SfDialog :open="ruleDialog" :label="editingRule === null ? 'CREATE RULE' : 'EDIT RULE'" :title="editingRule === null ? '新增规则' : '编辑规则'" @close="ruleDialog = false">
+        <SfField :hint="fieldHint('rule_type')">
+          <template #label><span class="sf-field__label">类型 <SfInfoTip :text="fieldHint('rule_type')" /></span></template>
+          <input v-model="ruleDraft.rule_type" class="sf-input sf-input--mono" data-testid="field-text" spellcheck="false" />
+        </SfField>
+        <SfField :hint="fieldHint('rule_param')">
+          <template #label><span class="sf-field__label">参数 <SfInfoTip :text="fieldHint('rule_param')" /></span></template>
+          <input v-model="ruleDraft.rule_param" class="sf-input sf-input--mono" data-testid="field-text" spellcheck="false" />
+        </SfField>
+        <SfField :hint="fieldHint('rule_config')">
+          <template #label><span class="sf-field__label">目标分组 <SfInfoTip :text="fieldHint('rule_config')" /></span></template>
+          <span class="sf-select-wrap">
+            <select v-model="ruleDraft.rule_config" class="sf-select" data-testid="field-select">
+              <option v-for="opt in groupOptions" :key="opt.value" :value="opt.value">{{ opt.title }}</option>
+            </select>
+          </span>
+        </SfField>
+        <div class="rl-switch-row">
+          <span>解析 DNS <SfInfoTip :text="fieldHint('resolve_dns')" /></span>
+          <SfSwitch v-model="ruleDraft.resolve_dns" data-testid="field-switch" />
         </div>
-      </v-card>
-    </AsyncSection>
+        <div class="rl-switch-row">
+          <span>启用 <SfInfoTip :text="fieldHint('enabled')" /></span>
+          <SfSwitch v-model="ruleDraft.enabled" data-testid="field-switch" />
+        </div>
+        <template #foot>
+          <button class="sf-btn sf-btn--subtle" type="button" data-testid="dialog-cancel" @click="ruleDialog = false">取消</button>
+          <button class="sf-btn sf-btn--primary" type="button" data-testid="dialog-submit" @click="submitRule">保存</button>
+        </template>
+      </SfDialog>
+    </div>
+
+    <!-- Block 2: 规则集 -->
+    <div v-if="tab === 'providers'">
+      <div class="sf-toolbar" style="margin-bottom: 14px">
+        <span class="sf-seg" role="group" aria-label="规则集筛选">
+          <button type="button" class="sf-seg__btn" :class="{ 'is-active': providerEnabledFilter === 'all' }" @click="providerEnabledFilter = 'all'; loadProviders()">全部</button>
+          <button type="button" class="sf-seg__btn" :class="{ 'is-active': providerEnabledFilter === 'enabled' }" @click="providerEnabledFilter = 'enabled'; loadProviders()">已启用</button>
+          <button type="button" class="sf-seg__btn" :class="{ 'is-active': providerEnabledFilter === 'disabled' }" @click="providerEnabledFilter = 'disabled'; loadProviders()">已停用</button>
+        </span>
+        <span class="sf-spacer" />
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" :disabled="providersLoading" @click="loadProviders()">
+          <IconRefresh :size="14" :stroke-width="1.8" />
+          刷新
+        </button>
+      </div>
+
+      <div v-if="providersError !== ''" class="sf-note sf-note--danger" style="margin-bottom: 12px">
+        <span class="sf-note__body">{{ providersError }}</span>
+        <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" @click="loadProviders()">重试</button>
+      </div>
+
+      <div v-if="providers.length === 0 && !providersLoading && providersError === ''" class="sf-panel">
+        <SfEmpty title="暂无规则集" desc="规则集（rule provider）由机场导入或规则源生成。" />
+      </div>
+
+      <div v-else class="sf-table-wrap">
+        <table class="sf-table">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>来源</th>
+              <th style="width: 100px">启用</th>
+              <th style="width: 90px; text-align: right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="providersLoading && providers.length === 0">
+              <td v-for="n in 4" :key="n"><span class="sf-skeleton" style="width: 60%" /></td>
+            </tr>
+            <tr v-for="p in providers" v-else :key="p.id">
+              <td><span class="sf-mono" style="font-size: 12.5px">{{ p.name }}</span></td>
+              <td><span class="sf-faint" style="font-size: 12px">{{ p.source }}</span></td>
+              <td>
+                <SfSwitch :model-value="p.enabled" :disabled="togglingProvider === p.id" data-testid="provider-switch" @update:model-value="toggleProvider(p, $event)" />
+              </td>
+              <td style="text-align: right">
+                <button class="sf-btn sf-btn--subtle sf-btn--sm" type="button" @click="providerRaw = providerRaw === p.id ? null : p.id">
+                  {{ providerRaw === p.id ? '收起' : 'raw_json' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-for="p in providers" v-show="providerRaw === p.id" :key="'raw-' + p.id" style="padding: 12px 16px; border-top: 1px solid var(--sf-border); background: var(--sf-bg-deep)">
+          <pre class="rl-raw">{{ p.raw_json }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Block 3: 规则建议 -->
+    <div v-if="tab === 'suggestions'">
+      <div v-if="suggestionsUnsupported" data-testid="suggestions-unsupported">
+        <SfNote tone="warn">
+          <b>规则建议队列未启用</b>——建议由定时任务生成；当前进程未启用调度器。
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" style="margin-left: 10px" @click="loadSuggestions">重试</button>
+        </SfNote>
+      </div>
+      <template v-else>
+        <div v-if="suggestionsError !== ''" class="sf-note sf-note--danger" style="margin-bottom: 12px">
+          <span class="sf-note__body">{{ suggestionsError }}</span>
+          <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" @click="loadSuggestions">重试</button>
+        </div>
+        <div v-if="suggestions.length === 0 && !suggestionsLoading && suggestionsError === ''" class="sf-panel">
+          <SfEmpty title="暂无建议" desc="建议由定时任务根据转换失败/告警自动生成。" />
+        </div>
+        <template v-else>
+          <div style="margin-bottom: 14px">
+            <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" @click="applySuggestions">应用已确认建议</button>
+          </div>
+          <div class="rl-suggestions">
+            <div v-for="(s, i) in suggestions" :key="i" data-testid="suggestion-card" class="sf-panel rl-suggestion">
+              <div class="rl-suggestion__head">
+                <span class="sf-badge sf-badge--accent">{{ s.Anomaly.Type }}</span>
+                <span class="sf-badge" :class="s.AutoApply === true ? 'sf-badge--info' : ''">{{ s.AutoApply === true ? '自动应用' : '需人工确认' }}</span>
+                <span class="sf-spacer" />
+                <span class="sf-faint sf-mono" style="font-size: 11px">{{ s.Anomaly.Source }} · {{ s.Anomaly.Timestamp }}</span>
+              </div>
+              <p class="rl-suggestion__msg">{{ s.Anomaly.Message }}</p>
+              <pre class="rl-suggestion__rule">{{ s.Rule }}</pre>
+              <p class="rl-suggestion__reason">{{ s.Reason }}</p>
+              <p class="sf-field__hint" style="margin: 0">确认后仍需点击「应用已确认建议」才会写入规则。</p>
+              <div class="sf-toolbar">
+                <button class="sf-btn sf-btn--primary sf-btn--sm" type="button" data-testid="suggestion-confirm" @click="confirmSuggestion(i)">确认</button>
+                <button class="sf-btn sf-btn--danger sf-btn--sm" type="button" data-testid="suggestion-reject" @click="rejectSuggestion(i)">拒绝</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.rule-page-size {
-  max-width: 120px;
+.rl-spin {
+  animation: rl-rotate 0.9s linear infinite;
 }
-.resource-table :deep(.v-data-table-footer__items-per-page) {
-  display: none;
+
+@keyframes rl-rotate {
+  to {
+    transform: rotate(360deg);
+  }
 }
-.sf-rule-field {
+
+.rl-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.rl-source {
+  width: 220px;
+  flex: none;
+}
+
+.rl-search-wrap {
+  position: relative;
+  display: inline-flex;
+  width: 264px;
+}
+
+.rl-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--sf-text-faint);
+  pointer-events: none;
+}
+
+.rl-search {
+  padding-left: 31px;
+  font-size: 13px;
+}
+
+.rl-size {
+  width: 104px;
+  flex: none;
+}
+
+.rl-bulkbar {
   margin-bottom: 12px;
+  flex-wrap: wrap;
+  align-items: center;
 }
-.sf-rule-field__label {
+
+.rl-param {
+  font-size: 12px;
+  /* break-word 而非 anywhere：anywhere 会把列的最小内容宽度压到两字符，表格布局下参数列被挤成竖排 */
+  overflow-wrap: break-word;
+  min-width: 96px;
+}
+
+.rl-switch-row {
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-height: 24px;
-  margin-bottom: 2px;
-  font-size: 13px;
-  color: var(--sf-text-muted);
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+  padding: 4px 0;
 }
-.sf-rule-field--switch {
+
+.rl-raw {
+  margin: 0;
+  font-family: var(--sf-font-code);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--sf-text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.rl-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rl-suggestion {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rl-suggestion__head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 40px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rl-suggestion__msg {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.rl-suggestion__rule {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius-sm);
+  background: var(--sf-bg-deep);
+  font-family: var(--sf-font-code);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--sf-text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rl-suggestion__reason {
+  margin: 0;
   font-size: 13px;
   color: var(--sf-text-muted);
+  line-height: 1.65;
 }
 </style>

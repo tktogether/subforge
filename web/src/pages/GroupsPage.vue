@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { pageHelp } from '../content/help'
-import ResourcePage from '../components/ResourcePage.vue'
+import { IconChevronDown } from '@tabler/icons-vue'
+import SfResourcePage from '../components/ui/SfResourcePage.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
 import { endpoints, type ProxyGroup } from '../api/endpoints'
-
-const help = pageHelp('groups')
 
 const membersGroup = ref<ProxyGroup | null>(null)
 const membersOpen = ref(false)
@@ -22,16 +21,15 @@ function sourceText(source?: string): string {
   return source.startsWith('airport:') ? '机场:' + source.slice('airport:'.length) : source
 }
 
-// 来源/成员列挂计算字段，ResourcePage 直接当普通列渲染。
 const groupColumns = [
   { key: 'name', title: '名称' },
   { key: 'source_text', title: '来源' },
-  { key: 'type', title: '类型' },
-  { key: 'regex', title: '匹配正则' },
+  { key: 'type', title: '类型', mono: true },
+  { key: 'regex', title: '匹配正则', mono: true },
   { key: 'members_text', title: '成员' },
   { key: 'expand_text', title: '成员扩展' },
-  { key: 'url', title: '检测地址' },
-  { key: 'interval', title: '间隔(秒)' },
+  { key: 'url', title: '检测地址', mono: true },
+  { key: 'interval', title: '间隔(秒)', mono: true, align: 'right' as const },
 ]
 
 // 机场自带分组的成员可能很多：只预览前三个，完整列表按需打开。
@@ -41,14 +39,10 @@ function membersText(members?: string[]): string {
   return members.length > 3 ? `${members.length} 个：${preview}…` : preview
 }
 
-function openMembers(group: any): void {
+function openMembers(group: ProxyGroup & Record<string, unknown>): void {
   membersGroup.value = group
   membersSearch.value = ''
   membersOpen.value = true
-}
-
-function closeMembers(): void {
-  membersOpen.value = false
 }
 
 // 成员扩展是「全部来源 + 自建」两种开关的组合，表格只显示最终生效范围。
@@ -83,8 +77,8 @@ const groupFields = [
 ]
 
 // 包装 list：给每行补一个 source_text 展示字段；新增/编辑透传 createGroup/updateGroup 原样。
-const resource: any = {
-  list: async (): Promise<(ProxyGroup & { source_text?: string })[]> => {
+const resource = {
+  list: async (): Promise<(ProxyGroup & Record<string, unknown>)[]> => {
     const groups = await endpoints.listGroups()
     return groups.map((g) => ({
       ...g,
@@ -93,82 +87,90 @@ const resource: any = {
       source_text: sourceText(g.source),
       members_text: membersText(g.members),
       expand_text: expandText(g),
-    }))
+    })) as (ProxyGroup & Record<string, unknown>)[]
   },
-  create: endpoints.createGroup,
-  update: (item: any) => endpoints.updateGroup(item.id, item),
-  remove: (item: any) => endpoints.deleteGroup(item.id),
+  create: (item: Record<string, unknown>) => endpoints.createGroup(item as unknown as Parameters<typeof endpoints.createGroup>[0]),
+  update: (item: Record<string, unknown>) => endpoints.updateGroup(item['id'] as number, item as unknown as Parameters<typeof endpoints.updateGroup>[1]),
+  remove: (item: Record<string, unknown>) => endpoints.deleteGroup(item['id'] as number),
 }
+
+const recipesOpen = ref(false)
 </script>
 
 <template>
-  <div class="groups-page">
-    <ResourcePage
-      title="代理分组"
-      :subtitle="help.oneLiner"
-      help-key="groups"
+  <div>
+    <SfResourcePage
+      page-title="代理分组"
       :columns="groupColumns"
       :fields="groupFields"
       :resource="resource"
-      :empty="help.emptyState"
+      empty-title="还没有代理分组"
+      empty-desc="新增一个分组，或从机场页导入订阅自带分组。"
     >
-      <template #members="{ item }">
+      <template #cell-url="{ value }">
+        <span class="sf-mono group-url" :title="String(value)">{{ value }}</span>
+      </template>
+      <template #cell-members_text="{ row }">
         <button
-          v-if="item.members && item.members.length > 0"
+          v-if="Array.isArray(row['members']) && row['members'].length > 0"
           type="button"
           class="members-trigger"
           data-testid="group-members-open"
-          @click="openMembers(item)"
-        >{{ membersText(item.members) }}</button>
-        <span v-else>—</span>
+          @click="openMembers(row as ProxyGroup & Record<string, unknown>)"
+        >{{ String(row['members_text']) }}</button>
+        <span v-else class="sf-faint">—</span>
       </template>
+    </SfResourcePage>
 
-    </ResourcePage>
+    <SfDialog :open="membersOpen" label="GROUP MEMBERS" :title="'分组成员 · ' + (membersGroup?.name ?? '')" @close="membersOpen = false">
+      <p class="sf-faint" style="margin: 0; font-size: 12.5px">共 {{ membersGroup?.members?.length ?? 0 }} 个成员</p>
+      <input
+        v-if="(membersGroup?.members?.length ?? 0) > 10"
+        v-model="membersSearch"
+        class="sf-input sf-input--mono"
+        placeholder="搜索成员…"
+        data-testid="group-members-search"
+      />
+      <div class="member-grid" data-testid="group-member-list">
+        <span v-for="member in filteredMembers" :key="member" class="member-item" data-testid="group-member-item">{{ member }}</span>
+      </div>
+      <p v-if="filteredMembers.length === 0" class="sf-faint" style="margin: 0; font-size: 12.5px">没有匹配的成员</p>
+      <template #foot>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="group-members-close" @click="membersOpen = false">关闭</button>
+      </template>
+    </SfDialog>
 
-    <v-dialog :model-value="membersOpen" max-width="680" scrollable data-testid="group-members-dialog" @update:model-value="closeMembers">
-      <v-card>
-        <v-card-title>分组成员 · {{ membersGroup?.name }}</v-card-title>
-        <v-card-text>
-          <div class="text-caption text-medium-emphasis mb-2">共 {{ membersGroup?.members?.length ?? 0 }} 个成员</div>
-          <v-text-field
-            v-if="(membersGroup?.members?.length ?? 0) > 10"
-            v-model="membersSearch"
-            label="搜索成员"
-            density="compact"
-            variant="outlined"
-            hide-details
-            clearable
-            data-testid="group-members-search"
-            class="mb-3"
-          />
-          <div class="member-grid" data-testid="group-member-list">
-            <span v-for="member in filteredMembers" :key="member" class="member-item" data-testid="group-member-item">{{ member }}</span>
-          </div>
-          <div v-if="filteredMembers.length === 0" class="text-caption text-medium-emphasis mt-2">没有匹配的成员</div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" data-testid="group-members-close" @click="closeMembers">关闭</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-expansion-panels class="mt-4" data-testid="group-recipes">
-      <v-expansion-panel>
-        <v-expansion-panel-title>常见分组配方</v-expansion-panel-title>
-        <v-expansion-panel-text>
-          <ul class="text-body-2">
-            <li><strong>香港</strong>：type=<code>url-test</code>，regex=<code>香港|HK</code>，url=<code>http://www.gstatic.com/generate_204</code>，interval=<code>300</code></li>
-            <li><strong>自动选择</strong>：type=<code>url-test</code>，regex=<code>.</code>（匹配全部）</li>
-            <li><strong>故障转移</strong>：type=<code>fallback</code>，regex=<code>香港|HK</code></li>
+    <section class="sf-panel sf-rise sf-d2" style="margin-top: 16px" data-testid="group-recipes">
+      <button type="button" class="recipes-head" @click="recipesOpen = !recipesOpen">
+        <span class="sf-panel__title">常见分组配方</span>
+        <span class="sf-spacer" />
+        <IconChevronDown :size="16" :stroke-width="1.8" class="sf-faint" :style="{ transform: recipesOpen ? 'rotate(180deg)' : 'none', transition: 'transform var(--sf-t-fast) var(--sf-ease)' }" aria-hidden="true" />
+      </button>
+      <div class="sf-collapse" :class="{ 'is-open': recipesOpen }">
+        <div class="sf-collapse__inner">
+          <ul class="recipes-list">
+            <li><b>香港</b>：type=<code>url-test</code>，regex=<code>香港|HK</code>，url=<code>http://www.gstatic.com/generate_204</code>，interval=<code>300</code></li>
+            <li><b>自动选择</b>：type=<code>url-test</code>，regex=<code>.</code>（匹配全部）</li>
+            <li><b>故障转移</b>：type=<code>fallback</code>，regex=<code>香港|HK</code></li>
           </ul>
-        </v-expansion-panel-text>
-      </v-expansion-panel>
-    </v-expansion-panels>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
+.group-url {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-size: 11.5px;
+  color: var(--sf-text-muted);
+}
+
 .members-trigger {
   max-width: 260px;
   padding: 0;
@@ -176,26 +178,68 @@ const resource: any = {
   background: transparent;
   color: var(--sf-accent);
   font: inherit;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
+  text-decoration-color: oklch(from var(--sf-accent) l c h / 0.4);
 }
+
+.members-trigger:hover {
+  text-decoration-color: var(--sf-accent);
+}
+
 .member-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 16px;
+  gap: 4px 18px;
 }
+
 .member-item {
   min-width: 0;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--sf-border);
+  padding: 5px 0;
+  border-bottom: 1px solid oklch(from var(--sf-border) l c h / 0.55);
   overflow-wrap: anywhere;
   font-size: 13px;
 }
+
 @media (max-width: 600px) {
   .member-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.recipes-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  background: none;
+  border: none;
+  color: var(--sf-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.recipes-list {
+  margin: 0;
+  padding: 4px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--sf-text-muted);
+}
+
+.recipes-list code {
+  font-size: 12px;
+  background: var(--sf-surface-dim);
+  border: 1px solid var(--sf-border);
+  border-radius: 3px;
+  padding: 0 5px;
 }
 </style>

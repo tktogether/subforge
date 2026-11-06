@@ -7,22 +7,19 @@ import {
   type DiffLine,
 } from '../api/endpoints'
 import { errorMessage } from '../composables/useAsync'
-import { pageHelp } from '../content/help'
 import { copyText } from '../utils/clipboard'
-import PageHeader from '../components/PageHeader.vue'
-import AsyncSection from '../components/AsyncSection.vue'
-import InfoTip from '../components/InfoTip.vue'
-
-const help = pageHelp('convert')
+import SfPageHead from '../components/ui/SfPageHead.vue'
+import SfField from '../components/ui/SfField.vue'
+import SfSwitch from '../components/ui/SfSwitch.vue'
+import SfNote from '../components/ui/SfNote.vue'
+import SfEmpty from '../components/ui/SfEmpty.vue'
+import SfInfoTip from '../components/ui/SfInfoTip.vue'
+import SfCodeBlock from '../components/ui/SfCodeBlock.vue'
+import SfDialog from '../components/ui/SfDialog.vue'
+import { IconPlayerPlay, IconCopy, IconCheck, IconDownload, IconFileCode, IconGitCompare } from '@tabler/icons-vue'
 
 const targets = ref<string[]>([])
 const pipelines = ref<Pipeline[]>([])
-const pipelineItems = computed(() =>
-  pipelines.value.map((p) => ({
-    title: p.name + (p.source === 'template' ? ' · 只读' : ''),
-    value: p.name,
-  }))
-)
 const selectedTarget = ref('')
 const urls = ref('')
 const text = ref('')
@@ -39,10 +36,6 @@ const error = ref('')
 const result = ref<ConvertResponse | null>(null)
 const copied = ref(false)
 const targetHelpOpen = ref(false)
-
-function closeTargetHelp(): void {
-  targetHelpOpen.value = false
-}
 
 const objectUrl = ref<string | null>(null)
 
@@ -184,7 +177,6 @@ function lineClass(t: string): string {
 
 onMounted(() => {
   void loadMeta()
-  // default diffB to last result body when available is handled in template via v-model default; keep empty here
 })
 
 onUnmounted(() => {
@@ -196,351 +188,418 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="convert-page">
-    <PageHeader :title="help.title" :subtitle="help.oneLiner" help-key="convert" />
+  <div>
+    <SfPageHead>
+      <template #actions>
+        <button class="sf-btn sf-btn--ghost" type="button" data-testid="target-meanings-toggle" @click="targetHelpOpen = true">
+          目标格式说明
+        </button>
+      </template>
+    </SfPageHead>
 
-    <v-row>
-      <v-col cols="12" md="6">
-        <v-card class="pa-4" data-testid="convert-input-card">
-          <div class="d-flex align-center mb-3">
-            <span class="text-subtitle-1">转换参数</span>
-            <v-spacer />
-            <v-btn variant="text" size="small" prepend-icon="mdi-help-circle-outline" data-testid="target-meanings-toggle" @click="targetHelpOpen = true">目标格式说明</v-btn>
+    <div class="cv-workbench sf-rise sf-d1">
+      <!-- 左：参数台 -->
+      <section class="sf-panel" data-testid="convert-input-card">
+        <div class="sf-panel__head">
+          <span class="sf-label-mono">PARAMS / 转换参数</span>
+        </div>
+        <div class="sf-panel__body cv-form">
+          <div class="cv-section">
+            <div class="cv-section__head">
+              <span class="cv-section__title">输入来源</span>
+              <span class="cv-section__caption">订阅地址每行一个；两者至少填写一项。</span>
+            </div>
+            <SfField label="订阅地址（每行一个）">
+              <textarea v-model="urls" class="sf-textarea sf-input--mono" rows="3" data-testid="urls" spellcheck="false" placeholder="https://example.com/sub"></textarea>
+            </SfField>
+            <SfField label="粘贴文本" hint="整段分享链接或 Base64，会写入临时文件后解析。">
+              <textarea v-model="text" class="sf-textarea sf-input--mono" rows="2" data-testid="text" spellcheck="false"></textarea>
+            </SfField>
           </div>
 
-          <div class="sf-form-section">
-            <div class="sf-form-section__head">
-              <span class="sf-form-section__title">输入来源</span>
-              <span class="sf-form-section__caption">订阅地址每行一个，支持 http 与 https；粘贴文本会写入临时文件后解析。两者至少填写一项。</span>
+          <div class="cv-section">
+            <div class="cv-section__head">
+              <span class="cv-section__title">筛选条件</span>
+              <span class="cv-section__caption">留空表示不筛选</span>
             </div>
-            <v-textarea
-              v-model="urls"
-              label="订阅地址（每行一个）"
-              rows="4"
-              variant="outlined"
-              density="comfortable"
-              hide-details
-              class="mb-3"
-              data-testid="urls"
-            />
-            <v-textarea
-              v-model="text"
-              label="粘贴文本"
-              rows="3"
-              variant="outlined"
-              density="comfortable"
-              hide-details
-              data-testid="text"
-            />
-          </div>
-
-          <v-divider class="my-4" />
-
-          <div class="sf-form-section">
-            <div class="sf-form-section__head">
-              <span class="sf-form-section__title">筛选条件</span>
-              <span class="sf-form-section__caption">留空表示不筛选</span>
-            </div>
-            <div class="sf-form-grid">
-              <div class="sf-convert-field">
-                <div class="sf-convert-label">协议类型 <InfoTip text="只保留指定协议类型；逗号分隔，留空表示不过滤。" example="ss,vmess" label="协议类型" /></div>
-                <v-text-field v-model="types" variant="outlined" density="comfortable" hide-details data-testid="types" />
-              </div>
-              <div class="sf-convert-field">
-                <div class="sf-convert-label">包含节点 <InfoTip text="按节点名称匹配的逗号分隔正则；匹配的节点才会保留。" label="包含节点" /></div>
-                <v-text-field v-model="include" variant="outlined" density="comfortable" hide-details data-testid="include" />
-              </div>
-              <div class="sf-convert-field">
-                <div class="sf-convert-label">排除节点 <InfoTip text="按节点名称匹配的逗号分隔正则；匹配的节点会被移除。" label="排除节点" /></div>
-                <v-text-field v-model="exclude" variant="outlined" density="comfortable" hide-details data-testid="exclude" />
-              </div>
+            <div class="cv-trio">
+              <SfField label="协议类型">
+                <template #label><span class="sf-field__label">协议类型 <SfInfoTip text="只保留指定协议类型；逗号分隔，留空表示不过滤。示例：ss,vmess" /></span></template>
+                <input v-model="types" class="sf-input sf-input--mono" data-testid="types" spellcheck="false" />
+              </SfField>
+              <SfField>
+                <template #label><span class="sf-field__label">包含节点 <SfInfoTip text="按节点名称匹配的逗号分隔正则；匹配的节点才会保留。" /></span></template>
+                <input v-model="include" class="sf-input sf-input--mono" data-testid="include" spellcheck="false" />
+              </SfField>
+              <SfField>
+                <template #label><span class="sf-field__label">排除节点 <SfInfoTip text="按节点名称匹配的逗号分隔正则；匹配的节点会被移除。" /></span></template>
+                <input v-model="exclude" class="sf-input sf-input--mono" data-testid="exclude" spellcheck="false" />
+              </SfField>
             </div>
           </div>
 
-          <v-divider class="my-4" />
-
-          <div class="sf-form-section">
-            <div class="sf-form-section__head">
-              <span class="sf-form-section__title">输出设置</span>
+          <div class="cv-section">
+            <div class="cv-section__head">
+              <span class="cv-section__title">输出设置</span>
             </div>
-            <div class="sf-form-grid">
-              <div class="sf-convert-field">
-                <div class="sf-convert-label">目标格式 <InfoTip text="留空时使用 clash.meta。" label="目标格式" /></div>
-                <v-select v-model="selectedTarget" :items="targets" variant="outlined" density="comfortable" hide-details data-testid="target-select" />
-              </div>
-              <div class="sf-convert-field">
-                <div class="sf-convert-label">管线 <InfoTip text="在节点进入渲染前执行的处理步骤；留空表示不使用管线。" label="管线" /></div>
-                <v-select v-model="pipeline" :items="pipelineItems" variant="outlined" density="comfortable" hide-details data-testid="pipeline" />
-              </div>
-              <div class="sf-convert-field">
-                <div class="sf-convert-label">转换模板 <InfoTip text="渲染使用的配置模板；留空表示使用默认模板。" label="转换模板" /></div>
-                <v-select v-model="configValue" :items="configs" variant="outlined" density="comfortable" hide-details data-testid="config" />
-              </div>
-              <div class="sf-convert-field">
-                <div class="sf-convert-label">节点排序 <InfoTip text="选择保持来源顺序或按节点名称排序。" label="节点排序" /></div>
-                <v-select v-model="sort" :items="[{ title: '保持来源顺序', value: 'false' }, { title: '按节点名称排序', value: 'true' }]" variant="outlined" density="comfortable" hide-details data-testid="sort" />
-              </div>
+            <div class="cv-duo">
+              <SfField>
+                <template #label><span class="sf-field__label">目标格式 <SfInfoTip text="留空时使用 clash.meta。" /></span></template>
+                <span class="sf-select-wrap">
+                  <select v-model="selectedTarget" class="sf-select" data-testid="target-select">
+                    <option value="">默认（clash.meta）</option>
+                    <option v-for="t in targets" :key="t" :value="t">{{ t }}</option>
+                  </select>
+                </span>
+              </SfField>
+              <SfField>
+                <template #label><span class="sf-field__label">管线 <SfInfoTip text="在节点进入渲染前执行的处理步骤；留空表示不使用管线。" /></span></template>
+                <span class="sf-select-wrap">
+                  <select v-model="pipeline" class="sf-select" data-testid="pipeline">
+                    <option value="">不使用</option>
+                    <option v-for="p in pipelines" :key="p.id" :value="p.name">{{ p.name }}{{ p.source === 'template' ? ' · 只读' : '' }}</option>
+                  </select>
+                </span>
+              </SfField>
+              <SfField>
+                <template #label><span class="sf-field__label">转换模板 <SfInfoTip text="渲染使用的配置模板；留空表示使用默认模板。" /></span></template>
+                <span class="sf-select-wrap">
+                  <select v-model="configValue" class="sf-select" data-testid="config">
+                    <option value="">默认模板</option>
+                    <option v-for="c in configs" :key="c" :value="c">{{ c }}</option>
+                  </select>
+                </span>
+              </SfField>
+              <SfField label="节点排序">
+                <span class="sf-select-wrap">
+                  <select v-model="sort" class="sf-select" data-testid="sort">
+                    <option value="false">保持来源顺序</option>
+                    <option value="true">按节点名称排序</option>
+                  </select>
+                </span>
+              </SfField>
             </div>
-            <div class="sf-convert-switch-row">
+            <div class="cv-list-row">
               <div>
-                <div class="sf-convert-label">仅输出节点列表 <InfoTip text="只输出节点分享链接列表，不生成完整配置。" label="仅输出节点列表" /></div>
-                <div class="sf-form-section__caption">不生成完整配置，只输出分享链接</div>
+                <span class="sf-field__label">仅输出节点列表 <SfInfoTip text="只输出节点分享链接列表，不生成完整配置。" /></span>
+                <div class="sf-field__hint">不生成完整配置，只输出分享链接</div>
               </div>
-              <v-spacer />
-              <v-switch v-model="list" color="primary" hide-details data-testid="list" />
-            </div>
-            <div class="mt-2">
-              <v-btn variant="text" size="small" prepend-icon="mdi-pipe" to="/pipelines" data-testid="pipeline-link">管理管线</v-btn>
+              <SfSwitch v-model="list" data-testid="list" />
             </div>
           </div>
 
-          <div class="convert-actions">
-            <v-btn color="primary" :loading="loading" prepend-icon="mdi-play" data-testid="submit" @click="submit">转换</v-btn>
-            <span v-if="urls.trim() === '' && text.trim() === ''" class="text-caption text-medium-emphasis">
+          <div class="cv-actions">
+            <button class="sf-btn sf-btn--primary" type="button" data-testid="submit" :disabled="loading" @click="submit">
+              <IconPlayerPlay :size="15" :stroke-width="1.8" />
+              {{ loading ? '转换中…' : '执行转换' }}
+            </button>
+            <span v-if="urls.trim() === '' && text.trim() === ''" class="cv-actions__note">
               订阅地址与粘贴文本不能同时为空。
             </span>
           </div>
-        </v-card>
-      </v-col>
+        </div>
+      </section>
 
-      <v-col cols="12" md="6" class="convert-result-col">
-        <AsyncSection :loading="loading" :error="error" :empty="false" empty-text="结果将显示在这里" @retry="submit">
-          <v-card class="pa-4" data-testid="convert-result-card">
-            <div class="result-head">
-              <span class="text-subtitle-1">转换结果</span>
-              <v-chip v-if="result !== null" size="small" variant="tonal">{{ result.format }}</v-chip>
-              <v-spacer />
-              <template v-if="result !== null">
-                <v-btn size="small" variant="tonal" prepend-icon="mdi-content-copy" data-testid="copy" @click="copy">{{ copied ? '已复制' : '复制' }}</v-btn>
-                <v-btn size="small" variant="tonal" prepend-icon="mdi-download" data-testid="download" @click="download">下载</v-btn>
-              </template>
+      <!-- 右：产物输出 -->
+      <section class="sf-panel sf-panel--ticks" data-testid="convert-result-card">
+        <div class="sf-panel__head">
+          <span class="sf-label-mono">OUTPUT / 转换结果</span>
+          <span v-if="result !== null" class="sf-badge sf-badge--accent">{{ result.format }}</span>
+          <span class="sf-spacer" />
+          <template v-if="result !== null">
+            <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="copy" @click="copy">
+              <IconCheck v-if="copied" :size="14" :stroke-width="2" style="color: var(--sf-ok)" />
+              <IconCopy v-else :size="14" :stroke-width="1.8" />
+              {{ copied ? '已复制' : '复制' }}
+            </button>
+            <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="download" @click="download">
+              <IconDownload :size="14" :stroke-width="1.8" />
+              下载
+            </button>
+          </template>
+        </div>
+
+        <SfEmpty
+          v-if="result === null"
+          title="还没有转换结果"
+          desc="填写左侧参数后点击「执行转换」，产物会在这里输出。"
+        >
+          <template #icon><IconFileCode :size="30" :stroke-width="1.4" /></template>
+        </SfEmpty>
+        <template v-else>
+          <div class="cv-result-summary" data-testid="result-summary">
+            <div class="cv-result-summary__item">
+              <span class="cv-result-summary__label">节点</span>
+              <span class="cv-result-summary__value">{{ result.nodes }}</span>
             </div>
-
-            <div v-if="result === null" class="result-empty">
-              <v-icon size="28" icon="mdi-file-code-outline" />
-              <div class="text-subtitle-1">还没有转换结果</div>
-              <div class="text-caption text-medium-emphasis">填写左侧参数后点击「转换」，结果会显示在这里。</div>
+            <div class="cv-result-summary__item">
+              <span class="cv-result-summary__label">原始节点</span>
+              <span class="cv-result-summary__value">{{ result.rawNodes }}</span>
             </div>
+            <div class="cv-result-summary__item">
+              <span class="cv-result-summary__label">缓存命中</span>
+              <span class="cv-result-summary__value">{{ result.cached }}</span>
+            </div>
+          </div>
+          <SfCodeBlock :code="result.body" :label="filenameFor(result.format)" plain max-height="480px" class="cv-result-body" />
+          <div style="padding: 0 18px 16px; display: flex; flex-direction: column; gap: 10px">
+            <SfNote v-if="result.failures !== null && result.failures.length > 0" tone="danger" data-testid="convert-failures">
+              <b>失败来源</b>——以下来源未成功获取；其他来源的节点仍会正常输出。
+              <ul class="cv-note-list">
+                <li v-for="(f, i) in result.failures" :key="i">{{ f }}</li>
+              </ul>
+            </SfNote>
+            <SfNote v-else tone="ok" data-testid="convert-failures-ok">全部来源成功。</SfNote>
+            <SfNote v-if="result.warnings !== null && result.warnings.length > 0" tone="warn" data-testid="convert-warnings">
+              <b>告警</b>——以下内容被跳过或降级，不影响其他节点的输出。
+              <ul class="cv-note-list">
+                <li v-for="(w, i) in result.warnings" :key="i">{{ w }}</li>
+              </ul>
+            </SfNote>
+          </div>
+        </template>
+      </section>
+    </div>
 
-            <template v-else>
-              <div class="result-summary" data-testid="result-summary">
-                <div class="result-summary__item">
-                  <span class="result-summary__label">输出格式</span>
-                  <span class="result-summary__value">{{ result.format }}</span>
-                </div>
-                <div class="result-summary__item">
-                  <span class="result-summary__label">节点</span>
-                  <span class="result-summary__value">{{ result.nodes }}</span>
-                </div>
-                <div class="result-summary__item">
-                  <span class="result-summary__label">原始节点</span>
-                  <span class="result-summary__value">{{ result.rawNodes }}</span>
-                </div>
-                <div class="result-summary__item">
-                  <span class="result-summary__label">缓存命中</span>
-                  <span class="result-summary__value">{{ result.cached }}</span>
-                </div>
-              </div>
-              <v-textarea :model-value="result.body" readonly rows="14" variant="outlined" density="comfortable" hide-details spellcheck="false" class="result-body" data-testid="result-body" />
+    <div v-if="error !== ''" class="sf-note sf-note--danger sf-rise" style="margin-top: 16px">{{ error }}</div>
 
-              <v-alert v-if="result.failures && result.failures.length" type="error" variant="tonal" class="mt-3" data-testid="convert-failures">
-                <div class="font-weight-medium">失败来源</div>
-                <div class="text-caption">以下来源未成功获取；其他来源的节点仍会正常输出。</div>
-                <ul class="alert-list"><li v-for="(f, i) in result.failures" :key="i">{{ f }}</li></ul>
-              </v-alert>
-              <v-alert v-else type="success" variant="tonal" density="compact" class="mt-3" data-testid="convert-failures-ok">全部来源成功</v-alert>
-              <v-alert v-if="result.warnings && result.warnings.length" type="warning" variant="tonal" class="mt-3" data-testid="convert-warnings">
-                <div class="font-weight-medium">告警</div>
-                <div class="text-caption">以下内容被跳过或降级，不影响其他节点的输出。</div>
-                <ul class="alert-list"><li v-for="(w, i) in result.warnings" :key="i">{{ w }}</li></ul>
-              </v-alert>
-            </template>
-          </v-card>
-        </AsyncSection>
-      </v-col>
-    </v-row>
-
-    <v-card class="pa-4 mt-4" data-testid="diff-card">
-      <div class="d-flex align-center mb-3">
-        <span class="text-subtitle-1">产物对比</span>
-        <InfoTip text="「-」表示仅在左侧存在，「+」表示仅在右侧存在；同一行被修改时会先删除再新增。" label="产物对比" />
+    <!-- 产物对比 -->
+    <section class="sf-panel sf-rise sf-d2" data-testid="diff-card" style="margin-top: 16px">
+      <div class="sf-panel__head">
+        <span class="sf-panel__title">产物对比</span>
+        <SfInfoTip text="「-」表示仅在左侧存在，「+」表示仅在右侧存在；同一行被修改时会先删除再新增。" />
       </div>
-      <div class="sf-form-grid">
-        <v-textarea v-model="diffA" label="基线 A" rows="6" variant="outlined" density="comfortable" hide-details class="diff-input" data-testid="diff-a" />
-        <v-textarea v-model="diffB" label="当前 B" rows="6" variant="outlined" density="comfortable" hide-details class="diff-input" data-testid="diff-b" />
-      </div>
-      <div class="convert-actions mt-3">
-        <v-btn color="primary" :loading="diffLoading" prepend-icon="mdi-compare" data-testid="diff-run" @click="runDiff">对比</v-btn>
-        <span class="text-caption text-medium-emphasis">按行比较两份产物，红色为删除，绿色为新增。</span>
-      </div>
-      <div v-if="diffError !== ''" data-testid="diff-error" class="text-error mt-2">{{ diffError }}</div>
-      <div v-if="diffRan && diffLines.length === 0 && diffError === ''" data-testid="diff-empty" class="diff-empty mt-3">
-        没有可对比的内容
-      </div>
-      <div v-if="diffLines.length > 0" data-testid="diff-result" class="diff-panel mt-3">
-        <div v-for="(ln, i) in diffLines" :key="i" :class="lineClass(ln.type)" :data-testid="'diff-line-' + i" class="diff-line">
-          <span class="diff-type">{{ ln.type }}</span>{{ ln.text }}
+      <div class="sf-panel__body">
+        <div class="cv-diff-grid">
+          <SfField label="基线 A">
+            <textarea v-model="diffA" class="sf-textarea sf-input--mono" rows="6" data-testid="diff-a" spellcheck="false"></textarea>
+          </SfField>
+          <SfField label="当前 B">
+            <textarea v-model="diffB" class="sf-textarea sf-input--mono" rows="6" data-testid="diff-b" spellcheck="false"></textarea>
+          </SfField>
+        </div>
+        <div class="cv-actions" style="margin-top: 14px">
+          <button class="sf-btn sf-btn--primary" type="button" data-testid="diff-run" :disabled="diffLoading" @click="runDiff">
+            <IconGitCompare :size="15" :stroke-width="1.8" />
+            {{ diffLoading ? '对比中…' : '执行对比' }}
+          </button>
+          <span class="sf-field__hint">按行比较两份产物，红色为删除，绿色为新增。</span>
+        </div>
+        <div v-if="diffError !== ''" data-testid="diff-error" class="sf-field__error" style="margin-top: 10px">{{ diffError }}</div>
+        <div v-if="diffRan && diffLines.length === 0 && diffError === ''" data-testid="diff-empty" class="sf-note" style="margin-top: 12px">
+          没有可对比的内容。
+        </div>
+        <div v-if="diffLines.length > 0" data-testid="diff-result" class="cv-diff-panel">
+          <div v-for="(ln, i) in diffLines" :key="i" :class="lineClass(ln.type)" :data-testid="'diff-line-' + i" class="cv-diff-line">
+            <span class="cv-diff-type">{{ ln.type }}</span>{{ ln.text }}
+          </div>
         </div>
       </div>
-    </v-card>
+    </section>
 
-    <v-dialog :model-value="targetHelpOpen" max-width="760" scrollable data-testid="target-meanings-dialog" @update:model-value="closeTargetHelp">
-      <v-card>
-        <v-card-title>目标格式说明</v-card-title>
-        <v-card-text>
-          <p class="text-body-2 text-medium-emphasis mb-3">
-            订阅地址会根据客户端类型自动选择目标格式；在本页选择后以本页设置为准。
-          </p>
-          <v-table density="compact" data-testid="target-meanings" class="sf-table-rows">
-            <thead>
-              <tr><th>取值</th><th>产物形态</th><th>适用客户端</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in targetMeanings" :key="m.target">
-                <td><code>{{ m.target }}</code></td>
-                <td>{{ m.form }}</td>
-                <td>{{ m.where }}</td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" data-testid="target-meanings-close" @click="closeTargetHelp">关闭</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- 目标格式说明 -->
+    <SfDialog :open="targetHelpOpen" label="TARGETS" title="目标格式说明" wide @close="targetHelpOpen = false">
+      <p class="cv-dialog-lead">订阅地址会根据客户端类型自动选择目标格式；在本页选择后以本页设置为准。</p>
+      <div class="sf-table-wrap" data-testid="target-meanings">
+        <table class="sf-table">
+          <thead>
+            <tr><th>取值</th><th>产物形态</th><th>适用客户端</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in targetMeanings" :key="m.target">
+              <td><code class="sf-mono">{{ m.target }}</code></td>
+              <td>{{ m.form }}</td>
+              <td class="sf-muted">{{ m.where }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <template #foot>
+        <button class="sf-btn sf-btn--primary" type="button" data-testid="target-meanings-close" @click="targetHelpOpen = false">关闭</button>
+      </template>
+    </SfDialog>
   </div>
 </template>
 
 <style scoped>
-.sf-convert-field {
-  margin-bottom: 12px;
+.cv-workbench {
+  display: grid;
+  grid-template-columns: minmax(380px, 460px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
 }
-.sf-convert-label {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 24px;
-  margin-bottom: 2px;
-  font-size: 13px;
-  color: var(--sf-text-muted);
-}
-.sf-convert-switch-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--sf-border);
-  border-radius: 8px;
-  background: var(--sf-surface-raised);
-}
-.convert-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 16px;
-}
-@media (min-width: 960px) {
-  .convert-result-col {
-    position: sticky;
-    top: 84px;
-    align-self: flex-start;
+
+@media (max-width: 1100px) {
+  .cv-workbench {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
-.result-head {
+
+.cv-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cv-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cv-section__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cv-section__title {
+  font: 650 13.5px/1.3 var(--sf-font-sans);
+}
+
+.cv-section__title::before {
+  content: '▸ ';
+  color: var(--sf-accent);
+}
+
+.cv-section__caption {
+  font-size: 12px;
+  color: var(--sf-text-faint);
+}
+
+.cv-trio {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.cv-duo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.cv-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  background: var(--sf-surface-dim);
+}
+
+.cv-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 12px;
+  /* 吸底：长表单滚动时「执行转换」始终可见 */
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 4px -18px -18px;
+  padding: 12px 18px 16px;
+  background: var(--sf-surface);
+  border-top: 1px solid var(--sf-border);
+  border-radius: 0 0 var(--sf-radius-lg) var(--sf-radius-lg);
 }
-.result-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 48px 16px;
-  border: 1px dashed var(--sf-border);
-  border-radius: 8px;
-  background: var(--sf-surface-raised);
-  color: var(--sf-text-muted);
-  text-align: center;
+
+.cv-actions__note {
+  font-size: 12.5px;
+  color: var(--sf-text-faint);
 }
-.result-summary {
+
+.cv-result-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--sf-border);
+  border-bottom: 1px solid var(--sf-border);
 }
-.result-summary__item {
+
+.cv-result-summary__item {
+  background: var(--sf-surface-dim);
+  padding: 10px 18px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--sf-border);
-  border-radius: 6px;
-  background: var(--sf-surface-raised);
 }
-.result-summary__label {
-  color: var(--sf-text-muted);
-  font-size: 12px;
+
+.cv-result-summary__label {
+  font: 500 10px/1.2 var(--sf-font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sf-text-faint);
 }
-.result-summary__value {
-  font-weight: 600;
+
+.cv-result-summary__value {
+  font: 600 17px/1.2 var(--sf-font-display);
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
 }
-.result-body :deep(textarea),
-.diff-input :deep(textarea) {
-  font-family: var(--sf-font-mono);
-  font-size: 12px;
-  line-height: 1.6;
+
+.cv-result-body {
+  border: none;
+  border-radius: 0;
 }
-.alert-list {
+
+.cv-note-list {
   margin: 6px 0 0;
   padding-left: 18px;
+  line-height: 1.7;
 }
-.diff-input {
-  margin-bottom: 8px;
-}
-.diff-empty {
-  padding: 16px;
-  border: 1px dashed var(--sf-border);
-  border-radius: 8px;
-  color: var(--sf-text-muted);
+
+.cv-dialog-lead {
+  margin: 0;
   font-size: 13px;
-  text-align: center;
+  line-height: 1.7;
+  color: var(--sf-text-muted);
 }
-.diff-panel {
+
+.cv-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.cv-diff-panel {
+  margin-top: 12px;
   border: 1px solid var(--sf-border);
-  border-radius: 8px;
+  border-radius: var(--sf-radius);
   overflow: hidden;
-  background: var(--sf-surface);
+  background: var(--sf-bg-deep);
+  max-height: 420px;
+  overflow-y: auto;
 }
-.diff-line {
-  padding: 2px 10px;
-  font-family: var(--sf-font-mono);
+
+.cv-diff-line {
+  padding: 2px 12px;
+  font-family: var(--sf-font-code);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  line-height: 1.65;
 }
-.diff-type {
+
+.cv-diff-type {
   display: inline-block;
   width: 1.2em;
-  color: var(--sf-text-muted);
+  color: var(--sf-text-faint);
 }
+
 .line-same {
   color: var(--sf-text-faint);
 }
+
 .line-del {
   color: var(--sf-danger);
-  background: color-mix(in srgb, var(--sf-danger) 9%, transparent);
+  background: var(--sf-danger-dim);
 }
+
 .line-add {
   color: var(--sf-ok);
-  background: color-mix(in srgb, var(--sf-ok) 9%, transparent);
+  background: var(--sf-ok-dim);
 }
 </style>
