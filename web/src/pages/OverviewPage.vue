@@ -15,6 +15,7 @@ import { endpoints, type Stats, type HistoryEntry, type Overview } from '../api/
 import { errorMessage } from '../composables/useAsync'
 import SfPageHead from '../components/ui/SfPageHead.vue'
 import SfNote from '../components/ui/SfNote.vue'
+import { parseVersion } from './overviewVersion'
 
 const loading = ref(false)
 const error = ref('')
@@ -64,11 +65,7 @@ function uptimeText(): string {
   return Math.floor(hours / 24) + ' 天 ' + (hours % 24) + ' 小时'
 }
 
-function versionText(v: string): string {
-  const s = v.trim()
-  if (s === '' || /\bdev\b/i.test(s)) return '开发版'
-  return s.replace(/^subforge\s+/i, '')
-}
+const versionParts = computed(() => parseVersion(overview.value?.version ?? ''))
 
 function scaleText(): string {
   if (counts.value === null) return '—'
@@ -144,7 +141,8 @@ onMounted(() => {
         </div>
         <div class="sf-stat" data-testid="service-version">
           <div class="sf-stat__label">VERSION / 版本</div>
-          <div class="sf-stat__value">{{ versionText(overview.version) }}</div>
+          <div class="sf-stat__value">{{ versionParts.main }}</div>
+          <div v-if="versionParts.meta !== ''" class="ov-version__meta">{{ versionParts.meta }}</div>
         </div>
         <div class="sf-stat" data-testid="service-started">
           <div class="sf-stat__label">BOOT AT / 启动时间</div>
@@ -340,6 +338,14 @@ onMounted(() => {
   align-items: baseline;
   font-size: 16px;
   line-height: 1.5;
+}
+
+.ov-version__meta {
+  margin-top: 6px;
+  font: 500 10.5px/1.5 var(--sf-font-mono);
+  letter-spacing: 0.04em;
+  color: var(--sf-text-faint);
+  overflow-wrap: anywhere;
 }
 
 .ov-scale__seg {
