@@ -29,6 +29,9 @@ Thumbs.db
 .zcode/
 .zcodeignore
 
+# 本地设计工作目录（oil-ui 技能生成，本地专用）
+.oil-ui/
+
 # Go 构建缓存（本地 -race 调试用）
 .gocache/
 
