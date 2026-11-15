@@ -161,13 +161,12 @@ func validateRule(ruleType, ruleParam string) error {
 	return nil
 }
 
-// validateSelfNode 校验自建节点：名称/链接非空，且链接能被解析引擎逐节点解析。
+// validateSelfNode 校验自建节点输入：链接非空，且链接能被解析引擎逐节点解析。
+// 名称可留空——留空 = 输出链接自带的名字（applySelfNodeName 对空名原样返回
+// 链接，客户端展示 fragment/ps 里的名字），因此名称不参与校验。
 // 链接先经 parse.ConvertSubscription 转成节点列表，再逐个 parse.Validate——
 // 任一节点解析失败都拒绝入库，避免"填错链接但节点静默不出现"。
-func validateSelfNode(name, link string) error {
-	if strings.TrimSpace(name) == "" {
-		return errors.New("名称不能为空")
-	}
+func validateSelfNode(link string) error {
 	if strings.TrimSpace(link) == "" {
 		return errors.New("分享链接不能为空")
 	}
@@ -1299,7 +1298,7 @@ func (s *Server) handleAPISelfNodes(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
-		if err := validateSelfNode(req.Name, req.Link); err != nil {
+		if err := validateSelfNode(req.Link); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
@@ -1341,7 +1340,7 @@ func (s *Server) handleAPISelfNode(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
-		if err := validateSelfNode(req.Name, req.Link); err != nil {
+		if err := validateSelfNode(req.Link); err != nil {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}

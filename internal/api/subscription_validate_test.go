@@ -269,6 +269,8 @@ func TestGroupPutValidation(t *testing.T) {
 
 // ---------- D-07 自建节点 ----------
 
+// 自建节点名称可留空（留空 = 输出链接自带名字，见 validateSelfNode），
+// 因此这里只校验链接；空名字应 201 成功入库。
 func TestSelfNodePostValidation(t *testing.T) {
 	ts, _ := uiSubServer(t)
 
@@ -277,8 +279,6 @@ func TestSelfNodePostValidation(t *testing.T) {
 		body string
 		want string
 	}{
-		{"空名字", `{"name":"","link":"` + probeSS + `"}`, "名称不能为空"},
-		{"空白名字", `{"name":"  ","link":"` + probeSS + `"}`, "名称不能为空"},
 		{"空链接", `{"name":"n","link":""}`, "分享链接不能为空"},
 		{"空白链接", `{"name":"n","link":"   "}`, "分享链接不能为空"},
 		{"不是链接", `{"name":"n","link":"not-a-valid-link"}`, "分享链接格式不正确："},
@@ -301,6 +301,24 @@ func TestSelfNodePostValidation(t *testing.T) {
 		`{"name":"n1","link":"`+probeSS+`","enabled":true}`)
 	if status != http.StatusCreated {
 		t.Fatalf("合法 POST 状态码 = %d，应为 201；body=%s", status, body)
+	}
+
+	// 名称留空 = 使用链接自带名字，应 201 且按原样返回空名称。
+	status, _, body = uiPostJSON(t, ts, "/api/self-nodes",
+		`{"name":"","link":"`+probeSS+`","enabled":true}`)
+	if status != http.StatusCreated {
+		t.Fatalf("空名称 POST 状态码 = %d，应为 201；body=%s", status, body)
+	}
+	var created struct {
+		SelfNode struct {
+			Name string `json:"name"`
+		} `json:"self_node"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("解析创建响应失败: %v; body=%s", err, body)
+	}
+	if created.SelfNode.Name != "" {
+		t.Fatalf("空名称应原样入库，实际 = %q", created.SelfNode.Name)
 	}
 }
 
@@ -326,7 +344,6 @@ func TestSelfNodePutValidation(t *testing.T) {
 		body string
 		want string
 	}{
-		{"空名字", `{"name":"","link":"` + probeSS + `"}`, "名称不能为空"},
 		{"空链接", `{"name":"n","link":""}`, "分享链接不能为空"},
 		{"不是链接", `{"name":"n","link":"not-a-valid-link"}`, "分享链接格式不正确："},
 	}
@@ -341,6 +358,13 @@ func TestSelfNodePutValidation(t *testing.T) {
 				t.Fatalf("error = %q，应以 %q 开头", got, c.want)
 			}
 		})
+	}
+
+	// PUT 也可以把名称清空。
+	status, _, body = uiDoJSON(t, ts, "PUT", "/api/self-nodes/"+id,
+		`{"name":"","link":"`+probeSS+`","enabled":true}`)
+	if status != http.StatusOK {
+		t.Fatalf("空名称 PUT 状态码 = %d，应为 200；body=%s", status, body)
 	}
 }
 

@@ -81,3 +81,29 @@ func TestSelfNodeNameAppearsInSubscription(t *testing.T) {
 		t.Fatalf("订阅里仍有空名称节点\n%s", sub)
 	}
 }
+
+// TestSelfNodeEmptyNameFallsBackToLinkName 验证名称留空的自建节点：
+// POST /api/self-nodes 应成功（名称可选），拉取订阅时输出链接自带的名字。
+func TestSelfNodeEmptyNameFallsBackToLinkName(t *testing.T) {
+	ts, _ := uiSubServer(t)
+
+	// 链接 fragment 自带名字；控制台名称留空。
+	link := "trojan://pass@198.51.100.12:443?sni=example.com#LINK-OWN-NAME"
+	status, _, body := uiPostJSON(t, ts, "/api/self-nodes",
+		`{"name":"","link":"`+link+`","enabled":true}`)
+	if status != http.StatusCreated {
+		t.Fatalf("空名称 POST 状态码 = %d，应为 201；body=%s", status, body)
+	}
+
+	status, _, body = uiPostJSON(t, ts, "/api/tokens", `{"token":"t-emptyname","name":"n"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("创建令牌状态码 = %d，应为 201；body=%s", status, body)
+	}
+	st, sub := subscribe(t, ts, "t-emptyname")
+	if st != http.StatusOK {
+		t.Fatalf("订阅状态码 = %d，应为 200；body=%s", st, sub)
+	}
+	if !strings.Contains(sub, "LINK-OWN-NAME") {
+		t.Fatalf("订阅应包含链接自带的名字 LINK-OWN-NAME\n%s", sub)
+	}
+}
