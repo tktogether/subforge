@@ -10,6 +10,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tktogether/subforge/internal/store"
@@ -18,6 +19,65 @@ import (
 
 // defaultArtifactPoll 是后台重建器的默认轮询间隔（artifactPoll 零值时的兜底）。
 const defaultArtifactPoll = 5 * time.Second
+
+// 重建器跳过日志节流键的原因段：同一令牌的两类跳过互不影响，各自按迁移沿记录。
+const (
+	artifactSkipReasonProfile  = "方案不可用"
+	artifactSkipReasonArtifact = "产物不可读"
+)
+
+// artifactSkipThrottle 重建器「跳过该令牌」日志的状态迁移节流器（评审 finding 2）。
+//
+// 为什么需要：rebuildArtifacts 每 5s 一轮，绑定停用方案 / 产物行不可读的令牌每轮
+// 都命中同一个跳过分支，逐轮打印同样的日志——一个这样的令牌一天就是 ≈1.7 万行，
+// 淹没真正需要关注的日志。节流口径：按「令牌+原因」记上次是否处于问题态，只在
+// 状态迁移沿记录——问题出现记一次跳过行，问题消失记一次恢复行，持续保持静默。
+// map 只保留问题态条目（恢复即删除，健康令牌从不入 map），每轮再按令牌清单
+// 清理已删除令牌的残留，杜绝无界增长。
+type artifactSkipThrottle struct {
+	mu      sync.Mutex
+	lastBad map[string]bool
+}
+
+// shouldLog 报告本轮是否应打印日志：bad=true 时仅问题首次出现记一次（持续问题
+// 静默）；bad=false 时仅从问题态恢复时记一次，并清掉条目。
+func (t *artifactSkipThrottle) shouldLog(key string, bad bool) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.lastBad == nil {
+		t.lastBad = make(map[string]bool)
+	}
+	was, tracked := t.lastBad[key]
+	if bad {
+		if !tracked || !was {
+			t.lastBad[key] = true
+			return true
+		}
+		return false
+	}
+	if tracked && was {
+		delete(t.lastBad, key) // 恢复：清条目，恢复行只记一次
+		return true
+	}
+	return false
+}
+
+// prune 清掉已不在令牌清单里的键：令牌删除后其问题态不应常驻内存。
+func (t *artifactSkipThrottle) prune(alive map[string]bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for key := range t.lastBad {
+		token, _, _ := strings.Cut(key, "\x00")
+		if !alive[token] {
+			delete(t.lastBad, key)
+		}
+	}
+}
+
+// artifactSkipKey 构造节流键：令牌值 + NUL + 原因串（NUL 不会出现在令牌里）。
+func artifactSkipKey(token, reason string) string {
+	return token + "\x00" + reason
+}
 
 // StartArtifactRebuilder 启动订阅产物后台重建轮询。
 //
@@ -85,22 +145,43 @@ func (s *Server) rebuildArtifacts(ctx context.Context) {
 		// ArtifactsEnabled 已保证 refresh > 0；防御性兜底按「不做年龄判断」处理。
 		refresh = 0
 	}
+	// 跳过日志节流器先按本轮令牌清单清理残留：已删除令牌的问题态不常驻内存，
+	// map 不随令牌增删无界增长。
+	alive := make(map[string]bool, len(tokens))
+	for _, t := range tokens {
+		alive[t.Token] = true
+	}
+	s.artifactSkips.prune(alive)
 	for _, t := range tokens {
 		if ctx.Err() != nil {
 			return
 		}
 		// 绑定停用方案的令牌跳过：buildSubscription 会 400，重建只会白跑并误删产物。
+		// 日志按状态迁移节流（见 artifactSkipThrottle），文案是「跳过该令牌」——
+		// 只有这一个令牌被跳过，其余令牌照常处理（旧文案「本轮跳过」言过其实）。
 		if t.ProfileID > 0 {
 			p, perr := m.GetProfile(ctx, t.ProfileID)
 			if perr != nil || !p.Enabled {
-				s.logger.Printf("[subscribe] 令牌 “%s” 绑定的方案不可用，本轮跳过", dash(t.Name))
+				if s.artifactSkips.shouldLog(artifactSkipKey(t.Token, artifactSkipReasonProfile), true) {
+					s.logger.Printf("[subscribe] 令牌 “%s” 绑定的方案不可用，跳过该令牌（其余令牌照常处理）", dash(t.Name))
+				}
 				continue
 			}
 		}
+		// 走到这里说明方案可用（含未绑定方案）：若此前记录过「方案不可用」，
+		// 迁移沿上补一条恢复行，此后静默。
+		if s.artifactSkips.shouldLog(artifactSkipKey(t.Token, artifactSkipReasonProfile), false) {
+			s.logger.Printf("[subscribe] 令牌 “%s” 绑定的方案已恢复，继续正常重建", dash(t.Name))
+		}
 		art, aerr := m.GetSubArtifact(ctx, t.Token)
 		if aerr != nil {
-			s.logger.Printf("[subscribe] 后台重建读令牌 “%s” 产物失败，本轮跳过: %v", dash(t.Name), aerr)
+			if s.artifactSkips.shouldLog(artifactSkipKey(t.Token, artifactSkipReasonArtifact), true) {
+				s.logger.Printf("[subscribe] 后台重建读令牌 “%s” 产物失败，跳过该令牌（其余令牌照常处理）: %v", dash(t.Name), aerr)
+			}
 			continue
+		}
+		if s.artifactSkips.shouldLog(artifactSkipKey(t.Token, artifactSkipReasonArtifact), false) {
+			s.logger.Printf("[subscribe] 令牌 “%s” 产物读取已恢复，继续正常重建", dash(t.Name))
 		}
 		stale := art == nil || art.Version != cur
 		if !stale && refresh > 0 && time.Since(art.GeneratedAt) > refresh {

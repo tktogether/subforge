@@ -12,8 +12,10 @@ package api
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -669,5 +671,137 @@ func TestRebuildArtifacts_StopsWhenContextCancelledMidLoop(t *testing.T) {
 		if art != nil {
 			t.Fatalf("ctx 中途取消后循环应立即停止，令牌 %s 不应落产物，got version=%d", token, art.Version)
 		}
+	}
+}
+
+// --- 评审 finding 2：跳过类日志按状态迁移节流 ---
+//
+// 5s 轮询 × 每轮必打 = 日志噪音：绑定停用方案的令牌一天可刷 ≈1.7 万行同样的
+// 「绑定方案不可用」。节流口径：只在问题出现/消失的状态迁移沿各记一行，且文案
+// 改为「跳过该令牌（其余令牌照常处理）」——旧文案「本轮跳过」言过其实。
+
+// countLogLines 统计捕获的日志行里含 substr 的条数。
+func countLogLines(lb *LogBuffer, substr string) int {
+	n := 0
+	for _, e := range lb.All() {
+		if strings.Contains(e.Line, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestRebuildArtifacts_SkipLogThrottledByStateTransition 绑定停用方案的令牌：
+// 第一轮记一条跳过行，第二轮不再记（持续问题静默）；方案重新启用后第三轮恰好
+// 一条恢复行，第四轮完全静默。恢复后节流器不留残留条目。
+func TestRebuildArtifacts_SkipLogThrottledByStateTransition(t *testing.T) {
+	_, srv, mgr := profileServer(t)
+	ctx := context.Background()
+	if _, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true); err != nil {
+		t.Fatalf("插入 airport: %v", err)
+	}
+	off, err := mgr.AddProfile(ctx, "停用方案", "", "", "", false, 0)
+	if err != nil {
+		t.Fatalf("插入停用方案: %v", err)
+	}
+	if err := mgr.CreateSubTokenWithProfile(ctx, "tok-off", "停用绑定", "", "", "", "", "", off.ID); err != nil {
+		t.Fatalf("插入绑定令牌: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "tok-plain", "不绑", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入普通令牌: %v", err)
+	}
+
+	// 捕获日志：profileServer 默认 logger 是 io.Discard，换成 LogBuffer。
+	lb := NewLogBuffer(0)
+	srv.logger = log.New(lb, "", 0)
+
+	skipPhrase := "绑定的方案不可用，跳过该令牌（其余令牌照常处理）"
+	recoverPhrase := "绑定的方案已恢复"
+
+	// 第一轮：问题出现 → 恰好一条跳过行（其余令牌的重建日志不算）。
+	srv.rebuildArtifacts(ctx)
+	if got := countLogLines(lb, skipPhrase); got != 1 {
+		t.Fatalf("第一轮应恰好一条跳过行，got %d:\n%v", got, lb.All())
+	}
+
+	// 第二轮：问题持续 → 静默，不再新增。
+	srv.rebuildArtifacts(ctx)
+	if got := countLogLines(lb, skipPhrase); got != 1 {
+		t.Fatalf("第二轮持续问题应静默（仍为 1 条），got %d", got)
+	}
+
+	// 重新启用方案：真实写路径。
+	if err := mgr.UpdateProfile(ctx, off.ID, off.Name, off.Description, off.Config, off.Pipeline, true, off.SortOrder); err != nil {
+		t.Fatalf("启用方案: %v", err)
+	}
+
+	// 第三轮：问题消失 → 恰好一条恢复行，不再补跳过行。
+	srv.rebuildArtifacts(ctx)
+	if got := countLogLines(lb, skipPhrase); got != 1 {
+		t.Fatalf("恢复轮不应再记跳过行（仍为 1 条），got %d", got)
+	}
+	if got := countLogLines(lb, recoverPhrase); got != 1 {
+		t.Fatalf("恢复轮应恰好一条恢复行，got %d:\n%v", got, lb.All())
+	}
+
+	// 第四轮：健康态完全静默。
+	srv.rebuildArtifacts(ctx)
+	if got := countLogLines(lb, recoverPhrase); got != 1 {
+		t.Fatalf("恢复后继续健康应静默（仍为 1 条恢复行），got %d", got)
+	}
+	if got := countLogLines(lb, skipPhrase); got != 1 {
+		t.Fatalf("恢复后继续健康不应再记跳过行，got %d", got)
+	}
+	// 白盒：恢复即清条目，节流器不留任何残留（健康令牌从不入 map）。
+	if len(srv.artifactSkips.lastBad) != 0 {
+		t.Fatalf("恢复后节流器应无残留条目，got %v", srv.artifactSkips.lastBad)
+	}
+}
+
+// TestRebuildArtifacts_ReadErrorSkipLogThrottledAndPruned 产物行不可读的令牌：
+// 跳过行同样只在问题出现时记一次；令牌删除后（不再出现在清单里）节流器的
+// 残留条目被清理——map 不随令牌增删无界增长。
+func TestRebuildArtifacts_ReadErrorSkipLogThrottledAndPruned(t *testing.T) {
+	_, srv, mgr, _ := rebuildEnv(t)
+	ctx := context.Background()
+
+	lb := NewLogBuffer(0)
+	srv.logger = log.New(lb, "", 0)
+
+	// 真实脏数据：tok-plain 的产物行 profile_id 塞入非整数文本，Scan 必失败。
+	rawExec(t, mgr, "INSERT INTO sub_artifacts (token, profile_id, version, body, etag, generated_at) "+
+		"VALUES ('tok-plain', 'corrupted', 1, 'old-body', 'e', 1)")
+
+	skipPhrase := "产物失败，跳过该令牌（其余令牌照常处理）"
+	recoverPhrase := "产物读取已恢复"
+
+	// 第一轮：问题出现 → 恰好一条跳过行。
+	srv.rebuildArtifacts(ctx)
+	if got := countLogLines(lb, skipPhrase); got != 1 {
+		t.Fatalf("第一轮应恰好一条读产物失败跳过行，got %d:\n%v", got, lb.All())
+	}
+	if len(srv.artifactSkips.lastBad) != 1 {
+		t.Fatalf("问题态应在节流器中留一个条目，got %v", srv.artifactSkips.lastBad)
+	}
+
+	// 第二轮：问题持续 → 静默。
+	srv.rebuildArtifacts(ctx)
+	if got := countLogLines(lb, skipPhrase); got != 1 {
+		t.Fatalf("第二轮持续问题应静默（仍为 1 条），got %d", got)
+	}
+
+	// 删除该令牌：下一轮它不再出现在令牌清单里，节流器清理残留。
+	if err := mgr.DeleteSubToken(ctx, "tok-plain"); err != nil {
+		t.Fatalf("删除令牌: %v", err)
+	}
+	srv.rebuildArtifacts(ctx)
+	if len(srv.artifactSkips.lastBad) != 0 {
+		t.Fatalf("令牌删除后节流器应清理其残留条目，got %v", srv.artifactSkips.lastBad)
+	}
+	if got := countLogLines(lb, skipPhrase); got != 1 {
+		t.Fatalf("清理轮不应新增跳过行，got %d", got)
+	}
+	if got := countLogLines(lb, recoverPhrase); got != 0 {
+		t.Fatalf("令牌已删除，不应出现恢复行，got %d", got)
 	}
 }

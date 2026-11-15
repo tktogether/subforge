@@ -66,6 +66,10 @@ type Server struct {
 	// artifactPoll 是订阅产物后台重建器的轮询间隔（任务 7）；零值按 5s 兜底。
 	// 由 StartArtifactRebuilder 读取，测试可设短。
 	artifactPoll time.Duration
+	// artifactSkips 是重建器「跳过该令牌」日志的状态迁移节流器（评审 finding 2）：
+	// 5s 轮询 × 每轮必打 = 日志噪音（绑定停用方案的令牌一天可刷 ≈1.7 万行）。
+	// 按「令牌+原因」记上次状态，只在问题出现/消失的迁移沿各记一行。
+	artifactSkips artifactSkipThrottle
 }
 
 // 默认请求超时：上游订阅偶尔很慢，但一个请求不该挂住连接池。
