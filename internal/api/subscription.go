@@ -911,13 +911,334 @@ func (s *Server) handleAPIToken(w http.ResponseWriter, r *http.Request) {
 
 // --- /subscribe?token=xxx ---
 
-// handleSubscribe 按数据库当前状态实时编译一份订阅配置。
+// subBuild 是订阅构建前段（buildSubscription）的产物：实时拉取与产物预生成
+// 共用同一构建逻辑，防止两处漂移。
+type subBuild struct {
+	// Name 订阅展示名（subscriptionDisplayName：令牌名 > 方案名 > 服务名），
+	// 会写进产物注释头与 profile-title / Content-Disposition 响应头。
+	Name string
+	// DefaultCombo 报告本次 query 是否完全未定制 target/pipeline/config/include/
+	// exclude 五个参数（空串/未出现都算空，按 TrimSpace / splitListQuery 语义判定）。
+	// 仅作标记供产物预生成路径判断，不影响本次响应。
+	DefaultCombo bool
+	// Params 组装完成的转换参数，直接交给引擎执行。
+	Params convert.Params
+	// UsedAirports 本次参与构建的机场（已按启用与方案过滤），供失败策略与流量头使用。
+	UsedAirports []subforge.Airport
+}
+
+// buildSubscription 完成 /subscribe 的构建前段：令牌查找、方案校验、五个定制参数
+// 归并、来源（含自建节点临时文件）/分组/规则/规则源收集与 convert.Params 组装。
+// 从 handleSubscribe 整体抽取而来（纯重构，行为逐字节等价）。
 //
-// 每次请求都重新读 airports / proxy_groups / rules，所以任何一项改了，
-// 客户端下一次拉取就是新配置——不存在落盘的静态产物。
-// 鉴权用订阅令牌（sub_token）而不是服务端访问令牌；因此 server.go 的全局
-// auth 中间件必须豁免 /subscribe，否则 query 上的 sub_token 会被拿去和
-// 服务端令牌比对，永远 401。
+// status==0 表示成功；非 0 时 err 非空，状态码与错误文案沿用原 writeAPIError
+// 各分支，由调用方写出。cleanup 关闭自建节点临时目录：临时文件必须活到引擎
+// 跑完（engine.Run 读取 File 来源）为止，因此调用方必须 defer cleanup，而不是
+// 在 buildSubscription 返回时立刻清理。cleanup 恒非 nil（无临时目录时空操作），
+// 调用方可以无条件 defer。
+func (s *Server) buildSubscription(ctx context.Context, token string, query url.Values) (b *subBuild, cleanup func(), status int, err error) {
+	m := s.subManager
+	// 无自建节点时没有东西要清理；真正创建了临时目录后才替换成清理闭包。
+	cleanup = func() {}
+
+	subTok, err := m.GetSubToken(ctx, token)
+	if err != nil {
+		// 不回显令牌值：订阅令牌本身就是凭据，错误文案与日志都不该二次扩散。
+		return nil, cleanup, http.StatusNotFound, errors.New("订阅令牌不存在")
+	}
+
+	// 令牌绑定的方案：停用 → 400，不存在 → 404；命中后模板/管线/规则/分组都按方案取数。
+	profileID := subTok.ProfileID
+	var profile *subforge.Profile
+	if profileID > 0 {
+		p, perr := m.GetProfile(ctx, profileID)
+		if perr != nil {
+			return nil, cleanup, http.StatusNotFound, fmt.Errorf("令牌绑定的订阅方案 %d 不存在", profileID)
+		}
+		if !p.Enabled {
+			return nil, cleanup, http.StatusBadRequest, fmt.Errorf("订阅方案 “%s” 已停用", p.Name)
+		}
+		profile = p
+	}
+
+	// 订阅自己的名字：令牌名优先，其次方案名，最后服务名。
+	// 同时写进产物注释头与 HTTP 响应头，客户端下拉列表才能显示可辨识的名称。
+	planName := ""
+	if profile != nil {
+		planName = profile.Name
+	}
+	subscriptionName := subscriptionDisplayName(subTok.Name, planName, s.cfg.Name)
+
+	// DefaultCombo：query 的 target/pipeline/config/include/exclude 五个参数全部为空
+	// （空串/未出现都算空，判定语义与下方归并一致：TrimSpace / splitListQuery）。
+	defaultCombo := strings.TrimSpace(query.Get("target")) == "" &&
+		strings.TrimSpace(query.Get("pipeline")) == "" &&
+		strings.TrimSpace(query.Get("config")) == "" &&
+		len(splitListQuery(query.Get("include"))) == 0 &&
+		len(splitListQuery(query.Get("exclude"))) == 0
+
+	// 五个定制字段的取值优先级：query 显式参数 > 令牌字段 > 原回落链。
+	// 令牌字段为空串（未定制）时逐字节等价于改动前的行为。
+	target := strings.TrimSpace(query.Get("target"))
+	if target == "" {
+		target = strings.TrimSpace(subTok.Target)
+	}
+	if target == "" && profile != nil {
+		target = strings.TrimSpace(profile.Target)
+	}
+	if target == "" {
+		target = "clash.meta"
+	}
+
+	// pipeline：显式 query 优先；其次令牌字段；都为空时回落到 config 表的 subscribe.pipeline。
+	pipeline := strings.TrimSpace(query.Get("pipeline"))
+	if pipeline == "" {
+		pipeline = strings.TrimSpace(subTok.Pipeline)
+	}
+	// 令牌未定制时用方案的默认管线（方案层介于令牌与全局配置之间）。
+	if pipeline == "" && profile != nil {
+		pipeline = strings.TrimSpace(profile.Pipeline)
+	}
+	if pipeline == "" {
+		if v, err := m.GetConfig(ctx, "subscribe.pipeline"); err == nil {
+			pipeline = strings.TrimSpace(v)
+		}
+	}
+	configName := strings.TrimSpace(query.Get("config"))
+	if configName == "" {
+		configName = strings.TrimSpace(subTok.Config)
+	}
+	// 令牌未定制模板时用方案的默认模板；仍为空且绑定了方案时再查全局配置表。
+	if configName == "" && profile != nil {
+		configName = strings.TrimSpace(profile.Config)
+		if configName == "" {
+			if v, cerr := m.GetConfig(ctx, "subscribe.config"); cerr == nil {
+				configName = strings.TrimSpace(v)
+			}
+		}
+	}
+	includeList := splitListQuery(query.Get("include"))
+	if len(includeList) == 0 {
+		includeList = splitListQuery(subTok.Include)
+	}
+	if len(includeList) == 0 && profile != nil {
+		includeList = splitListQuery(profile.Include)
+	}
+	excludeList := splitListQuery(query.Get("exclude"))
+	if len(excludeList) == 0 {
+		excludeList = splitListQuery(subTok.Exclude)
+	}
+	if len(excludeList) == 0 && profile != nil {
+		excludeList = splitListQuery(profile.Exclude)
+	}
+
+	// 1. 启用的订阅源（ListAirports 已按 sort_order, id 排序）。
+	airports, err := m.ListAirports(ctx)
+	if err != nil {
+		return nil, cleanup, http.StatusInternalServerError, err
+	}
+	// 方案可限制来源：nil = 全部启用来源；空数组 = 该类来源一个都不用。
+	airportFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.AirportIDs })
+	selfFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.SelfNodeIDs })
+
+	var sources []convert.Source
+	usedAirports := make([]subforge.Airport, 0, len(airports))
+	for _, a := range airports {
+		if airportFilter != nil && !airportFilter[a.ID] {
+			continue
+		}
+		if a.Enabled && strings.TrimSpace(a.SubscriptionURL) != "" {
+			sources = append(sources, convert.Source{
+				Name:     a.Name,
+				Key:      subforge.AirportSourceKey(a.ID),
+				Outbound: a.OutboundNode,
+				URLs:     []string{a.SubscriptionURL},
+				Pipeline: a.Pipeline,
+			})
+			usedAirports = append(usedAirports, a)
+		}
+	}
+
+	// 自建节点：每个启用的节点链接写入临时文件，作为 File 来源传给引擎。
+	var selfNodeFiles []string
+	selfNodes, err := m.ListSelfNodes(ctx)
+	if err != nil {
+		return nil, cleanup, http.StatusInternalServerError, err
+	}
+	if len(selfNodes) > 0 {
+		tmpDir, terr := os.MkdirTemp("", "subforge-self-*")
+		if terr != nil {
+			return nil, cleanup, http.StatusInternalServerError, terr
+		}
+		cleanup = func() { os.RemoveAll(tmpDir) }
+		for _, n := range selfNodes {
+			if selfFilter != nil && !selfFilter[n.ID] {
+				continue
+			}
+			if !n.Enabled || strings.TrimSpace(n.Link) == "" {
+				continue
+			}
+			fp := filepath.Join(tmpDir, fmt.Sprintf("self-%d.txt", n.ID))
+			if err := os.WriteFile(fp, []byte(applySelfNodeName(n.Link, n.Name)), 0o600); err != nil {
+				return nil, cleanup, http.StatusInternalServerError, err
+			}
+			selfNodeFiles = append(selfNodeFiles, fp)
+		}
+	}
+
+	if len(selfNodeFiles) > 0 {
+		selfPipeline, perr := m.GetSelfSourcePipeline(ctx)
+		if perr != nil {
+			return nil, cleanup, http.StatusInternalServerError, perr
+		}
+		sources = append(sources, convert.Source{Name: "自建节点", Key: "self", Files: selfNodeFiles, Pipeline: selfPipeline})
+	}
+	if len(sources) == 0 {
+		return nil, cleanup, http.StatusBadRequest, errors.New("没有启用的订阅或自建节点")
+	}
+
+	// 2. 代理分组：regex 非空时作为成员模式交给引擎按节点名展开。
+	//    v2 起按方案的 group_layers 顺序合并（同名先到者胜），模板分组由引擎在 DB 分组
+	//    之后追加（DB 优先，修 D-36）；未绑定方案时用默认三层。
+	groupLayers, ruleLayers := subscribeLayers(profile)
+	groups, err := m.ListProxyGroupsByLayers(ctx, groupLayers)
+	if err != nil {
+		return nil, cleanup, http.StatusInternalServerError, err
+	}
+	groupName := make(map[int64]string, len(groups))
+	renderGroups := make([]render.Group, 0, len(groups))
+	for _, g := range groups {
+		groupName[g.ID] = g.Name
+		rg := render.Group{
+			Name:              g.Name,
+			Type:              g.Type,
+			Test:              g.URL,
+			Options:           render.UrlTestOptions{Interval: g.Interval},
+			IncludeSelf:       g.IncludeSelf,
+			IncludeAllSources: g.IncludeAllSources,
+			Source:            g.Source,
+		}
+		// 机场自带分组按成员原样渲染；成员可能是节点名，也可能是子组名，
+		// ResolveGroups 会保留已知组名、展开正则/节点名。手工分组仍走 Regex。
+		if len(g.Members) > 0 {
+			rg.Proxies = append([]string{}, g.Members...)
+		} else if re := strings.TrimSpace(g.Regex); re != "" {
+			rg.Proxies = []string{re}
+		}
+		renderGroups = append(renderGroups, rg)
+	}
+
+	// 3. 规则：rule_config 指向的 group id → 策略名，0 或找不到 → DIRECT。
+	//    v2 起按方案的 rule_layers 顺序拼接（只取已启用；模板规则由引擎在 DB 规则后展开）。
+	rules, err := m.ListRulesByLayers(ctx, ruleLayers)
+	if err != nil {
+		return nil, cleanup, http.StatusInternalServerError, err
+	}
+	renderRules := make([]string, 0, len(rules))
+	for _, ru := range rules {
+		if !ru.Enabled {
+			continue
+		}
+		policy := "DIRECT"
+		if ru.RuleConfig > 0 {
+			if name, found := groupName[ru.RuleConfig]; found && strings.TrimSpace(name) != "" {
+				policy = name
+			}
+		} else if raw := strings.TrimSpace(ru.Raw); raw != "" {
+			// 导入的规则如果目标分组当时还不存在，rule_config 是 0，但 raw 里保留着
+			// 规则原文——原目标名不能在这里丢掉：渲染阶段会按名称把它映射到实际
+			// 存在的分组（内部点名的机场分组常与模板分组叫法不同，见
+			// internal/render/ruletarget.go）。直接写 DIRECT 会把规则悄悄改成直连。
+			renderRules = append(renderRules, raw)
+			continue
+		}
+		line := strings.Join([]string{ru.RuleType, ru.RuleParam, policy}, ",")
+		if ru.ResolveDNS {
+			line += ",no-resolve"
+		}
+		renderRules = append(renderRules, line)
+	}
+
+	// 规则源产物：按方案的 rule_sources 顺序读各源的「当前版本」产物并内联进订阅。
+	// 注入成功（>0 条）时替换模板规则：模板规则里的 MATCH 会排在注入规则之前，
+	// 不替换的话产物规则永远命中不到。注入 0 条（源缺失/无产物/格式不支持）时
+	// 保留模板规则，warning 只是可见提示，不阻断订阅。
+	var sourceRules, sourceWarns []string
+	var ruleSourceMetas []subcfg.RuleSourceMeta
+	if profile != nil && len(profile.RuleSources) > 0 {
+		sourceRules, ruleSourceMetas, sourceWarns = m.RuleSourceRulesWithMeta(ctx, profile.RuleSources)
+		if len(sourceRules) > 0 {
+			renderRules = append(renderRules, sourceRules...)
+			sourceWarns = append(sourceWarns, fmt.Sprintf("已用规则源产物替换模板规则：注入 %d 条", len(sourceRules)))
+		}
+	}
+
+	// 规则源产物里的 rule-providers：绑定源 + 已启用的自定义 provider 一起渲染，
+	// 否则 RULE-SET 规则找不到规则集。同名 provider 先出现的源优先。
+	var ruleProviders []model.RuleProvider
+	if profile != nil && len(profile.RuleSources) > 0 {
+		rp, rpWarns := m.RuleSourceRuleProviders(ctx, profile.RuleSources)
+		ruleProviders = append(ruleProviders, rp...)
+		sourceWarns = append(sourceWarns, rpWarns...)
+	}
+	if all, perr := m.DB().ListRuleProviders(ctx); perr == nil {
+		for _, p := range all {
+			if !p.Enabled || p.Source != "" {
+				continue
+			}
+			var raw map[string]any
+			if json.Unmarshal([]byte(p.RawJSON), &raw) == nil && len(raw) > 0 {
+				ruleProviders = append(ruleProviders, model.RuleProvider{Name: p.Name, Raw: raw})
+			}
+		}
+	}
+	uniqueProviders := make([]model.RuleProvider, 0, len(ruleProviders))
+	seenProvider := map[string]bool{}
+	for _, p := range ruleProviders {
+		if p.Name == "" || seenProvider[p.Name] {
+			continue
+		}
+		seenProvider[p.Name] = true
+		uniqueProviders = append(uniqueProviders, p)
+	}
+
+	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
+	params := convert.Params{
+		Target:         target,
+		Sources:        sources,
+		Groups:         renderGroups,
+		Rules:          renderRules,
+		RuleProviders:  uniqueProviders,
+		FinalGroup:     finalGroupConfig(profile),
+		RuleSourceMeta: ruleSourceMetas,
+		ProfileName:    subscriptionName,
+		Pipeline:       pipeline,
+		Config:         configName,
+		Include:        includeList,
+		Exclude:        excludeList,
+		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
+		// 规则源产物注入后模板规则必须整层停用，否则产物规则排在模板 MATCH 之后全成死规则。
+		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,
+		DisableTemplateGroups: !hasLayer(groupLayers, "template"),
+		TemplateWarnings:      sourceWarns,
+		// 方案选了部分规则源时，模板/其他来源的分组可能没有任何规则指向；
+		// 订阅只保留规则实际引用的分组（含成员闭包），避免客户端出现无效分组。
+		PruneUnusedGroups: true,
+	}
+	// 机场原文缓存：间隔内直接复用，超过后本次重新拉取（后台任务也会按间隔刷新）。
+	if ttl, terr := m.SourceRefreshInterval(ctx); terr == nil && ttl > 0 {
+		params.SourceCache = m
+		params.SourceCacheTTL = ttl
+	}
+
+	return &subBuild{
+		Name:         subscriptionName,
+		DefaultCombo: defaultCombo,
+		Params:       params,
+		UsedAirports: usedAirports,
+	}, cleanup, 0, nil
+}
+
 // --- /api/self-nodes ---
 
 // handleAPISelfSourcePipeline 读取/设置自建节点集合的来源级处理管线。
@@ -1039,6 +1360,14 @@ func (s *Server) handleAPISelfNode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleSubscribe 按数据库当前状态实时编译一份订阅配置。
+//
+// 每次请求都重新读 airports / proxy_groups / rules，所以任何一项改了，
+// 客户端下一次拉取就是新配置——不存在落盘的静态产物。构建前段（令牌查找
+// 到 Params 组装）抽在 buildSubscription 里，与产物预生成共用同一逻辑。
+// 鉴权用订阅令牌（sub_token）而不是服务端访问令牌；因此 server.go 的全局
+// auth 中间件必须豁免 /subscribe，否则 query 上的 sub_token 会被拿去和
+// 服务端令牌比对，永远 401。
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
 	if !ok {
@@ -1049,304 +1378,20 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("缺少 token 参数"))
 		return
 	}
-	subTok, err := m.GetSubToken(r.Context(), token)
-	if err != nil {
-		// 不回显令牌值：订阅令牌本身就是凭据，错误文案与日志都不该二次扩散。
-		s.writeAPIError(w, r, http.StatusNotFound, errors.New("订阅令牌不存在"))
+	// 构建前段：令牌查找 → 方案校验 → 参数归并 → 来源/分组/规则收集 → Params 组装。
+	// cleanup 关闭自建节点临时目录，临时文件要活到引擎跑完，因此先于任何错误返回 defer。
+	b, cleanup, status, err := s.buildSubscription(r.Context(), token, r.URL.Query())
+	defer cleanup()
+	if status != 0 {
+		s.writeAPIError(w, r, status, err)
 		return
-	}
-
-	// 令牌绑定的方案：停用 → 400，不存在 → 404；命中后模板/管线/规则/分组都按方案取数。
-	profileID := subTok.ProfileID
-	var profile *subforge.Profile
-	if profileID > 0 {
-		p, perr := m.GetProfile(r.Context(), profileID)
-		if perr != nil {
-			s.writeAPIError(w, r, http.StatusNotFound, fmt.Errorf("令牌绑定的订阅方案 %d 不存在", profileID))
-			return
-		}
-		if !p.Enabled {
-			s.writeAPIError(w, r, http.StatusBadRequest, fmt.Errorf("订阅方案 “%s” 已停用", p.Name))
-			return
-		}
-		profile = p
-	}
-
-	// 订阅自己的名字：令牌名优先，其次方案名，最后服务名。
-	// 同时写进产物注释头与 HTTP 响应头，客户端下拉列表才能显示可辨识的名称。
-	planName := ""
-	if profile != nil {
-		planName = profile.Name
-	}
-	subscriptionName := subscriptionDisplayName(subTok.Name, planName, s.cfg.Name)
-
-	// 五个定制字段的取值优先级：query 显式参数 > 令牌字段 > 原回落链。
-	// 令牌字段为空串（未定制）时逐字节等价于改动前的行为。
-	target := strings.TrimSpace(r.URL.Query().Get("target"))
-	if target == "" {
-		target = strings.TrimSpace(subTok.Target)
-	}
-	if target == "" && profile != nil {
-		target = strings.TrimSpace(profile.Target)
-	}
-	if target == "" {
-		target = "clash.meta"
-	}
-
-	// pipeline：显式 query 优先；其次令牌字段；都为空时回落到 config 表的 subscribe.pipeline。
-	pipeline := strings.TrimSpace(r.URL.Query().Get("pipeline"))
-	if pipeline == "" {
-		pipeline = strings.TrimSpace(subTok.Pipeline)
-	}
-	// 令牌未定制时用方案的默认管线（方案层介于令牌与全局配置之间）。
-	if pipeline == "" && profile != nil {
-		pipeline = strings.TrimSpace(profile.Pipeline)
-	}
-	if pipeline == "" {
-		if v, err := m.GetConfig(r.Context(), "subscribe.pipeline"); err == nil {
-			pipeline = strings.TrimSpace(v)
-		}
-	}
-	configName := strings.TrimSpace(r.URL.Query().Get("config"))
-	if configName == "" {
-		configName = strings.TrimSpace(subTok.Config)
-	}
-	// 令牌未定制模板时用方案的默认模板；仍为空且绑定了方案时再查全局配置表。
-	if configName == "" && profile != nil {
-		configName = strings.TrimSpace(profile.Config)
-		if configName == "" {
-			if v, cerr := m.GetConfig(r.Context(), "subscribe.config"); cerr == nil {
-				configName = strings.TrimSpace(v)
-			}
-		}
-	}
-	includeList := splitListQuery(r.URL.Query().Get("include"))
-	if len(includeList) == 0 {
-		includeList = splitListQuery(subTok.Include)
-	}
-	if len(includeList) == 0 && profile != nil {
-		includeList = splitListQuery(profile.Include)
-	}
-	excludeList := splitListQuery(r.URL.Query().Get("exclude"))
-	if len(excludeList) == 0 {
-		excludeList = splitListQuery(subTok.Exclude)
-	}
-	if len(excludeList) == 0 && profile != nil {
-		excludeList = splitListQuery(profile.Exclude)
-	}
-
-	// 1. 启用的订阅源（ListAirports 已按 sort_order, id 排序）。
-	airports, err := m.ListAirports(r.Context())
-	if err != nil {
-		s.writeAPIError(w, r, http.StatusInternalServerError, err)
-		return
-	}
-	// 方案可限制来源：nil = 全部启用来源；空数组 = 该类来源一个都不用。
-	airportFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.AirportIDs })
-	selfFilter := idFilter(profile, func(p *subforge.Profile) []int64 { return p.SelfNodeIDs })
-
-	var sources []convert.Source
-	usedAirports := make([]subforge.Airport, 0, len(airports))
-	for _, a := range airports {
-		if airportFilter != nil && !airportFilter[a.ID] {
-			continue
-		}
-		if a.Enabled && strings.TrimSpace(a.SubscriptionURL) != "" {
-			sources = append(sources, convert.Source{
-				Name:     a.Name,
-				Key:      subforge.AirportSourceKey(a.ID),
-				Outbound: a.OutboundNode,
-				URLs:     []string{a.SubscriptionURL},
-				Pipeline: a.Pipeline,
-			})
-			usedAirports = append(usedAirports, a)
-		}
-	}
-
-	// 自建节点：每个启用的节点链接写入临时文件，作为 File 来源传给引擎。
-	var selfNodeFiles []string
-	selfNodes, err := m.ListSelfNodes(r.Context())
-	if err != nil {
-		s.writeAPIError(w, r, http.StatusInternalServerError, err)
-		return
-	}
-	if len(selfNodes) > 0 {
-		tmpDir, err := os.MkdirTemp("", "subforge-self-*")
-		if err != nil {
-			s.writeAPIError(w, r, http.StatusInternalServerError, err)
-			return
-		}
-		defer os.RemoveAll(tmpDir)
-		for _, n := range selfNodes {
-			if selfFilter != nil && !selfFilter[n.ID] {
-				continue
-			}
-			if !n.Enabled || strings.TrimSpace(n.Link) == "" {
-				continue
-			}
-			fp := filepath.Join(tmpDir, fmt.Sprintf("self-%d.txt", n.ID))
-			if err := os.WriteFile(fp, []byte(applySelfNodeName(n.Link, n.Name)), 0o600); err != nil {
-				s.writeAPIError(w, r, http.StatusInternalServerError, err)
-				return
-			}
-			selfNodeFiles = append(selfNodeFiles, fp)
-		}
-	}
-
-	if len(selfNodeFiles) > 0 {
-		selfPipeline, perr := m.GetSelfSourcePipeline(r.Context())
-		if perr != nil {
-			s.writeAPIError(w, r, http.StatusInternalServerError, perr)
-			return
-		}
-		sources = append(sources, convert.Source{Name: "自建节点", Key: "self", Files: selfNodeFiles, Pipeline: selfPipeline})
-	}
-	if len(sources) == 0 {
-		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("没有启用的订阅或自建节点"))
-		return
-	}
-
-	// 2. 代理分组：regex 非空时作为成员模式交给引擎按节点名展开。
-	//    v2 起按方案的 group_layers 顺序合并（同名先到者胜），模板分组由引擎在 DB 分组
-	//    之后追加（DB 优先，修 D-36）；未绑定方案时用默认三层。
-	groupLayers, ruleLayers := subscribeLayers(profile)
-	groups, err := m.ListProxyGroupsByLayers(r.Context(), groupLayers)
-	if err != nil {
-		s.writeAPIError(w, r, http.StatusInternalServerError, err)
-		return
-	}
-	groupName := make(map[int64]string, len(groups))
-	renderGroups := make([]render.Group, 0, len(groups))
-	for _, g := range groups {
-		groupName[g.ID] = g.Name
-		rg := render.Group{
-			Name:              g.Name,
-			Type:              g.Type,
-			Test:              g.URL,
-			Options:           render.UrlTestOptions{Interval: g.Interval},
-			IncludeSelf:       g.IncludeSelf,
-			IncludeAllSources: g.IncludeAllSources,
-			Source:            g.Source,
-		}
-		// 机场自带分组按成员原样渲染；成员可能是节点名，也可能是子组名，
-		// ResolveGroups 会保留已知组名、展开正则/节点名。手工分组仍走 Regex。
-		if len(g.Members) > 0 {
-			rg.Proxies = append([]string{}, g.Members...)
-		} else if re := strings.TrimSpace(g.Regex); re != "" {
-			rg.Proxies = []string{re}
-		}
-		renderGroups = append(renderGroups, rg)
-	}
-
-	// 3. 规则：rule_config 指向的 group id → 策略名，0 或找不到 → DIRECT。
-	//    v2 起按方案的 rule_layers 顺序拼接（只取已启用；模板规则由引擎在 DB 规则后展开）。
-	rules, err := m.ListRulesByLayers(r.Context(), ruleLayers)
-	if err != nil {
-		s.writeAPIError(w, r, http.StatusInternalServerError, err)
-		return
-	}
-	renderRules := make([]string, 0, len(rules))
-	for _, ru := range rules {
-		if !ru.Enabled {
-			continue
-		}
-		policy := "DIRECT"
-		if ru.RuleConfig > 0 {
-			if name, found := groupName[ru.RuleConfig]; found && strings.TrimSpace(name) != "" {
-				policy = name
-			}
-		} else if raw := strings.TrimSpace(ru.Raw); raw != "" {
-			// 导入的规则如果目标分组当时还不存在，rule_config 是 0，但 raw 里保留着
-			// 规则原文——原目标名不能在这里丢掉：渲染阶段会按名称把它映射到实际
-			// 存在的分组（内部点名的机场分组常与模板分组叫法不同，见
-			// internal/render/ruletarget.go）。直接写 DIRECT 会把规则悄悄改成直连。
-			renderRules = append(renderRules, raw)
-			continue
-		}
-		line := strings.Join([]string{ru.RuleType, ru.RuleParam, policy}, ",")
-		if ru.ResolveDNS {
-			line += ",no-resolve"
-		}
-		renderRules = append(renderRules, line)
-	}
-
-	// 规则源产物：按方案的 rule_sources 顺序读各源的「当前版本」产物并内联进订阅。
-	// 注入成功（>0 条）时替换模板规则：模板规则里的 MATCH 会排在注入规则之前，
-	// 不替换的话产物规则永远命中不到。注入 0 条（源缺失/无产物/格式不支持）时
-	// 保留模板规则，warning 只是可见提示，不阻断订阅。
-	var sourceRules, sourceWarns []string
-	var ruleSourceMetas []subcfg.RuleSourceMeta
-	if profile != nil && len(profile.RuleSources) > 0 {
-		sourceRules, ruleSourceMetas, sourceWarns = m.RuleSourceRulesWithMeta(r.Context(), profile.RuleSources)
-		if len(sourceRules) > 0 {
-			renderRules = append(renderRules, sourceRules...)
-			sourceWarns = append(sourceWarns, fmt.Sprintf("已用规则源产物替换模板规则：注入 %d 条", len(sourceRules)))
-		}
-	}
-
-	// 规则源产物里的 rule-providers：绑定源 + 已启用的自定义 provider 一起渲染，
-	// 否则 RULE-SET 规则找不到规则集。同名 provider 先出现的源优先。
-	var ruleProviders []model.RuleProvider
-	if profile != nil && len(profile.RuleSources) > 0 {
-		rp, rpWarns := m.RuleSourceRuleProviders(r.Context(), profile.RuleSources)
-		ruleProviders = append(ruleProviders, rp...)
-		sourceWarns = append(sourceWarns, rpWarns...)
-	}
-	if all, perr := m.DB().ListRuleProviders(r.Context()); perr == nil {
-		for _, p := range all {
-			if !p.Enabled || p.Source != "" {
-				continue
-			}
-			var raw map[string]any
-			if json.Unmarshal([]byte(p.RawJSON), &raw) == nil && len(raw) > 0 {
-				ruleProviders = append(ruleProviders, model.RuleProvider{Name: p.Name, Raw: raw})
-			}
-		}
-	}
-	uniqueProviders := make([]model.RuleProvider, 0, len(ruleProviders))
-	seenProvider := map[string]bool{}
-	for _, p := range ruleProviders {
-		if p.Name == "" || seenProvider[p.Name] {
-			continue
-		}
-		seenProvider[p.Name] = true
-		uniqueProviders = append(uniqueProviders, p)
-	}
-
-	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
-	params := convert.Params{
-		Target:         target,
-		Sources:        sources,
-		Groups:         renderGroups,
-		Rules:          renderRules,
-		RuleProviders:  uniqueProviders,
-		FinalGroup:     finalGroupConfig(profile),
-		RuleSourceMeta: ruleSourceMetas,
-		ProfileName:    subscriptionName,
-		Pipeline:       pipeline,
-		Config:         configName,
-		Include:        includeList,
-		Exclude:        excludeList,
-		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
-		// 规则源产物注入后模板规则必须整层停用，否则产物规则排在模板 MATCH 之后全成死规则。
-		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,
-		DisableTemplateGroups: !hasLayer(groupLayers, "template"),
-		TemplateWarnings:      sourceWarns,
-		// 方案选了部分规则源时，模板/其他来源的分组可能没有任何规则指向；
-		// 订阅只保留规则实际引用的分组（含成员闭包），避免客户端出现无效分组。
-		PruneUnusedGroups: true,
-	}
-	// 机场原文缓存：间隔内直接复用，超过后本次重新拉取（后台任务也会按间隔刷新）。
-	if ttl, terr := m.SourceRefreshInterval(r.Context()); terr == nil && ttl > 0 {
-		params.SourceCache = m
-		params.SourceCacheTTL = ttl
 	}
 
 	// 拉取阶段单独限时：客户端的容忍度低于服务端请求总超时，死源必须在预算内
 	// 被截断，健康来源才能照常产出。降级为部分来源失败是本端点的既有语义。
 	fetchCtx, cancel := context.WithTimeout(r.Context(), s.cfg.SubscribeTimeout)
 	defer cancel()
-	result, err := s.engine.Run(fetchCtx, params)
+	result, err := s.engine.Run(fetchCtx, b.Params)
 	if err != nil {
 		s.writeAPIError(w, r, statusFor(err), err)
 		return
@@ -1362,10 +1407,11 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			len(result.FinalGroup.Terminals), result.FinalGroup.RewrittenRules,
 			result.FinalGroup.GroupsBefore, result.FinalGroup.GroupsAfter)
 	}
+
 	// 机场设为「失败时报错」时整份订阅返回错误，客户端保留上一版可用配置；
 	// 默认 ignore 仍按部分失败降级，缺节点的风险由用户自己权衡。
 	var requiredFailed []string
-	for _, a := range usedAirports {
+	for _, a := range b.UsedAirports {
 		if a.FailurePolicy != subforge.AirportFailureError {
 			continue
 		}
@@ -1385,9 +1431,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// 从未采集成功的机场流量是零值，混进来会把 min/max/avg 拉偏。
 	// 读策略失败（DB 故障）时静默跳过——订阅本身仍然要能生成。
 	if strat, err := m.GetTrafficStrategy(r.Context()); err == nil {
-		usages := make([]traffic.Usage, 0, len(usedAirports))
-		nodeCounts := make([]int, 0, len(usedAirports))
-		for _, a := range usedAirports {
+		usages := make([]traffic.Usage, 0, len(b.UsedAirports))
+		nodeCounts := make([]int, 0, len(b.UsedAirports))
+		for _, a := range b.UsedAirports {
 			if a.TrafficAt <= 0 {
 				continue
 			}
@@ -1403,8 +1449,8 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	w.Header().Set("profile-title", profileTitleHeader(subscriptionName))
-	w.Header().Set("Content-Disposition", subscriptionContentDisposition(subscriptionName))
+	w.Header().Set("profile-title", profileTitleHeader(b.Name))
+	w.Header().Set("Content-Disposition", subscriptionContentDisposition(b.Name))
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
 }
 
