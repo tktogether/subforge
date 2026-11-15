@@ -35,7 +35,36 @@ func ConvertSubscription(buf []byte) ([]map[string]any, error) {
 	if len(nodes) == 0 {
 		return nil, ErrEmptySubscription
 	}
+	normalizeObfsNone(nodes)
 	return nodes, nil
+}
+
+// normalizeObfsNone 把 hysteria / hysteria2 节点里的 obfs=none 归一成「无混淆」。
+//
+// 内核转换器（common/convert/converter.go）会把链接 query 里的 obfs 原样拷进配置 map，
+// 而 hysteria2 outbound 构造时要求非空 obfs 必须配套 obfs-password（"missing obfs
+// password"）。URI 规范里 obfs=none 表示不做混淆、没有密码，因此必须在解析边界剥掉，
+// 否则 `obfs=none` 的合法链接会被 400 拒收。按规范语义，none 时连 obfs-password
+// 一起删（即使个别链接同时带了密码，none 也表示不启用混淆）。
+//
+// hysteria（v1）内核行为不同：obfs 值直接当 XPlus 混淆密钥用、不检查密码，obfs=none
+// 不会报错，但会把 "none" 当密钥去连一个没开混淆的服务端，连接必然失败——同样剥掉。
+// 其余 obfs 值（salamander 等）原样保留，不放宽内核其它校验语义。
+func normalizeObfsNone(nodes []map[string]any) {
+	for _, n := range nodes {
+		typ, _ := n["type"].(string)
+		switch strings.ToLower(strings.TrimSpace(typ)) {
+		case "hysteria", "hysteria2":
+		default:
+			continue
+		}
+		obfs, _ := n["obfs"].(string)
+		if !strings.EqualFold(strings.TrimSpace(obfs), "none") {
+			continue
+		}
+		delete(n, "obfs")
+		delete(n, "obfs-password")
+	}
 }
 
 // Validate 用内核构建运行期代理，校验单个 Clash 配置 map 是否被内核接受。
@@ -158,6 +187,8 @@ func DecodeSource(buf []byte) (Decoded, error) {
 		}
 		// proxy-groups 同样只是附加项：解析失败不拖垮节点。
 		proxyGroups, _ := model.ParseClashProxyGroups(sniff.Decoded)
+		// 用户手写的 Clash YAML 也可能有 hysteria2 obfs: none，不剥掉会被内核拒收。
+		normalizeObfsNone(proxies)
 		return Decoded{Nodes: proxies, Providers: providers, Rules: rules, RuleProviders: ruleProviders,
 			ProxyGroups: proxyGroups, Warnings: warnings}, nil
 	default:
@@ -168,6 +199,7 @@ func DecodeSource(buf []byte) (Decoded, error) {
 		if len(nodes) == 0 {
 			return Decoded{}, ErrEmptySubscription
 		}
+		normalizeObfsNone(nodes)
 		return Decoded{Nodes: nodes}, nil
 	}
 }
