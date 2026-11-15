@@ -59,6 +59,8 @@ type settingDef struct {
 var settingDefs = []settingDef{
 	{ScriptEnabledKey, SettingKindBool, "启用脚本步骤", "关闭后，引用脚本的管线步骤会在编译阶段报错。"},
 	{SubscheckEnabledKey, SettingKindBool, "启用订阅可用性检测", "关闭后，定时可用性检测任务不再执行。"},
+	// ArtifactModeKey 的有效默认值是开（未配置 = 开），见 ListSettings 里的显示特例。
+	{ArtifactModeKey, SettingKindBool, "订阅产物缓存", "开启后，订阅拉取在缓存有效期内直接返回预生成产物，配置变更自动失效。关闭后，拉取永远实时编译，产物缓存表不再读写。"},
 	{OutboundNodeKey, SettingKindSelect, "默认出网节点", "机场与规则源未单独指定出网节点时使用；规则集与模板的拉取也用它。留空直连。节点停用或删除后自动直连。"},
 	{SourceRefreshKey, SettingKindNumber, "节点缓存刷新间隔（分钟）", "间隔内订阅直接使用缓存，超过后重新拉取；后台任务每隔一分钟检查并刷新过期缓存。0 表示关闭缓存与后台刷新。"},
 	{RuleManifestPathKey, SettingKindPath, "规则源清单路径", "规则源清单文件（manifest.yaml）的绝对路径。"},
@@ -108,6 +110,11 @@ func (m *Manager) ListSettings(ctx context.Context) ([]SettingItem, error) {
 			nb, err := normalizeBoolForList(v)
 			if err != nil {
 				return nil, fmt.Errorf("设置项 %s: %w", d.key, err)
+			}
+			// artifact_mode 未配置 = 默认开：列表里如实显示 true，
+			// 否则开关显示 off 却实际生效，用户会误关。
+			if d.key == ArtifactModeKey && isDefault {
+				nb = "true"
 			}
 			v = nb
 		} else {

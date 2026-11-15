@@ -295,6 +295,10 @@ func pickCurrentVersion(dir, name string, versions []string) string {
 //
 // 失败的源不动指针（它沿用上一版）；状态写失败也不让更新失败——版本文件已经落盘，
 // 指针只是显示/回滚时的锚点，下一次成功更新会再写一次。
+//
+// 末尾 bump 一次订阅产物版本号：版本文件落盘是文件操作，store 的 touchArtifacts
+// 够不着，这里显式失效预生成产物。结果列表为空或全部失败（没有任何源成功写出）
+// 时不 bump——产物没变就不该失效。
 func (m *Manager) recordCurrentVersions(ctx context.Context, results []manifest.UpdateResult) {
 	if len(results) == 0 {
 		return
@@ -303,6 +307,7 @@ func (m *Manager) recordCurrentVersions(ctx context.Context, results []manifest.
 	if err != nil {
 		dir = ""
 	}
+	touched := false
 	for _, res := range results {
 		if res.Err != nil || strings.TrimSpace(res.Path) == "" {
 			continue
@@ -316,6 +321,10 @@ func (m *Manager) recordCurrentVersions(ctx context.Context, results []manifest.
 			continue
 		}
 		_ = setCurrentVersion(target, name, filepath.Base(res.Path))
+		touched = true
+	}
+	if touched {
+		m.bumpArtifactsAfterFileWrite(ctx)
 	}
 }
 
@@ -689,6 +698,9 @@ func (m *Manager) RollbackRuleSource(ctx context.Context, name string) (string, 
 	if err := setCurrentVersion(dir, name, prev); err != nil {
 		return "", fmt.Errorf("回滚规则源 %s: %w", name, err)
 	}
+	// 回滚改的是「当前版本指针」状态文件（文件操作，store 够不着）：
+	// 显式 bump 让预生成产物按新指向重建；失败只记日志不阻断回滚本身。
+	m.bumpArtifactsAfterFileWrite(ctx)
 	return filepath.Join(dir, prev), nil
 }
 

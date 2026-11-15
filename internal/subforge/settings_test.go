@@ -27,10 +27,10 @@ func TestListSettingsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSettings: %v", err)
 	}
-	if len(items) != 6 {
-		t.Fatalf("len = %d, want 6", len(items))
+	if len(items) != 7 {
+		t.Fatalf("len = %d, want 7", len(items))
 	}
-	wantKeys := []string{"script.enabled", "subscheck.enabled", OutboundNodeKey, SourceRefreshKey, "rules.manifest_path", "rules.output_dir"}
+	wantKeys := []string{"script.enabled", "subscheck.enabled", ArtifactModeKey, OutboundNodeKey, SourceRefreshKey, "rules.manifest_path", "rules.output_dir"}
 	for i, k := range wantKeys {
 		if items[i].Key != k {
 			t.Fatalf("items[%d].Key = %q, want %q", i, items[i].Key, k)
@@ -39,23 +39,33 @@ func TestListSettingsDefaults(t *testing.T) {
 	if items[0].Value != "false" || items[1].Value != "false" {
 		t.Fatalf("bool 默认值应 false, got %q %q", items[0].Value, items[1].Value)
 	}
-	if items[2].Value != "" || items[3].Value != "" || items[4].Value != "" || items[5].Value != "" {
-		t.Fatalf("默认值应空串, got %q %q %q %q", items[2].Value, items[3].Value, items[4].Value, items[5].Value)
+	// artifact_mode 未配置 = 默认开，列表里必须如实显示 true 而不是 false。
+	if items[2].Value != "true" {
+		t.Fatalf("artifact_mode 默认值应显示 true, got %q", items[2].Value)
 	}
-	if items[0].Kind != SettingKindBool || items[1].Kind != SettingKindBool {
-		t.Errorf("bool kind: %q %q", items[0].Kind, items[1].Kind)
+	if !items[2].IsDefault {
+		t.Fatalf("artifact_mode 未配置应 IsDefault")
 	}
-	if items[2].Kind != SettingKindSelect {
-		t.Errorf("outbound kind = %q", items[2].Kind)
+	if items[3].Value != "" || items[4].Value != "" || items[5].Value != "" || items[6].Value != "" {
+		t.Fatalf("默认值应空串, got %q %q %q %q", items[3].Value, items[4].Value, items[5].Value, items[6].Value)
 	}
-	if items[3].Kind != SettingKindNumber || items[3].Placeholder != "30" {
-		t.Errorf("refresh kind/placeholder = %q/%q", items[3].Kind, items[3].Placeholder)
+	if items[0].Kind != SettingKindBool || items[1].Kind != SettingKindBool || items[2].Kind != SettingKindBool {
+		t.Errorf("bool kind: %q %q %q", items[0].Kind, items[1].Kind, items[2].Kind)
 	}
-	if items[4].Kind != SettingKindPath || items[5].Kind != SettingKindPath {
-		t.Errorf("path kind: %q %q", items[4].Kind, items[5].Kind)
+	if items[2].Label != "订阅产物缓存" {
+		t.Errorf("artifact_mode label = %q", items[2].Label)
 	}
-	if len(items[2].Options) != 1 || items[2].Options[0].Value != "" {
-		t.Errorf("无自建节点时只应有直连选项: %+v", items[2].Options)
+	if items[3].Kind != SettingKindSelect {
+		t.Errorf("outbound kind = %q", items[3].Kind)
+	}
+	if items[4].Kind != SettingKindNumber || items[4].Placeholder != "30" {
+		t.Errorf("refresh kind/placeholder = %q/%q", items[4].Kind, items[4].Placeholder)
+	}
+	if items[5].Kind != SettingKindPath || items[6].Kind != SettingKindPath {
+		t.Errorf("path kind: %q %q", items[5].Kind, items[6].Kind)
+	}
+	if len(items[3].Options) != 1 || items[3].Options[0].Value != "" {
+		t.Errorf("无自建节点时只应有直连选项: %+v", items[3].Options)
 	}
 }
 
@@ -216,8 +226,8 @@ func TestSetSettingsUnknownKey(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("ListSettings: %v", lerr)
 	}
-	if len(items) != 6 {
-		t.Fatalf("ListSettings 应 6 项, got %d", len(items))
+	if len(items) != 7 {
+		t.Fatalf("ListSettings 应 7 项, got %d", len(items))
 	}
 }
 
@@ -260,12 +270,13 @@ func TestListSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSettings: %v", err)
 	}
-	if len(items) != 6 {
-		t.Fatalf("len = %d, want 6", len(items))
+	if len(items) != 7 {
+		t.Fatalf("len = %d, want 7", len(items))
 	}
 	want := map[string]string{
 		"script.enabled":      "true",
 		"subscheck.enabled":   "false",
+		ArtifactModeKey:       "true",
 		OutboundNodeKey:       "",
 		SourceRefreshKey:      "",
 		"rules.manifest_path": "/tmp/manifest.yaml",
@@ -366,5 +377,60 @@ func TestListSettingsAfterClose(t *testing.T) {
 	}
 	if _, err := m.ListSettings(ctx); err == nil {
 		t.Fatal("Close 后 ListSettings 应报错")
+	}
+}
+
+// TestArtifactModeSetting 订阅产物缓存开关：默认开（未配置显示 true）、
+// on/off 写入归一成 true/false、非法值拒绝、清空回默认。
+func TestArtifactModeSetting(t *testing.T) {
+	ctx := context.Background()
+	m := newSettingsManager(t)
+
+	if err := m.SetSettings(ctx, map[string]string{ArtifactModeKey: "off"}); err != nil {
+		t.Fatalf("SetSettings off: %v", err)
+	}
+	v, err := m.GetConfig(ctx, ArtifactModeKey)
+	if err != nil || v != "false" {
+		t.Fatalf("artifact_mode 应归一为 false, got %q err=%v", v, err)
+	}
+	items, err := m.ListSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListSettings: %v", err)
+	}
+	var found *SettingItem
+	for i := range items {
+		if items[i].Key == ArtifactModeKey {
+			found = &items[i]
+		}
+	}
+	if found == nil || found.Value != "false" || found.IsDefault {
+		t.Fatalf("off 后列表项 = %+v", found)
+	}
+
+	if err := m.SetSettings(ctx, map[string]string{ArtifactModeKey: "yes"}); err != nil {
+		t.Fatalf("SetSettings yes: %v", err)
+	}
+	if v, _ = m.GetConfig(ctx, ArtifactModeKey); v != "true" {
+		t.Fatalf("artifact_mode 应归一为 true, got %q", v)
+	}
+
+	for _, bad := range []string{"maybe", "2", "open", ""} {
+		if err := m.SetSettings(ctx, map[string]string{ArtifactModeKey: bad}); err == nil {
+			t.Fatalf("%q 应被拒绝（bool 项不支持空串清空，与其他 bool 设置一致）", bad)
+		}
+	}
+
+	// 拒绝后不落脏值；再验证 off/on 往返在开关判断上生效。
+	if err := m.SetSettings(ctx, map[string]string{ArtifactModeKey: "off"}); err != nil {
+		t.Fatalf("恢复 off: %v", err)
+	}
+	if m.ArtifactsEnabled(ctx) {
+		t.Fatal("off 后应禁用")
+	}
+	if err := m.SetSettings(ctx, map[string]string{ArtifactModeKey: "on"}); err != nil {
+		t.Fatalf("恢复 on: %v", err)
+	}
+	if !m.ArtifactsEnabled(ctx) {
+		t.Fatal("on 后应启用")
 	}
 }

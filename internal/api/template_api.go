@@ -58,6 +58,11 @@ func (s *Server) handleAPITemplate(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
+		// 模板落盘是文件操作，store 的 bump 够不着：显式失效订阅产物缓存。
+		// bump 失败只记日志不阻断——保存本身已成功，漏一次 bump 由惰性重建自愈。
+		if err := m.BumpArtifactVersion(r.Context()); err != nil {
+			s.logger.Printf("[api] 保存模板后 bump 订阅产物版本号失败: %v", err)
+		}
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		s.writeAPIError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("仅支持 GET/PUT"))
