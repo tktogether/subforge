@@ -3,6 +3,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -111,6 +112,11 @@ func (j *SourceRefreshJob) Name() string { return "source-refresh" }
 func (j *SourceRefreshJob) Spec() string { return j.spec }
 
 // Run 刷新过期缓存；单源失败只记日志，不触发整任务告警。
+//
+// 轮末按聚合结果联动订阅产物版本号：有源「内容确实变化」（无旧缓存或新旧原文
+// 不等）或有源刷新失败时 bump 一次，让预生成产物整体失效（spec §4 的失败收敛
+// 窗口）；跳过与内容未变的源不 bump。bump 在 wg.Wait 之后的单点做，不进并发
+// goroutine——整轮最多 +1。
 func (j *SourceRefreshJob) Run(ctx context.Context) error {
 	if !j.running.CompareAndSwap(false, true) {
 		return nil // 上一轮还没结束，跳过本轮，避免失败源叠加并发
@@ -131,21 +137,25 @@ func (j *SourceRefreshJob) Run(ctx context.Context) error {
 
 	now := time.Now()
 	var (
-		wg                         sync.WaitGroup
-		mu                         sync.Mutex
-		refreshed, skipped, failed int
+		wg                                  sync.WaitGroup
+		mu                                  sync.Mutex
+		refreshed, skipped, failed, changed int
 	)
 	sem := make(chan struct{}, 4)
 	for _, a := range airports {
 		if !a.Enabled || strings.TrimSpace(a.SubscriptionURL) == "" {
 			continue
 		}
-		if _, at, ok, cerr := j.mgr.GetSourceCache(ctx, a.SubscriptionURL); cerr == nil && ok && now.Sub(at) < ttl {
+		// 取过期判断时的旧缓存内容：轮末要判断「内容确实变化」，不能像之前一样丢弃。
+		// 读缓存出错按无旧缓存处理——拿不到旧内容就无法证明未变化，宁多 bump 一次。
+		old, at, ok, cerr := j.mgr.GetSourceCache(ctx, a.SubscriptionURL)
+		hadCache := cerr == nil && ok
+		if hadCache && now.Sub(at) < ttl {
 			skipped++
 			continue
 		}
 		wg.Add(1)
-		go func(a subforge.Airport) {
+		go func(a subforge.Airport, oldContent []byte, hadCache bool) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -165,14 +175,30 @@ func (j *SourceRefreshJob) Run(ctx context.Context) error {
 				return
 			}
 			mu.Lock()
+			// 内容确实变化才算 changed：首次拉取（无旧缓存）或新旧原文不等；
+			// 304 / 内容相同的源只计 refreshed，不参与 bump 判定。
+			if !hadCache || !bytes.Equal(oldContent, res.Content) {
+				changed++
+			}
 			refreshed++
 			mu.Unlock()
-		}(a)
+		}(a, old, hadCache)
 	}
 	wg.Wait()
 	if refreshed+failed > 0 {
-		j.logger.Printf("[scheduler] source-refresh: 刷新 %d / 跳过 %d / 失败 %d（间隔 %s）",
-			refreshed, skipped, failed, ttl)
+		// 整轮最多 bump 一次订阅产物版本号：有源内容变化或刷新失败才让预生成产物
+		// 失效；bump 失败只记日志——漏一次最迟一个 TTL 内由惰性重建自愈。
+		bumpNote := ""
+		if changed+failed > 0 {
+			if berr := j.mgr.BumpArtifactVersion(ctx); berr != nil {
+				j.logger.Printf("[scheduler] source-refresh: bump 订阅产物版本号失败（惰性重建会自愈）: %v", berr)
+				bumpNote = "；产物版本 bump 失败（惰性重建会自愈）"
+			} else {
+				bumpNote = "；原文变化或刷新失败，产物版本 +1"
+			}
+		}
+		j.logger.Printf("[scheduler] source-refresh: 刷新 %d（变化 %d）/ 跳过 %d / 失败 %d（间隔 %s）%s",
+			refreshed, changed, skipped, failed, ttl, bumpNote)
 	}
 	return nil
 }

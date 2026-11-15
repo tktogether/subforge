@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -179,6 +181,118 @@ func TestSourceRefreshJobSkipsAndFailures(t *testing.T) {
 	}
 	if _, _, ok, _ := mgr.GetSourceCache(ctx, okSrv.URL+"/d"); ok {
 		t.Fatal("停用机场不应刷新")
+	}
+}
+
+// artifactVersionT 读取当前订阅产物全局版本号，失败直接 Fatal。
+func artifactVersionT(t *testing.T, ctx context.Context, mgr *subforge.Manager) int64 {
+	t.Helper()
+	v, err := mgr.ArtifactVersion(ctx)
+	if err != nil {
+		t.Fatalf("读取产物版本号: %v", err)
+	}
+	return v
+}
+
+// backdateSourceCache 把指定 URL 的缓存 fetched_at 回拨一小时，强制下一轮判定为过期。
+func backdateSourceCache(t *testing.T, ctx context.Context, mgr *subforge.Manager, url string) {
+	t.Helper()
+	if _, err := mgr.DB().Raw().ExecContext(ctx,
+		"UPDATE source_cache SET fetched_at = ? WHERE url = ?",
+		time.Now().Add(-time.Hour).Unix(), url); err != nil {
+		t.Fatalf("老化缓存: %v", err)
+	}
+}
+
+// TestSourceRefreshJobBumpsArtifactVersion 源刷新联动产物版本号：
+// 首轮拉取（无缓存）、上游内容变化、上游刷新失败各 bump 一次；
+// TTL 内跳过、内容未变不 bump。版本断言一律相对 +1（其余写路径也会 bump，绝对值不可预期）。
+func TestSourceRefreshJobBumpsArtifactVersion(t *testing.T) {
+	ctx := context.Background()
+	mgr := newTestManagerT(t)
+	if err := mgr.SetSettings(ctx, map[string]string{subforge.SourceRefreshKey: "30"}); err != nil {
+		t.Fatalf("设置刷新间隔: %v", err)
+	}
+	var mu sync.Mutex
+	body1 := "proxies:\n  - name: a\n    type: ss\n    server: 1.2.3.4\n    port: 8388\n    cipher: aes-256-gcm\n    password: x\n"
+	body2 := strings.Replace(body1, "1.2.3.4", "5.6.7.8", 1)
+	serve := body1 // 测试中段改写该变量模拟上游内容变化，handler 与测试都用 mu 保护
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = w.Write([]byte(serve))
+	}))
+	defer up.Close()
+	a, err := mgr.AddAirport(ctx, "a", up.URL, "", true)
+	if err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+
+	fetcher := fetch.New(fetch.WithConfig(fetch.Config{
+		UserAgent: "test", Timeout: 5 * time.Second, Parallel: 2,
+		Retries: 0, MaxBody: 64 << 20, Redirects: 3,
+	}))
+	job := NewSourceRefreshJob(mgr, fetcher, log.New(io.Discard, "", 0))
+
+	// 首轮拉取（无缓存）→ 版本 +1。
+	before := artifactVersionT(t, ctx, mgr)
+	if err := job.Run(ctx); err != nil {
+		t.Fatalf("首轮刷新: %v", err)
+	}
+	if after := artifactVersionT(t, ctx, mgr); after != before+1 {
+		t.Fatalf("首轮拉取应 bump 版本号一次: %d -> %d", before, after)
+	}
+
+	// TTL 内二轮（跳过）→ 版本不变。
+	before = artifactVersionT(t, ctx, mgr)
+	if err := job.Run(ctx); err != nil {
+		t.Fatalf("TTL 内二轮: %v", err)
+	}
+	if after := artifactVersionT(t, ctx, mgr); after != before {
+		t.Fatalf("TTL 内跳过不应 bump 版本号: %d -> %d", before, after)
+	}
+
+	// 上游内容变化且缓存过期 → 版本 +1。
+	mu.Lock()
+	serve = body2
+	mu.Unlock()
+	backdateSourceCache(t, ctx, mgr, a.SubscriptionURL)
+	before = artifactVersionT(t, ctx, mgr)
+	if err := job.Run(ctx); err != nil {
+		t.Fatalf("内容变化轮: %v", err)
+	}
+	if after := artifactVersionT(t, ctx, mgr); after != before+1 {
+		t.Fatalf("上游内容变化应 bump 版本号: %d -> %d", before, after)
+	}
+
+	// 上游内容未变且缓存过期 → 版本不变。
+	backdateSourceCache(t, ctx, mgr, a.SubscriptionURL)
+	before = artifactVersionT(t, ctx, mgr)
+	if err := job.Run(ctx); err != nil {
+		t.Fatalf("内容未变轮: %v", err)
+	}
+	if after := artifactVersionT(t, ctx, mgr); after != before {
+		t.Fatalf("上游内容未变不应 bump 版本号: %d -> %d", before, after)
+	}
+
+	// 上游失败（不可达）→ 版本 +1（spec §4 失败收敛窗口）。
+	badSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	badURL := badSrv.URL
+	badSrv.Close() // 先取地址再关闭，制造不可达上游
+	if _, err := mgr.AddAirport(ctx, "bad", badURL, "", true); err != nil {
+		t.Fatalf("AddAirport bad: %v", err)
+	}
+	before = artifactVersionT(t, ctx, mgr)
+	if err := job.Run(ctx); err != nil {
+		t.Fatalf("失败轮: %v", err)
+	}
+	if _, _, ok, _ := mgr.GetSourceCache(ctx, badURL); ok {
+		t.Fatal("失败源不应写缓存")
+	}
+	if after := artifactVersionT(t, ctx, mgr); after != before+1 {
+		t.Fatalf("上游失败应 bump 版本号: %d -> %d", before, after)
 	}
 }
 
