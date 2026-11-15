@@ -197,7 +197,8 @@ func (s *Server) rebuildArtifacts(ctx context.Context) {
 // rebuildOneToken 重建单个令牌的预生成产物。与实时路径共用 buildSubscription 的
 // 构建前段（空 query = 默认组合，产物本来就只为默认组合预生成），引擎执行用
 // 独立预算的 context（SubscribeTimeout），失败（构建 status != 0 / engine.Run 报错 /
-// requiredFailedSources 非空）一律删掉旧产物并记日志，成功才按本轮 cur 落库。
+// requiredFailedSources 非空）删掉旧产物并记日志让拉取回落实时编译；停机取消
+// （ctx.Err() != nil）不算失败，不动产物。成功才按本轮 cur 落库。
 func (s *Server) rebuildOneToken(ctx context.Context, cur int64, subTok subforge.SubToken) {
 	m := s.subManager
 	token := subTok.Token
