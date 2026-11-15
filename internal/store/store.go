@@ -416,6 +416,18 @@ func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate)
 	return nil
 }
 
+// DeleteSubToken 删除订阅令牌，并在同一方法里级联删除该令牌的预生成产物（sub_artifacts）。
+// 令牌不存在时同样成功（幂等），与既有删除行为一致。
+func (d *DB) DeleteSubToken(ctx context.Context, token string) error {
+	if _, err := d.db.ExecContext(ctx, "DELETE FROM sub_tokens WHERE token = ?", token); err != nil {
+		return err
+	}
+	if _, err := d.db.ExecContext(ctx, "DELETE FROM sub_artifacts WHERE token = ?", token); err != nil {
+		return fmt.Errorf("删除订阅产物: %w", err)
+	}
+	return nil
+}
+
 // AddProxyGroup 新增「自定义来源」的代理分组；sortOrder>0 用用户值，否则回退 time.Now().UnixNano()。
 //
 // v2：分组不再归属订阅方案，source 固定为空串（自定义层）。
@@ -799,6 +811,15 @@ func migrate(db *sql.DB) error {
 			created_at  INTEGER NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_fetch_audit_created ON fetch_audit(created_at DESC);`,
+		// 订阅产物缓存：每个令牌一份预生成配置，按全局版本号守卫（旧版本不覆盖新版本）。
+		`CREATE TABLE IF NOT EXISTS sub_artifacts (
+			token        TEXT PRIMARY KEY,
+			profile_id   INTEGER NOT NULL DEFAULT 0,
+			version      INTEGER NOT NULL,
+			body         BLOB NOT NULL,
+			etag         TEXT NOT NULL,
+			generated_at INTEGER NOT NULL
+		);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

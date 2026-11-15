@@ -454,10 +454,9 @@ func (m *Manager) UpdateSubToken(ctx context.Context, token string, u store.SubT
 	return m.db.UpdateSubToken(ctx, token, u)
 }
 
-// DeleteSubToken 删除订阅令牌。
+// DeleteSubToken 删除订阅令牌（转发到 store 层，并级联删除该令牌的预生成产物）。
 func (m *Manager) DeleteSubToken(ctx context.Context, token string) error {
-	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM sub_tokens WHERE token = ?", token)
-	return err
+	return m.db.DeleteSubToken(ctx, token)
 }
 
 // --- 分组 / 规则 / 令牌的单项读写（HTTP 层 GET/PUT 依赖，SQL 见 internal/store）---
