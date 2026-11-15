@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/tktogether/subforge/internal/subforge"
+	"github.com/tktogether/subforge/internal/traffic"
 )
 
 // artifactSetup 起一个带机场（假上游 fixture）与订阅令牌的服务。
@@ -425,5 +426,64 @@ func TestSubscribeGzip(t *testing.T) {
 	}
 	if body304 != "" {
 		t.Fatalf("304 不应带 body，got %d 字节", len(body304))
+	}
+}
+
+// --- 任务 10：条件覆盖补测——artifact.go 两个错误臂的真实行为用例 ---
+
+// TestTrafficHeaderValueSurvivesDBReadError 流量策略读取失败（ctx 已取消 → config
+// 查询报错）时返回空串，调用方不设 Subscription-Userinfo 头；同样的流量数据在正常
+// ctx 下返回非空——证明空串来自「读失败静默跳过」，而不是没有数据。
+func TestTrafficHeaderValueSurvivesDBReadError(t *testing.T) {
+	_, srv, mgr := profileServer(t)
+	ctx := context.Background()
+	a, err := mgr.AddAirport(ctx, "机场A", fixtureURL(t), "备注", true)
+	if err != nil {
+		t.Fatalf("插入 airport: %v", err)
+	}
+	if err := mgr.UpdateAirportTraffic(ctx, a.ID, &traffic.Usage{
+		Upload: 100, Download: 200, Total: 1000, Expire: 1700000000,
+	}, 5, ""); err != nil {
+		t.Fatalf("写入流量: %v", err)
+	}
+	airports, err := mgr.ListAirports(ctx)
+	if err != nil {
+		t.Fatalf("列机场: %v", err)
+	}
+
+	if got := srv.trafficHeaderValue(ctx, airports); got == "" {
+		t.Fatalf("有流量数据且读取正常时应返回非空的 Subscription-Userinfo 值")
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := srv.trafficHeaderValue(cancelled, airports); got != "" {
+		t.Fatalf("流量策略读取失败时应返回空串（调用方不设头），got %q", got)
+	}
+}
+
+// TestSubscribeArtifactBackfillFailureOmitsETag 惰性回填落库失败（BEFORE INSERT
+// 触发器拒绝写入，真实 SQLite 报错）→ 响应仍是 200 全文，但不带 ETag：保存失败时
+// 下次拉取会重新编译，body 不保证逐字节一致，不能让客户端按该 ETag 缓存。
+func TestSubscribeArtifactBackfillFailureOmitsETag(t *testing.T) {
+	ts, mgr := artifactSetup(t)
+	forbidArtifactSave(t, mgr)
+
+	st, hdr, body := uiGet(t, ts, "/subscribe?token=sub-token-1")
+	if st != http.StatusOK {
+		t.Fatalf("status=%d body=%s", st, body)
+	}
+	if body == "" {
+		t.Fatalf("回填失败也应回实时编译全文")
+	}
+	if got := hdr.Get("ETag"); got != "" {
+		t.Fatalf("回填失败不应设 ETag，got %q", got)
+	}
+	art, err := mgr.GetSubArtifact(context.Background(), "sub-token-1")
+	if err != nil {
+		t.Fatalf("读产物: %v", err)
+	}
+	if art != nil {
+		t.Fatalf("写入被拒绝后产物表不应有行，got version=%d", art.Version)
 	}
 }
