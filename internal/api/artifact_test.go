@@ -6,6 +6,7 @@
 package api
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -314,5 +315,115 @@ func TestSubscribeArtifactRefreshZero(t *testing.T) {
 	}
 	if art != nil {
 		t.Fatalf("刷新间隔为 0 不应回填产物，got version=%d", art.Version)
+	}
+}
+
+// --- 任务 6：/subscribe gzip 压缩 ---
+
+// subscribeGetRaw 发一个可自定义 Accept-Encoding 与 If-None-Match 的 GET，返回
+// 状态码、响应头与原始响应体。调用方手动设置 Accept-Encoding 时 net/http 传输层
+// 不会自动解压（transport 只在它自己补该头时才负责解压），拿到什么就是什么——
+// 验证 gzip 响应必须走这条路。
+func subscribeGetRaw(t *testing.T, ts *httptest.Server, path, acceptEncoding, ifNoneMatch string) (int, http.Header, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+	if err != nil {
+		t.Fatalf("构造请求: %v", err)
+	}
+	if acceptEncoding != "" {
+		req.Header.Set("Accept-Encoding", acceptEncoding)
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取响应: %v", err)
+	}
+	return resp.StatusCode, resp.Header, string(body)
+}
+
+// gzipDecode 校验 gzip 魔数（0x1f 0x8b）后解压，返回解码出的文本。
+func gzipDecode(t *testing.T, data string) string {
+	t.Helper()
+	if len(data) < 2 || data[0] != 0x1f || data[1] != 0x8b {
+		t.Fatalf("响应体不是 gzip 数据（缺魔数 0x1f8b）: len=%d prefix=%q", len(data), data[:min(len(data), 16)])
+	}
+	zr, err := gzip.NewReader(strings.NewReader(data))
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	defer zr.Close()
+	decoded, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("gzip 解压: %v", err)
+	}
+	return string(decoded)
+}
+
+// TestSubscribeGzip 验证 /subscribe 的 gzip 压缩与既有语义的共存：
+//   - 手动设置 Accept-Encoding: gzip → 响应带 Content-Encoding: gzip，body 是
+//     可解压的 gzip 流，解出来与明文 body 逐字节一致；
+//   - 完全不带 Accept-Encoding → 无 Content-Encoding 头，明文响应；
+//   - gzip 请求 + If-None-Match 命中 → 仍回 304 且无 body（压缩不得破坏产物 304 路径）。
+//
+// 第一次明文拉取即回填产物，之后两次 gzip 请求命中同一份产物，所以 gzip 解码
+// 结果可以与明文 body 逐字节比较，无需归一化。
+func TestSubscribeGzip(t *testing.T) {
+	ts, _ := artifactSetup(t)
+	path := "/subscribe?token=sub-token-1"
+
+	// 明文基线：DisableCompression 让传输层彻底不发 Accept-Encoding，服务端
+	// 不该自作主张压缩。
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	req, err := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+	if err != nil {
+		t.Fatalf("构造请求: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("明文 GET: %v", err)
+	}
+	defer resp.Body.Close()
+	plainBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取明文响应: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || len(plainBody) == 0 {
+		t.Fatalf("明文拉取 status=%d body=%d 字节", resp.StatusCode, len(plainBody))
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "" {
+		t.Fatalf("未请求压缩不应带 Content-Encoding，got %q", got)
+	}
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatalf("明文拉取（回填）应带 ETag")
+	}
+
+	// gzip 请求：手动设 Accept-Encoding，响应体就是服务端发出的原始字节。
+	st, hdr, gzBody := subscribeGetRaw(t, ts, path, "gzip", "")
+	if st != http.StatusOK {
+		t.Fatalf("gzip 拉取 status=%d body len=%d", st, len(gzBody))
+	}
+	if got := hdr.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("gzip 请求应回 Content-Encoding: gzip，got %q body prefix=%q", got, gzBody[:min(len(gzBody), 16)])
+	}
+	decoded := gzipDecode(t, gzBody)
+	if decoded != string(plainBody) {
+		t.Fatalf("gzip 解码结果与明文 body 不一致: len %d vs %d", len(decoded), len(plainBody))
+	}
+
+	// 压缩与 304 共存：gzip 请求 + If-None-Match 命中 → 304 且无 body。
+	st304, _, body304 := subscribeGetRaw(t, ts, path, "gzip", etag)
+	if st304 != http.StatusNotModified {
+		t.Fatalf("gzip + If-None-Match 命中应回 304，got %d body=%d 字节", st304, len(body304))
+	}
+	if body304 != "" {
+		t.Fatalf("304 不应带 body，got %d 字节", len(body304))
 	}
 }

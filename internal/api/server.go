@@ -307,7 +307,10 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/", s.handleAPIOverride)
 		r.Put("/", s.handleAPIOverride)
 	})
-	r.Get("/subscribe", s.handleSubscribe)
+	// /subscribe 走 gzip 压缩：慢速客户端链路（手机弱网）是订阅下载的主要瓶颈，
+	// YAML 明文压缩比高。手动 Accept-Encoding 的客户端拿到 gzip 字节；不带该头的
+	// 客户端响应不变（chi 只按请求头决定，且仅压缩 text/plain 等 compressible 类型）。
+	r.With(chimw.Compress(5)).Get("/subscribe", s.handleSubscribe)
 
 	// pprof 端点（仅 debug 模式）
 	r.Get("/debug/pprof/", s.handlePprofIndex)
