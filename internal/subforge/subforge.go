@@ -88,6 +88,15 @@ func (m *Manager) DB() *store.DB { return m.db }
 // 避免同一张表在两层各有一份结构体、字段各自漂移。
 type Airport = store.Airport
 
+// touchArtifacts 供产物相关表的写路径在主语句成功后调用（机场等表的写 SQL 落在
+// Manager 直写，store 层够不着，这里透传 store 的 bump）。
+//
+// 失败被刻意吞掉（`_, _ =`）：漏一次 bump 最迟一个 TTL 内由惰性重建自愈，
+// 绝不能让 bump 失败连累业务写入。
+func (m *Manager) touchArtifacts(ctx context.Context) {
+	_, _ = m.db.BumpArtifactVersion(ctx)
+}
+
 // ListAirports 返回所有订阅。
 // remarks 列可为 NULL，用 COALESCE 兜底，避免扫描时报 "converting NULL to string"。
 func (m *Manager) ListAirports(ctx context.Context) ([]Airport, error) {
@@ -143,6 +152,7 @@ func (m *Manager) AddAirport(ctx context.Context, name, subscriptionURL, remarks
 	if err != nil {
 		return nil, err
 	}
+	m.touchArtifacts(ctx)
 	id, _ := res.LastInsertId()
 	return m.GetAirport(ctx, id)
 }
@@ -155,6 +165,7 @@ func (m *Manager) UpdateAirport(ctx context.Context, id int64, name, subscriptio
 	if err != nil {
 		return nil, err
 	}
+	m.touchArtifacts(ctx)
 	return m.GetAirport(ctx, id)
 }
 
@@ -203,7 +214,11 @@ func (m *Manager) SetAirportOutboundNode(ctx context.Context, id int64, outbound
 	}
 	_, err = m.db.Raw().ExecContext(ctx,
 		"UPDATE airports SET outbound_node = ?, updated_at = ? WHERE id = ?", v, time.Now(), id)
-	return err
+	if err != nil {
+		return err
+	}
+	m.touchArtifacts(ctx)
+	return nil
 }
 
 // SetAirportFailurePolicy 设置机场拉取失败时的订阅语义。
@@ -214,7 +229,11 @@ func (m *Manager) SetAirportFailurePolicy(ctx context.Context, id int64, policy 
 	}
 	_, err = m.db.Raw().ExecContext(ctx,
 		"UPDATE airports SET failure_policy = ?, updated_at = ? WHERE id = ?", p, time.Now(), id)
-	return err
+	if err != nil {
+		return err
+	}
+	m.touchArtifacts(ctx)
+	return nil
 }
 
 // SetAirportPipeline 设置机场的来源级处理管线；空串表示不处理。
@@ -233,6 +252,9 @@ func (m *Manager) SetSelfSourcePipeline(ctx context.Context, pipeline string) er
 }
 
 // DeleteAirport 删除订阅。
+//
+// 版本 bump 由末尾的 SetSourcePipeline 承担（清空来源管线也是产物相关表写，
+// store 层已接线）：删机场必清管线，整链恰好 bump 一次，不双 bump。
 func (m *Manager) DeleteAirport(ctx context.Context, id int64) error {
 	if _, err := m.db.Raw().ExecContext(ctx, "DELETE FROM airports WHERE id = ?", id); err != nil {
 		return err
@@ -362,8 +384,11 @@ func (m *Manager) SetProxyGroupIncludeAllSources(ctx context.Context, id int64, 
 
 // DeleteProxyGroup 删除代理分组。
 func (m *Manager) DeleteProxyGroup(ctx context.Context, id int64) error {
-	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM proxy_groups WHERE id = ?", id)
-	return err
+	if _, err := m.db.Raw().ExecContext(ctx, "DELETE FROM proxy_groups WHERE id = ?", id); err != nil {
+		return err
+	}
+	m.touchArtifacts(ctx)
+	return nil
 }
 
 // --- Rule（规则）管理 ---
@@ -411,8 +436,11 @@ func (m *Manager) AddRuleWithSource(ctx context.Context, rule Rule) (*Rule, erro
 
 // DeleteRule 删除规则。
 func (m *Manager) DeleteRule(ctx context.Context, id int64) error {
-	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM rules WHERE id = ?", id)
-	return err
+	if _, err := m.db.Raw().ExecContext(ctx, "DELETE FROM rules WHERE id = ?", id); err != nil {
+		return err
+	}
+	m.touchArtifacts(ctx)
+	return nil
 }
 
 // --- SubToken（订阅令牌）管理 ---
@@ -428,7 +456,11 @@ func (m *Manager) CreateSubToken(ctx context.Context, token, name, target, pipel
 		"INSERT INTO sub_tokens (token, name, target, pipeline, config, include, exclude, profile_id) "+
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		token, name, target, pipeline, configName, include, exclude, 0)
-	return err
+	if err != nil {
+		return err
+	}
+	m.touchArtifacts(ctx)
+	return nil
 }
 
 // GetSubToken 返回订阅令牌。五个定制列用 COALESCE 兜底为空串，与 ListSubTokens 一致。
@@ -586,16 +618,24 @@ func (m *Manager) GetConfig(ctx context.Context, key string) (string, error) {
 	return m.getConfig(ctx, key)
 }
 
-// setConfig 写入配置值。
+// setConfig 写入配置值（设置写也是产物相关写路径：DNS、mixed-port 等都烤进产物正文）。
 func (m *Manager) setConfig(ctx context.Context, key, value string) error {
 	_, err := m.db.Raw().ExecContext(ctx,
 		"INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 		key, value)
-	return err
+	if err != nil {
+		return err
+	}
+	m.touchArtifacts(ctx)
+	return nil
 }
 
 // deleteConfig 删除配置键（把设置项恢复默认）。
 func (m *Manager) deleteConfig(ctx context.Context, key string) error {
 	_, err := m.db.Raw().ExecContext(ctx, "DELETE FROM config WHERE key = ?", key)
-	return err
+	if err != nil {
+		return err
+	}
+	m.touchArtifacts(ctx)
+	return nil
 }

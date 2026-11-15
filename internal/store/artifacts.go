@@ -59,6 +59,16 @@ func (d *DB) BumpArtifactVersion(ctx context.Context) (int64, error) {
 	return parseArtifactVersion(raw)
 }
 
+// touchArtifacts 供产物相关表（airports、self_nodes、proxy_groups、rules、
+// rule_providers、profiles、sub_tokens、config 设置写、scripts、pipelines、
+// source_pipelines）的写路径在主语句成功后调用：bump 全局版本号，让预生成产物失效。
+//
+// 失败被刻意吞掉（`_, _ =`）：漏一次 bump 最迟一个 TTL 内由惰性重建自愈，
+// 绝不能让 bump 失败连累业务写入。
+func (d *DB) touchArtifacts(ctx context.Context) {
+	_, _ = d.BumpArtifactVersion(ctx)
+}
+
 // parseArtifactVersion 把 config 表里的版本文本转成整数。
 func parseArtifactVersion(raw string) (int64, error) {
 	v, err := strconv.ParseInt(raw, 10, 64)

@@ -186,6 +186,7 @@ func (d *DB) AddSelfNode(ctx context.Context, link, name string, enabled bool, s
 	if err != nil {
 		return nil, err
 	}
+	d.touchArtifacts(ctx)
 	id, _ := res.LastInsertId()
 	return d.GetSelfNode(ctx, id)
 }
@@ -206,13 +207,17 @@ func (d *DB) UpdateSelfNode(ctx context.Context, id int64, link, name string, en
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
 // DeleteSelfNode 按 id 删除自建节点。
 func (d *DB) DeleteSelfNode(ctx context.Context, id int64) error {
-	_, err := d.db.ExecContext(ctx, "DELETE FROM self_nodes WHERE id = ?", id)
-	return err
+	if _, err := d.db.ExecContext(ctx, "DELETE FROM self_nodes WHERE id = ?", id); err != nil {
+		return err
+	}
+	d.touchArtifacts(ctx)
+	return nil
 }
 
 // Rule 是 rules 表的一行。
@@ -413,6 +418,7 @@ func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate)
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -425,6 +431,7 @@ func (d *DB) DeleteSubToken(ctx context.Context, token string) error {
 	if _, err := d.db.ExecContext(ctx, "DELETE FROM sub_artifacts WHERE token = ?", token); err != nil {
 		return fmt.Errorf("删除订阅产物: %w", err)
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -470,6 +477,7 @@ func (d *DB) AddProxyGroupWithMembersAndFlags(ctx context.Context, name, gtype, 
 	if err != nil {
 		return ProxyGroup{}, err
 	}
+	d.touchArtifacts(ctx)
 	id, err := res.LastInsertId()
 	if err != nil {
 		return ProxyGroup{}, err
@@ -512,6 +520,7 @@ func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex,
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -530,6 +539,7 @@ func (d *DB) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -548,6 +558,7 @@ func (d *DB) SetProxyGroupIncludeAllSources(ctx context.Context, id int64, inclu
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -571,6 +582,7 @@ func (d *DB) UpdateImportedGroupMembersFlags(ctx context.Context, id int64, memb
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -591,6 +603,7 @@ func (d *DB) UpdateRuleFromSource(ctx context.Context, id int64, ruleType, ruleP
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -621,6 +634,7 @@ func (d *DB) UpdateRule(ctx context.Context, id int64, ruleType, ruleParam strin
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -638,6 +652,7 @@ func (d *DB) AddRuleWithSource(ctx context.Context, rule Rule) (*Rule, error) {
 	if err != nil {
 		return nil, wrapUniqueRuleError(err)
 	}
+	d.touchArtifacts(ctx)
 	id, err := res.LastInsertId()
 	if err != nil {
 		return nil, err
@@ -1155,6 +1170,7 @@ func (d *DB) CreateScript(ctx context.Context, s Script) (*Script, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.touchArtifacts(ctx)
 	id, err := res.LastInsertId()
 	if err != nil {
 		return nil, err
@@ -1186,6 +1202,7 @@ func (d *DB) UpdateScript(ctx context.Context, s Script) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -1202,6 +1219,7 @@ func (d *DB) DeleteScript(ctx context.Context, id int64) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -1291,6 +1309,7 @@ func (d *DB) CreatePipeline(ctx context.Context, p Pipeline) (*Pipeline, error) 
 	if err != nil {
 		return nil, err
 	}
+	d.touchArtifacts(ctx)
 	id, err := res.LastInsertId()
 	if err != nil {
 		return nil, err
@@ -1330,6 +1349,7 @@ func (d *DB) UpdatePipeline(ctx context.Context, p Pipeline) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -1346,6 +1366,7 @@ func (d *DB) DeletePipeline(ctx context.Context, id int64) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -1387,15 +1408,21 @@ func (d *DB) UpsertRuleProvider(ctx context.Context, p RuleProvider) error {
 		source = ""
 	}
 	if err == sql.ErrNoRows {
-		_, err = d.db.ExecContext(ctx,
+		if _, err = d.db.ExecContext(ctx,
 			"INSERT INTO rule_providers (name, raw_json, source, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			p.Name, p.RawJSON, source, enabled, p.SortOrder, now, now)
+			p.Name, p.RawJSON, source, enabled, p.SortOrder, now, now); err != nil {
+			return err
+		}
+		d.touchArtifacts(ctx)
+		return nil
+	}
+	if _, err = d.db.ExecContext(ctx,
+		"UPDATE rule_providers SET raw_json = ?, enabled = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+		p.RawJSON, enabled, p.SortOrder, now, id); err != nil {
 		return err
 	}
-	_, err = d.db.ExecContext(ctx,
-		"UPDATE rule_providers SET raw_json = ?, enabled = ?, sort_order = ?, updated_at = ? WHERE id = ?",
-		p.RawJSON, enabled, p.SortOrder, now, id)
-	return err
+	d.touchArtifacts(ctx)
+	return nil
 }
 
 // SetRuleProviderEnabled 按 id 更新规则集启用状态；行不存在返回 (false, nil)。
@@ -1411,7 +1438,11 @@ func (d *DB) SetRuleProviderEnabled(ctx context.Context, id int64, enabled bool)
 	if err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	if n == 0 {
+		return false, nil
+	}
+	d.touchArtifacts(ctx)
+	return true, nil
 }
 
 // GetSourcePipeline 读取来源级处理管线；没有记录时返回空串。
@@ -1432,14 +1463,20 @@ func (d *DB) GetSourcePipeline(ctx context.Context, sourceKey string) (string, e
 func (d *DB) SetSourcePipeline(ctx context.Context, sourceKey, pipeline string) error {
 	pipeline = strings.TrimSpace(pipeline)
 	if pipeline == "" {
-		_, err := d.db.ExecContext(ctx, "DELETE FROM source_pipelines WHERE source_key = ?", sourceKey)
-		return err
+		if _, err := d.db.ExecContext(ctx, "DELETE FROM source_pipelines WHERE source_key = ?", sourceKey); err != nil {
+			return err
+		}
+		d.touchArtifacts(ctx)
+		return nil
 	}
-	_, err := d.db.ExecContext(ctx,
+	if _, err := d.db.ExecContext(ctx,
 		"INSERT INTO source_pipelines (source_key, pipeline, updated_at) VALUES (?, ?, ?) "+
 			"ON CONFLICT(source_key) DO UPDATE SET pipeline = excluded.pipeline, updated_at = excluded.updated_at",
-		sourceKey, pipeline, time.Now())
-	return err
+		sourceKey, pipeline, time.Now()); err != nil {
+		return err
+	}
+	d.touchArtifacts(ctx)
+	return nil
 }
 
 // GetSourceCache 读取机场原文缓存；没有记录时 ok=false。

@@ -51,5 +51,6 @@ func (d *DB) BatchDeleteRules(ctx context.Context, ids []int64) (deleted int, er
 		return deleted, fmt.Errorf("提交规则删除事务: %w", commitErr)
 	}
 	committed = true
+	d.touchArtifacts(ctx)
 	return deleted, nil
 }

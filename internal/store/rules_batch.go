@@ -91,6 +91,7 @@ func (d *DB) BatchInsertImportedRules(ctx context.Context, rows []ImportedRuleRo
 		return added, skipped, fmt.Errorf("提交导入事务: %w", commitErr)
 	}
 	committed = true
+	d.touchArtifacts(ctx)
 	return added, skipped, nil
 }
 

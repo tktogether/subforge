@@ -170,6 +170,7 @@ func (d *DB) BatchSetRulesEnabledBySource(ctx context.Context, f SourceFilter, e
 	if err != nil {
 		return 0, err
 	}
+	d.touchArtifacts(ctx)
 	return res.RowsAffected()
 }
 
@@ -183,6 +184,7 @@ func (d *DB) BatchDeleteRulesBySource(ctx context.Context, f SourceFilter) (int6
 	if err != nil {
 		return 0, err
 	}
+	d.touchArtifacts(ctx)
 	return res.RowsAffected()
 }
 
@@ -201,6 +203,7 @@ func (d *DB) SetRuleSource(ctx context.Context, id int64, source string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -228,6 +231,7 @@ func (d *DB) SetProfileLayers(ctx context.Context, id int64, ruleLayers, groupLa
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 

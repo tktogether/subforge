@@ -212,6 +212,7 @@ func (d *DB) AddProfile(ctx context.Context, name, description, configName, pipe
 	if err != nil {
 		return nil, err
 	}
+	d.touchArtifacts(ctx)
 	id, err := res.LastInsertId()
 	if err != nil {
 		return nil, err
@@ -236,6 +237,7 @@ func (d *DB) UpdateProfile(ctx context.Context, id int64, name, description, con
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -253,6 +255,7 @@ func (d *DB) DeleteProfile(ctx context.Context, id int64) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -297,7 +300,11 @@ func (d *DB) CreateSubTokenWithProfile(ctx context.Context, token, name, target,
 		"INSERT INTO sub_tokens (token, name, target, pipeline, config, include, exclude, profile_id) "+
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		token, name, target, pipeline, configName, include, exclude, profileID)
-	return err
+	if err != nil {
+		return err
+	}
+	d.touchArtifacts(ctx)
+	return nil
 }
 
 // SetProfileRenderOptions 保存方案的 target/include/exclude；nil = 不修改该列。
@@ -329,6 +336,7 @@ func (d *DB) SetProfileRenderOptions(ctx context.Context, id int64, target, incl
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -369,6 +377,7 @@ func (d *DB) SetProfileSources(ctx context.Context, id int64, airportIDs, selfNo
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -391,6 +400,7 @@ func (d *DB) SetProfileFinalGroup(ctx context.Context, id int64, cfg subcfg.Fina
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
@@ -415,6 +425,7 @@ func (d *DB) SetProfileRuleSources(ctx context.Context, id int64, sources []stri
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	d.touchArtifacts(ctx)
 	return nil
 }
 
