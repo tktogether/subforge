@@ -1,8 +1,9 @@
 // 订阅产物预生成（任务 5）：/subscribe 的命中路径、惰性回填与 ETag/304。
 //
 // 命中判定：默认组合 + 开关开启 + 产物存在 + 产物版本 == 全局版本号。
-// ETag 只由（版本号, 令牌）派生：版本号已捕获全部正文输入（bump 清单 + 内容变化
-// 才 bump + 失败 bump），不同 query 组合按 URL 各自缓存，跨组合不会串。
+// ETag 是输入指纹，以「剥离易变行后的 body 哈希」实现（见 computeBodyETag）：
+// 同输入重建 etag 不变（304 语义保留），内容带外漂移 etag 变（200 新正文），
+// 非默认组合的实时编译响应同样适用。
 package api
 
 import (
@@ -11,7 +12,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strconv"
+	"regexp"
 	"strings"
 
 	"github.com/tktogether/subforge/internal/convert"
@@ -20,14 +21,38 @@ import (
 	"github.com/tktogether/subforge/internal/traffic"
 )
 
-// computeArtifactETag 计算预生成产物的 ETag：带引号的 "<hex>"，
-// hex = sha256(version + "\n" + token)。
+// volatileGeneratedAtRe 匹配注释头里的秒级生成时间（RFC3339，含「生成时间: 」
+// 前缀）。每次渲染现取，同一输入的两次编译跨秒该字面必不同。原为特征测试的
+// generatedAtRe（token_fields_test.go），现被内容指纹 ETag 共用，收编为生产代码。
+var volatileGeneratedAtRe = regexp.MustCompile("生成时间: \\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:Z|[+-]\\d{2}:\\d{2})")
+
+// volatileUALineRe 匹配 mihomo common/convert 给 ws 分享链接注入的随机浏览器
+// User-Agent 整行（headers["User-Agent"] = RandUserAgent()，上游库行为）。该注入
+// 发生在 engine.Run 内部的链接解析里，同一输入的两次编译该行天然不同。原为特征
+// 测试的 wsUARx（subscribe_query_test.go），现被内容指纹 ETag 共用，收编为生产代码。
+var volatileUALineRe = regexp.MustCompile(`(?m)^\s*User-Agent: Mozilla/5\.0.*$`)
+
+// stripVolatileLines 剥除订阅正文里仅有的两类易变行：「生成时间」注释行与
+// mihomo 内核注入的随机 User-Agent 行。剥除后同一输入的两次编译逐字节一致，
+// 不同输入的差异只会落在易变行之外的确定内容上——这是内容指纹 ETag 的正确性
+// 前提（剥离函数只作用于哈希计算，落库与响应的 body 原样保留）。
+func stripVolatileLines(body []byte) []byte {
+	stripped := volatileUALineRe.ReplaceAll(body, nil)
+	return volatileGeneratedAtRe.ReplaceAll(stripped, nil)
+}
+
+// computeBodyETag 计算订阅响应的内容指纹 ETag：带引号的 "<hex>"，
+// hex = sha256(stripVolatileLines(body))。
 //
-// 版本号捕获全部正文输入：DB 写路径统一 bump、上游内容变化才 bump、必失败源失败
-// 也 bump，因此（版本, 令牌）对确定时产物 body 确定；令牌维度让不同 URL 的客户端
-// 缓存互不串扰。etagMatch 一起构成 If-None-Match/304 的服务端语义。
-func computeArtifactETag(version int64, token string) string {
-	sum := sha256.Sum256([]byte(strconv.FormatInt(version, 10) + "\n" + token))
+// 设计书 §3 的「ETag = 输入指纹」以剥离哈希实现：body 剥掉两行易变内容后是全部
+// 输入（模板、来源原文、参数、令牌字段）的确定函数——同输入重建 etag 不变，
+// If-None-Match/304 语义保留；上游内容带外漂移（手改模板文件、远端模板 URL
+// 漂移，均不 bump 版本号）在一个 TTL 内经重建收敛进 body，etag 随之变化，
+// 条件客户端拿到 200 新正文而非永远 304。两个不同输入若剥离后相同，说明两份
+// 响应本就只差易变行，304 回给客户端的缓存与服务器会产出的正文逐字节等价，
+// 语义恒正确。非默认组合的实时编译响应同样成立。
+func computeBodyETag(body []byte) string {
+	sum := sha256.Sum256(stripVolatileLines(body))
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
 
@@ -108,11 +133,10 @@ func (s *Server) setSubscribeHeaders(w http.ResponseWriter, ctx context.Context,
 // 版本号 cur 落 sub_artifacts 表，供后续同版本拉取直接命中。只应在 200 等价结果
 // （engine.Run 成功且 requiredFailedSources 为空）且默认组合时调用；Version 取
 // buildSubscription 之前读到的 cur，保存的版本守卫会丢弃并发的过期渲染结果。
-// 写失败只记日志不阻断响应：缓存只是加速，最迟下个请求重新回填自愈。
-//
-// 返回是否落库成功（调用方据此决定是否给响应带 ETag——保存失败时下一次拉取
-// 会重新编译，body 不保证逐字节一致，不能让客户端按该 ETag 缓存）。
-func (s *Server) backfillSubArtifact(ctx context.Context, m *subforge.Manager, token string, cur int64, body []byte) bool {
+// 落库的 ETag 是 computeBodyETag(body)——与响应头同一个内容指纹，落库成败不
+// 影响响应带 ETag 的正确性（同输入重编译必得同 strip-hash）。写失败只记日志
+// 不阻断响应：缓存只是加速，最迟下个请求重新回填自愈。
+func (s *Server) backfillSubArtifact(ctx context.Context, m *subforge.Manager, token string, cur int64, body []byte) {
 	// ProfileID 取令牌绑定的方案：buildSubscription 不透出方案内部状态，
 	// 这里按令牌补读一次（读失败视为未绑定，产物照存，只丢归属信息）。
 	var profileID int64
@@ -124,11 +148,9 @@ func (s *Server) backfillSubArtifact(ctx context.Context, m *subforge.Manager, t
 		ProfileID: profileID,
 		Version:   cur,
 		Body:      body,
-		ETag:      computeArtifactETag(cur, token),
+		ETag:      computeBodyETag(body),
 	}
 	if err := m.SaveSubArtifact(ctx, art); err != nil {
 		s.logger.Printf("[subscribe] 回填订阅产物失败（下个请求会重新回填）: %v", err)
-		return false
 	}
-	return true
 }

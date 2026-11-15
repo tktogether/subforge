@@ -5,8 +5,8 @@
 //
 // 比较口径：重建产物与实时编译的 body 有两行天然不同——注释头的「生成时间」行
 // （每次渲染现取、秒级精度）与 mihomo 内核给 ws 链接注入的随机 User-Agent 行
-// ——归一化两行后再比较。正则复用既有特征测试的 wsUARx（subscribe_query_test.go）
-// 与 generatedAtRe（token_fields_test.go），不重造。
+// ——归一化两行后再比较。正则统一收编在 artifact.go（volatileUALineRe /
+// volatileGeneratedAtRe，生产侧内容指纹剥离与测试归一化共用），不重造。
 // 版本号断言一律相对（rebuild 后 == 当前版本号），不写绝对数。
 package api
 
@@ -48,7 +48,7 @@ func rebuildEnv(t *testing.T) (*httptest.Server, *Server, *subforge.Manager, sub
 // normArtifactBody 折叠订阅正文里两行非确定内容（生成时间行、ws 链接随机
 // User-Agent 行），供重建产物与实时 body 的稳定比较。
 func normArtifactBody(s string) string {
-	return generatedAtRe.ReplaceAllString(wsUARx.ReplaceAllString(s, "User-Agent: UA"), "生成时间: TS")
+	return volatileGeneratedAtRe.ReplaceAllString(volatileUALineRe.ReplaceAllString(s, "User-Agent: UA"), "生成时间: TS")
 }
 
 // TestRebuildArtifacts_WarmsAllTokens 两个令牌（一个绑方案一个不绑）→ rebuildArtifacts
@@ -80,7 +80,8 @@ func TestRebuildArtifacts_WarmsAllTokens(t *testing.T) {
 		t.Fatalf("未绑定令牌产物 profile_id = %d，应为 0", plain.ProfileID)
 	}
 
-	// 版本号与 ETag：rebuild 落库用本轮读到的当前版本号，ETag 与命中路径同公式。
+	// 版本号与 ETag：rebuild 落库用本轮读到的当前版本号，ETag 为剥离易变行后的
+	// body 内容指纹（与响应头同源）。
 	cur, err := mgr.ArtifactVersion(ctx)
 	if err != nil {
 		t.Fatalf("读产物版本号: %v", err)
@@ -88,8 +89,8 @@ func TestRebuildArtifacts_WarmsAllTokens(t *testing.T) {
 	if bound.Version != cur || plain.Version != cur {
 		t.Fatalf("产物版本 %d/%d 应等于当前版本 %d", bound.Version, plain.Version, cur)
 	}
-	if bound.ETag != computeArtifactETag(cur, "tok-bound") {
-		t.Fatalf("绑定令牌 ETag %s 与公式不符 %s", bound.ETag, computeArtifactETag(cur, "tok-bound"))
+	if bound.ETag != computeBodyETag(bound.Body) {
+		t.Fatalf("绑定令牌 ETag %s 与内容指纹不符 %s", bound.ETag, computeBodyETag(bound.Body))
 	}
 
 	// 重建产物 vs 实时编译：target=clash.meta 是非默认组合，绕开产物命中拿到
@@ -397,7 +398,7 @@ func TestRebuildArtifacts_SkipsTokenBoundToDisabledProfile(t *testing.T) {
 		t.Fatalf("读产物版本号: %v", err)
 	}
 	if err := mgr.SaveSubArtifact(ctx, store.SubArtifact{
-		Token: "tok-off", Version: cur, Body: []byte("stale-body"), ETag: computeArtifactETag(cur, "tok-off"),
+		Token: "tok-off", Version: cur, Body: []byte("stale-body"), ETag: computeBodyETag([]byte("stale-body")),
 	}); err != nil {
 		t.Fatalf("预置旧产物: %v", err)
 	}

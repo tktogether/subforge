@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -124,15 +123,11 @@ func TestSubscribeQueryPipelineFallback(t *testing.T) {
 	}
 }
 
-// wsUARx 匹配 mihomo common/convert 给 ws 分享链接注入的随机浏览器 User-Agent 行
-// （headers["User-Agent"] = RandUserAgent()，上游库行为）。该注入发生在 engine.Run
-// 内部的链接解析里，与本重构无关，同一配置两次拉取该行天然不同，比较前先归一化。
-var wsUARx = regexp.MustCompile(`(?m)^\s*User-Agent: Mozilla/5\.0.*$`)
-
 // TestSubscribeDefaultComboDeterministic 特征测试：同一令牌连续两次拉取默认组合
 // （不带 target/pipeline/config/include/exclude），profile-title 响应头与响应体必须
-// 一致（ws 节点的随机 User-Agent 行归一化后逐字节比较）；显式空串参数（target=&…=）
-// 与不传参数也必须等价。作为 buildSubscription 抽取（纯重构）的前后基线，防止重构变形。
+// 一致（ws 节点的随机 User-Agent 行归一化后逐字节比较，正则用生产侧的
+// volatileUALineRe，artifact.go 收编）；显式空串参数（target=&…=）与不传参数也必须
+// 等价。作为 buildSubscription 抽取（纯重构）的前后基线，防止重构变形。
 func TestSubscribeDefaultComboDeterministic(t *testing.T) {
 	ts, mgr := uiSubServer(t)
 	ctx := context.Background()
@@ -154,7 +149,7 @@ func TestSubscribeDefaultComboDeterministic(t *testing.T) {
 	if title1 == "" || title1 != title2 {
 		t.Fatalf("profile-title 不一致或为空: %q vs %q", title1, title2)
 	}
-	if norm1, norm2 := wsUARx.ReplaceAllString(body1, ""), wsUARx.ReplaceAllString(body2, ""); norm1 != norm2 {
+	if norm1, norm2 := volatileUALineRe.ReplaceAllString(body1, ""), volatileUALineRe.ReplaceAllString(body2, ""); norm1 != norm2 {
 		t.Fatalf("两次默认组合拉取的响应体不一致：len %d vs %d", len(body1), len(body2))
 	}
 	// 显式空串参数必须与不传参数等价：空串/未出现都算空。
@@ -162,7 +157,7 @@ func TestSubscribeDefaultComboDeterministic(t *testing.T) {
 	if st3 != http.StatusOK {
 		t.Fatalf("显式空串参数 status=%d body=%s", st3, body3)
 	}
-	if wsUARx.ReplaceAllString(body3, "") != wsUARx.ReplaceAllString(body1, "") {
+	if volatileUALineRe.ReplaceAllString(body3, "") != volatileUALineRe.ReplaceAllString(body1, "") {
 		t.Fatalf("显式空串参数与默认拉取响应体不一致：len %d vs %d", len(body3), len(body1))
 	}
 }

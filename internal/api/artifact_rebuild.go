@@ -160,7 +160,7 @@ func (s *Server) rebuildOneToken(ctx context.Context, cur int64, subTok subforge
 		ProfileID: subTok.ProfileID,
 		Version:   cur,
 		Body:      result.Body,
-		ETag:      computeArtifactETag(cur, token),
+		ETag:      computeBodyETag(result.Body),
 	}
 	if err := m.SaveSubArtifact(ctx, art); err != nil {
 		s.logger.Printf("[subscribe] 后台重建保存令牌 “%s” 产物失败: %v", dash(subTok.Name), err)

@@ -72,15 +72,14 @@ func firstDiffSnippet(a, b string) string {
 // 节点没写死 UA 时每次转换都会随机挑一个（ws 类节点尤其明显），
 // 因此订阅正文天然不是逐字节稳定的：比较前必须先归一化，否则断言会随机失败。
 // 同时兼容 list 分享链接里 URL 编码的形式（Mozilla%2F5.0%20...&）。
+// 注：独立整行的 UA 形态由生产侧 volatileUALineRe（artifact.go）匹配，
+// 这里的是 URL 编码碎片形态，仅测试归一化用。
 var randomUARe = regexp.MustCompile("Mozilla(?:/|%2F)5\\.0[^&\n\"']*")
 
-// generatedAtRe 匹配注释头里的秒级生成时间（RFC3339）。两次渲染跨秒时该字面
-// 不同，逐字节比较会随机失败（CI linux 慢，比本地更易跨秒）——比较前折叠。
-var generatedAtRe = regexp.MustCompile("生成时间: \\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:Z|[+-]\\d{2}:\\d{2})")
-
 // normalizeRandomUA 把随机 UA 折叠成固定占位符，供订阅正文比较使用。
+// 生成时间正则用生产侧的 volatileGeneratedAtRe（artifact.go 收编）。
 func normalizeRandomUA(s string) string {
-	return generatedAtRe.ReplaceAllString(randomUARe.ReplaceAllString(s, "UA"), "生成时间: TS")
+	return volatileGeneratedAtRe.ReplaceAllString(randomUARe.ReplaceAllString(s, "UA"), "生成时间: TS")
 }
 
 // tokenTestEnv 造一个「一个启用机场 + 若干令牌」的订阅服务。
@@ -351,8 +350,8 @@ func TestSubscribeTokenEmptyFieldsRegression(t *testing.T) {
 	if !strings.Contains(ssA, "tuic-node") {
 		t.Fatalf("include=tuic-node 未产出目标节点，用例失效: %s", ssA)
 	}
-	normA := generatedAtRe.ReplaceAllString(ssA, "生成时间: TS")
-	normB := generatedAtRe.ReplaceAllString(ssB, "生成时间: TS")
+	normA := volatileGeneratedAtRe.ReplaceAllString(ssA, "生成时间: TS")
+	normB := volatileGeneratedAtRe.ReplaceAllString(ssB, "生成时间: TS")
 	if normA != normB {
 		t.Fatalf("确定性字节回归失败: %s", firstDiffSnippet(normA, normB))
 	}

@@ -1402,12 +1402,15 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 产物命中：默认组合 + 开关开启 + 产物存在 + 产物版本 == 全局版本号 → 直接回
 	// 预生成产物，跳过上游拉取与编译。响应头与实时路径现算同一套（流量/展示名/
-	// 下载名），ETag 按（版本, 令牌）派生；If-None-Match 命中回 304（不带 body）。
+	// 下载名）；ETag 读产物列——回填/重建时算好的剥离易变行内容指纹，与 body 同
+	// 源同变。旧式（版本, 令牌）公式的存量行会在下次重建/回填时被新指纹覆盖，
+	// 期间条件客户端至多多一次 200 重验证，可接受，不做迁移。If-None-Match 命中
+	// 回 304（不带 body）。
 	artifactsOn := curErr == nil && b.DefaultCombo && m.ArtifactsEnabled(ctx)
 	if artifactsOn {
 		if art, aerr := m.GetSubArtifact(ctx, token); aerr == nil && art != nil && art.Version == cur {
 			s.setSubscribeHeaders(w, ctx, b)
-			etag := computeArtifactETag(cur, token)
+			etag := art.ETag
 			w.Header().Set("ETag", etag)
 			s.logger.Printf("rid=%s /subscribe 产物命中（version=%d），跳过实时编译",
 				dash(chimw.GetReqID(ctx)), cur)
@@ -1452,17 +1455,22 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 惰性回填：200 等价结果 + 默认组合 + 开关开启时，把本次实时编译的原始 body
 	// 按 cur（buildSubscription 之前读到的版本号）落库，后续同版本拉取直接命中。
-	// 保存成功才给本次响应带 ETag——保存失败时下次拉取会重新编译，body 的
-	// 时间戳行不保证一致，不能让客户端按该 ETag 缓存。
-	backfilled := false
+	// 落库成败不影响响应的 ETag：内容指纹只依赖剥离易变行后的 body，同输入重新
+	// 编译必得相同指纹，保存失败只损失一次命中加速，缓存语义不受影响。
 	if artifactsOn {
-		backfilled = s.backfillSubArtifact(ctx, m, token, cur, result.Body)
+		s.backfillSubArtifact(ctx, m, token, cur, result.Body)
 	}
 
 	// 流量余额透传 + 展示名/下载名响应头：实时路径与命中路径共用同一组现算逻辑。
 	s.setSubscribeHeaders(w, ctx, b)
-	if backfilled {
-		w.Header().Set("ETag", computeArtifactETag(cur, token))
+	// 内容指纹 ETag 对所有 200 等价响应（默认与非默认组合）都成立：同输入重编译
+	// 剥离易变行后逐字节一致，304 不会掩盖内容变化；内容漂移时指纹随之变化，
+	// 条件客户端拿到 200 新正文。If-None-Match 命中回 304（响应头已设，无 body）。
+	etag := computeBodyETag(result.Body)
+	w.Header().Set("ETag", etag)
+	if etagMatch(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
 }

@@ -3,20 +3,27 @@
 // 六个场景对应任务简报；命中路径回的是首次实时编译的原始字节（含时间戳行与
 // mihomo 内核注入的随机 User-Agent 行，随首次编译一起定格），因此 live-vs-hit
 // 逐字节比较即可，无需归一化。版本号断言一律用相对值（+1），不写绝对数。
+//
+// ETag 断言一律锚定内容指纹公式：computeBodyETag(body) = 剥离易变行后的 body
+// sha256（白盒复用生产函数，不重造公式）。带外漂移回归（TestSubscribeArtifact-
+// OutOfBandDrift）证明 ETag 随内容变化而非版本号。
 package api
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/tktogether/subforge/internal/store"
 	"github.com/tktogether/subforge/internal/subforge"
 	"github.com/tktogether/subforge/internal/traffic"
 )
@@ -59,8 +66,39 @@ func artifactGet(t *testing.T, ts *httptest.Server, path, ifNoneMatch string) (i
 	return resp.StatusCode, resp.Header, string(body)
 }
 
+// TestStripVolatileLines 单元：只剥两类易变行——「生成时间」注释行与 mihomo
+// 内核给 ws 链接注入的随机 User-Agent 行——其余内容原样保留；两个只差易变行的
+// body 剥离后逐字节一致（这正是内容指纹 ETag 的正确性前提），不含易变行的输入
+// 原样返回。
+func TestStripVolatileLines(t *testing.T) {
+	base := "# 此配置由 SubForge 自动生成\n" +
+		"# 生成时间: 2026-11-15T10:00:00Z\n" +
+		"proxies:\n  - name: vless-ws\n    ws-opts:\n      headers:\n" +
+		"        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36\n"
+	other := "# 此配置由 SubForge 自动生成\n" +
+		"# 生成时间: 2026-11-15T23:59:59+08:00\n" +
+		"proxies:\n  - name: vless-ws\n    ws-opts:\n      headers:\n" +
+		"        User-Agent: Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0\n"
+	s1, s2 := stripVolatileLines([]byte(base)), stripVolatileLines([]byte(other))
+	if !bytes.Equal(s1, s2) {
+		t.Fatalf("只差易变行的两个 body 剥离后应逐字节一致:\n%q\nvs\n%q", s1, s2)
+	}
+	for _, want := range []string{"# 此配置由 SubForge 自动生成", "proxies:", "vless-ws", "headers:"} {
+		if !strings.Contains(string(s1), want) {
+			t.Fatalf("剥离后不应丢失非易变内容 %q:\n%s", want, s1)
+		}
+	}
+	if strings.Contains(string(s1), "生成时间") || strings.Contains(string(s1), "Mozilla") {
+		t.Fatalf("易变内容应被剥除:\n%s", s1)
+	}
+	plain := []byte("proxies:\n  - name: ss-node\n")
+	if got := stripVolatileLines(plain); !bytes.Equal(got, plain) {
+		t.Fatalf("无易变行的 body 应原样保留，got %q", got)
+	}
+}
+
 // TestSubscribeArtifactHit 默认组合拉取两次：第一次实时编译并回填产物（响应带
-// ETag，公式 = sha256(version + "\n" + token) 带引号）；第二次命中——直接回产物的
+// 内容指纹 ETag = computeBodyETag(body)，带引号）；第二次命中——直接回产物的
 // 原始字节，因此两次 body 逐字节一致（无需剥离「生成时间」行）。
 func TestSubscribeArtifactHit(t *testing.T) {
 	ts, mgr := artifactSetup(t)
@@ -77,14 +115,13 @@ func TestSubscribeArtifactHit(t *testing.T) {
 	if etag1 == "" {
 		t.Fatalf("第一次拉取（回填）应带 ETag 头")
 	}
-	// ETag 公式锚定（白盒）：hex = sha256(version + "\n" + token)，整体带引号。
+	// ETag 公式锚定（白盒）：剥离易变行后的 body sha256，整体带引号。
 	// cur1 读在 pull1 之后：拉取与断言之间没有任何写操作，两者即 pull1 时的版本。
 	cur1, err := mgr.ArtifactVersion(ctx)
 	if err != nil {
 		t.Fatalf("读产物版本号: %v", err)
 	}
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\n%s", cur1, "sub-token-1")))
-	wantETag := `"` + hex.EncodeToString(sum[:]) + `"`
+	wantETag := computeBodyETag([]byte(body1))
 	if etag1 != wantETag {
 		t.Fatalf("ETag 公式不符: got %s want %s（cur=%d）", etag1, wantETag, cur1)
 	}
@@ -237,20 +274,26 @@ func TestSubscribeArtifactInvalidatedOnChange(t *testing.T) {
 }
 
 // TestSubscribeArtifactQueryOverrideMiss 带 target= 覆盖参数拉取：非默认组合
-// 不回填产物（产物表行数不变），也不设 ETag。
+// 不回填产物（产物表行数不变），但响应同样带内容指纹 ETag（剥离易变行后的
+// body 哈希对非默认组合同样成立）；第二次相同拉取带 If-None-Match → 304。
 func TestSubscribeArtifactQueryOverrideMiss(t *testing.T) {
 	ts, mgr := artifactSetup(t)
 	ctx := context.Background()
 
-	st, hdr, body := uiGet(t, ts, "/subscribe?token=sub-token-1&target=clash.meta")
+	path := "/subscribe?token=sub-token-1&target=clash.meta"
+	st, hdr, body := uiGet(t, ts, path)
 	if st != http.StatusOK {
 		t.Fatalf("status=%d body=%s", st, body)
 	}
 	if body == "" {
 		t.Fatalf("拉取得到空响应体")
 	}
-	if got := hdr.Get("ETag"); got != "" {
-		t.Fatalf("非默认组合不应设 ETag，got %q", got)
+	etag := hdr.Get("ETag")
+	if etag == "" {
+		t.Fatalf("非默认组合也应带内容指纹 ETag")
+	}
+	if want := computeBodyETag([]byte(body)); etag != want {
+		t.Fatalf("非默认组合 ETag %s 应为 body 剥离哈希 %s", etag, want)
 	}
 	art, err := mgr.GetSubArtifact(ctx, "sub-token-1")
 	if err != nil {
@@ -259,10 +302,21 @@ func TestSubscribeArtifactQueryOverrideMiss(t *testing.T) {
 	if art != nil {
 		t.Fatalf("带覆盖参数拉取不应回填产物，got version=%d", art.Version)
 	}
+
+	// 第二次相同拉取（非默认组合、实时路径）：If-None-Match 命中 → 304 无 body。
+	st2, _, body2 := artifactGet(t, ts, path, etag)
+	if st2 != http.StatusNotModified {
+		t.Fatalf("非默认组合 If-None-Match 命中应回 304，got %d body=%s", st2, body2)
+	}
+	if body2 != "" {
+		t.Fatalf("304 不应带 body，got %d 字节", len(body2))
+	}
 }
 
-// TestSubscribeArtifactModeOff artifact_mode=0：关闭后无 ETag 头，两次拉取都走
-// 实时路径（产物表始终没有行——回填不发生，命中也没有候选）。
+// TestSubscribeArtifactModeOff artifact_mode=0：关闭后无命中候选、不回填（产物表
+// 始终没有行），两次拉取都走实时路径；但内容指纹 ETag 与产物开关无关——开关关闭
+// 时同输入重编译剥离易变行后同样逐字节一致，响应照样带 ETag 且两次相同，
+// If-None-Match 命中 → 304。
 func TestSubscribeArtifactModeOff(t *testing.T) {
 	ts, mgr := artifactSetup(t)
 	ctx := context.Background()
@@ -270,17 +324,33 @@ func TestSubscribeArtifactModeOff(t *testing.T) {
 		t.Fatalf("关闭产物模式: %v", err)
 	}
 
+	path := "/subscribe?token=sub-token-1"
+	etag1 := ""
 	for i := 1; i <= 2; i++ {
-		st, hdr, body := uiGet(t, ts, "/subscribe?token=sub-token-1")
+		st, hdr, body := uiGet(t, ts, path)
 		if st != http.StatusOK {
 			t.Fatalf("第 %d 次拉取 status=%d body=%s", i, st, body)
 		}
 		if body == "" {
 			t.Fatalf("第 %d 次拉取得到空响应体", i)
 		}
-		if got := hdr.Get("ETag"); got != "" {
-			t.Fatalf("第 %d 次拉取（模式关闭）不应设 ETag，got %q", i, got)
+		etag := hdr.Get("ETag")
+		if etag == "" {
+			t.Fatalf("第 %d 次拉取（模式关闭）应带内容指纹 ETag", i)
 		}
+		if want := computeBodyETag([]byte(body)); etag != want {
+			t.Fatalf("第 %d 次拉取 ETag %s 应为 body 剥离哈希 %s", i, etag, want)
+		}
+		if i == 1 {
+			etag1 = etag
+		} else if etag != etag1 {
+			t.Fatalf("同输入两次重编译的 ETag 应相同：%s vs %s", etag1, etag)
+		}
+	}
+	// If-None-Match 命中 → 304（模式关闭不影响 304 语义）。
+	st304, _, body304 := artifactGet(t, ts, path, etag1)
+	if st304 != http.StatusNotModified || body304 != "" {
+		t.Fatalf("模式关闭下 If-None-Match 命中应回 304 无 body，got %d body=%d 字节", st304, len(body304))
 	}
 	art, err := mgr.GetSubArtifact(ctx, "sub-token-1")
 	if err != nil {
@@ -292,7 +362,7 @@ func TestSubscribeArtifactModeOff(t *testing.T) {
 }
 
 // TestSubscribeArtifactRefreshZero refresh_minutes=0：刷新间隔为 0 表示缓存整体
-// 关闭，产物预生成一并禁用 → 无 ETag 头、不回填。
+// 关闭，产物预生成一并禁用 → 不回填；响应仍带内容指纹 ETag（实时编译的剥离哈希）。
 func TestSubscribeArtifactRefreshZero(t *testing.T) {
 	ts, mgr := artifactSetup(t)
 	ctx := context.Background()
@@ -307,8 +377,12 @@ func TestSubscribeArtifactRefreshZero(t *testing.T) {
 	if body == "" {
 		t.Fatalf("拉取得到空响应体")
 	}
-	if got := hdr.Get("ETag"); got != "" {
-		t.Fatalf("刷新间隔为 0 不应设 ETag，got %q", got)
+	etag := hdr.Get("ETag")
+	if etag == "" {
+		t.Fatalf("刷新间隔为 0 也应带内容指纹 ETag")
+	}
+	if want := computeBodyETag([]byte(body)); etag != want {
+		t.Fatalf("ETag %s 应为 body 剥离哈希 %s", etag, want)
 	}
 	art, err := mgr.GetSubArtifact(ctx, "sub-token-1")
 	if err != nil {
@@ -462,10 +536,11 @@ func TestTrafficHeaderValueSurvivesDBReadError(t *testing.T) {
 	}
 }
 
-// TestSubscribeArtifactBackfillFailureOmitsETag 惰性回填落库失败（BEFORE INSERT
-// 触发器拒绝写入，真实 SQLite 报错）→ 响应仍是 200 全文，但不带 ETag：保存失败时
-// 下次拉取会重新编译，body 不保证逐字节一致，不能让客户端按该 ETag 缓存。
-func TestSubscribeArtifactBackfillFailureOmitsETag(t *testing.T) {
+// TestSubscribeArtifactBackfillFailureKeepsETag 惰性回填落库失败（BEFORE INSERT
+// 触发器拒绝写入，真实 SQLite 报错）→ 响应仍是 200 全文，且照样带内容指纹 ETag：
+// 指纹只依赖剥离易变行后的 body，与落库成败无关——保存失败只损失一次命中加速，
+// 下次拉取重新编译，同输入必得相同 strip-hash，客户端按该 ETag 缓存不会错。
+func TestSubscribeArtifactBackfillFailureKeepsETag(t *testing.T) {
 	ts, mgr := artifactSetup(t)
 	forbidArtifactSave(t, mgr)
 
@@ -476,8 +551,12 @@ func TestSubscribeArtifactBackfillFailureOmitsETag(t *testing.T) {
 	if body == "" {
 		t.Fatalf("回填失败也应回实时编译全文")
 	}
-	if got := hdr.Get("ETag"); got != "" {
-		t.Fatalf("回填失败不应设 ETag，got %q", got)
+	etag := hdr.Get("ETag")
+	if etag == "" {
+		t.Fatalf("回填失败也应带内容指纹 ETag")
+	}
+	if want := computeBodyETag([]byte(body)); etag != want {
+		t.Fatalf("ETag %s 应为 body 剥离哈希 %s", etag, want)
 	}
 	art, err := mgr.GetSubArtifact(context.Background(), "sub-token-1")
 	if err != nil {
@@ -485,5 +564,91 @@ func TestSubscribeArtifactBackfillFailureOmitsETag(t *testing.T) {
 	}
 	if art != nil {
 		t.Fatalf("写入被拒绝后产物表不应有行，got version=%d", art.Version)
+	}
+}
+
+// TestSubscribeArtifactOutOfBandDrift 带外内容漂移回归（内容指纹 ETag 的核心
+// 价值）：换上游内容（模拟手改模板文件 / 远端模板 URL 漂移），全程不走任何
+// bump 版本号的写路径；一个 TTL 之后后台重建把新内容收敛进产物，此时持有旧
+// ETag 的条件拉取必须拿到 200 新正文——旧公式 etag=sha256(版本+令牌) 下版本号
+// 未动，客户端会永远 304 看不到新内容。
+func TestSubscribeArtifactOutOfBandDrift(t *testing.T) {
+	buf, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "mixed-subscription.txt"))
+	if err != nil {
+		t.Fatalf("读取 fixture: %v", err)
+	}
+
+	// 可变上游：handler 吐 mutex 保护的字节切片，测试中途换内容即「带外漂移」。
+	var mu sync.Mutex
+	content := append([]byte(nil), buf...)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(up.Close)
+
+	ts, srv, mgr := profileServer(t)
+	ctx := context.Background()
+	if _, err := mgr.AddAirport(ctx, "机场A", up.URL+"/sub.txt", "", true); err != nil {
+		t.Fatalf("插入 airport: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "sub-token-1", "测试", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入 sub token: %v", err)
+	}
+
+	// 第一次默认组合拉取：实时编译 + 回填产物，拿到初始 ETag。
+	path := "/subscribe?token=sub-token-1"
+	st1, hdr1, body1 := uiGet(t, ts, path)
+	if st1 != http.StatusOK || !strings.Contains(body1, "ss-node") {
+		t.Fatalf("第一次拉取 status=%d body=%s", st1, body1)
+	}
+	etag1 := hdr1.Get("ETag")
+	if etag1 == "" {
+		t.Fatalf("第一次拉取（回填）应带 ETag")
+	}
+
+	// 带外漂移：上游内容追加一个新节点；期间不写库、不 bump 版本号。
+	drifted := append(append([]byte(nil), buf...),
+		[]byte("ss://YWVzLTI1Ni1nY206cGFzc3dvcmQxMjM@drift.example.com:8388#drift-node\n")...)
+	mu.Lock()
+	content = drifted
+	mu.Unlock()
+
+	// 把 source_cache 与产物的时钟拨老 2 小时（等价于等一个 TTL 过去），让下一轮
+	// rebuildArtifacts 判定为超龄重建——这仍是纯时间流逝模拟，版本号不动。
+	rawExec(t, mgr, "UPDATE source_cache SET fetched_at = fetched_at - 7200")
+	art, err := mgr.GetSubArtifact(ctx, "sub-token-1")
+	if err != nil || art == nil {
+		t.Fatalf("第一次拉取后应已回填产物: %v", err)
+	}
+	if err := mgr.SaveSubArtifact(ctx, store.SubArtifact{
+		Token: art.Token, ProfileID: art.ProfileID, Version: art.Version,
+		Body: art.Body, ETag: art.ETag,
+		GeneratedAt: time.Now().Add(-2 * time.Hour).UTC(),
+	}); err != nil {
+		t.Fatalf("把产物时间戳改旧: %v", err)
+	}
+
+	// 一轮后台重建：超龄 → 重编译（源缓存同样超龄 → 真正拉到漂移后的上游）。
+	srv.rebuildArtifacts(ctx)
+
+	// 持有旧 ETag 的条件拉取：必须 200 新正文（旧公式这里是 304——回归点）。
+	st2, hdr2, body2 := artifactGet(t, ts, path, etag1)
+	if st2 != http.StatusOK {
+		t.Fatalf("带外漂移 + 重建后，旧 ETag 的条件拉取应回 200 新正文，got %d", st2)
+	}
+	if !strings.Contains(body2, "drift-node") {
+		t.Fatalf("200 响应应包含漂移后的新节点 drift-node:\n%s", body2)
+	}
+	etag2 := hdr2.Get("ETag")
+	if etag2 == "" || etag2 == etag1 {
+		t.Fatalf("漂移后的 ETag 应变化：old=%s new=%s", etag1, etag2)
+	}
+
+	// 新 ETag 的条件拉取 → 304（304 语义在内容指纹下保留）。
+	st3, _, body3 := artifactGet(t, ts, path, etag2)
+	if st3 != http.StatusNotModified || body3 != "" {
+		t.Fatalf("新 ETag 的条件拉取应回 304 无 body，got %d body=%d 字节", st3, len(body3))
 	}
 }
