@@ -363,6 +363,12 @@ func TestSubscribeTokenEmptyFieldsRegression(t *testing.T) {
 		"subscribe.pipeline", "nope"); err != nil {
 		t.Fatalf("写 config: %v", err)
 	}
+	// 上面的裸 SQL 绕过了 store 写路径的产物版本号 bump。真实链路里 config 变更
+	// 必然 bump（store.touchArtifacts），这里补一次等价动作模拟真实失效流，
+	// 否则下面的默认组合拉取会命中变更前回填的旧产物。
+	if err := mgr.BumpArtifactVersion(context.Background()); err != nil {
+		t.Fatalf("bump 产物版本号: %v", err)
+	}
 	statusFb, _, _ := uiGet(t, base, "/subscribe?token=tok-reg")
 	statusEx, _, _ := uiGet(t, base, "/subscribe?token=tok-reg&pipeline=nope")
 	if statusFb != statusEx {

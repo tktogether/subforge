@@ -28,7 +28,6 @@ import (
 	"github.com/tktogether/subforge/internal/store"
 	"github.com/tktogether/subforge/internal/subcfg"
 	"github.com/tktogether/subforge/internal/subforge"
-	"github.com/tktogether/subforge/internal/traffic"
 )
 
 // SubscriptionManager 返回 Manager 实例。
@@ -930,6 +929,8 @@ type subBuild struct {
 // buildSubscription 完成 /subscribe 的构建前段：令牌查找、方案校验、五个定制参数
 // 归并、来源（含自建节点临时文件）/分组/规则/规则源收集与 convert.Params 组装。
 // 从 handleSubscribe 整体抽取而来（纯重构，行为逐字节等价）。
+// 调用方必须保证 s.subManager 非 nil（现有的 handleSubscribe 已由 subManagerOr503
+// 拦截；未来的产物重建任务将是新调用方，同样要先确认已启用订阅管理）。
 //
 // status==0 表示成功；非 0 时 err 非空，状态码与错误文案沿用原 writeAPIError
 // 各分支，由调用方写出。cleanup 关闭自建节点临时目录：临时文件必须活到引擎
@@ -1360,11 +1361,14 @@ func (s *Server) handleAPISelfNode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSubscribe 按数据库当前状态实时编译一份订阅配置。
+// handleSubscribe 按数据库当前状态产出一份订阅配置：版本号对得上时直接回
+// 预生成产物（命中），否则实时编译并惰性回填。
 //
-// 每次请求都重新读 airports / proxy_groups / rules，所以任何一项改了，
-// 客户端下一次拉取就是新配置——不存在落盘的静态产物。构建前段（令牌查找
-// 到 Params 组装）抽在 buildSubscription 里，与产物预生成共用同一逻辑。
+// 默认组合（query 五个定制参数全空）且产物预生成开启时，先比对全局版本号与
+// 产物行：一致则回产物原始字节并支持 If-None-Match/304；版本号由所有相关写
+// 路径统一 bump（含上游内容变化与必失败源失败），所以任何一项改了，客户端
+// 下一次拉取就是新配置。构建前段（令牌查找到 Params 组装）抽在
+// buildSubscription 里，实时编译与产物路径共用同一逻辑，防止两处漂移。
 // 鉴权用订阅令牌（sub_token）而不是服务端访问令牌；因此 server.go 的全局
 // auth 中间件必须豁免 /subscribe，否则 query 上的 sub_token 会被拿去和
 // 服务端令牌比对，永远 401。
@@ -1385,6 +1389,29 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if status != 0 {
 		s.writeAPIError(w, r, status, err)
 		return
+	}
+	ctx := r.Context()
+
+	// 产物命中：默认组合 + 开关开启 + 产物存在 + 产物版本 == 全局版本号 → 直接回
+	// 预生成产物，跳过上游拉取与编译。响应头与实时路径现算同一套（流量/展示名/
+	// 下载名），ETag 按（版本, 令牌）派生；If-None-Match 命中回 304（不带 body）。
+	// 版本号读失败按关闭处理，静默走实时路径。
+	cur, curErr := m.ArtifactVersion(ctx)
+	artifactsOn := curErr == nil && b.DefaultCombo && m.ArtifactsEnabled(ctx)
+	if artifactsOn {
+		if art, aerr := m.GetSubArtifact(ctx, token); aerr == nil && art != nil && art.Version == cur {
+			s.setSubscribeHeaders(w, ctx, b)
+			etag := computeArtifactETag(cur, token)
+			w.Header().Set("ETag", etag)
+			s.logger.Printf("rid=%s /subscribe 产物命中（version=%d），跳过实时编译",
+				dash(chimw.GetReqID(ctx)), cur)
+			if etagMatch(r.Header.Get("If-None-Match"), etag) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(art.Body))
+			return
+		}
 	}
 
 	// 拉取阶段单独限时：客户端的容忍度低于服务端请求总超时，死源必须在预算内
@@ -1410,47 +1437,27 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 机场设为「失败时报错」时整份订阅返回错误，客户端保留上一版可用配置；
 	// 默认 ignore 仍按部分失败降级，缺节点的风险由用户自己权衡。
-	var requiredFailed []string
-	for _, a := range b.UsedAirports {
-		if a.FailurePolicy != subforge.AirportFailureError {
-			continue
-		}
-		if msg, failed := result.SourceErrors[subforge.AirportSourceKey(a.ID)]; failed {
-			requiredFailed = append(requiredFailed, fmt.Sprintf("%s（%s）", a.Name, msg))
-		}
-	}
-	if len(requiredFailed) > 0 {
+	// 该检查同时是回填的前置条件：非 200 等价结果绝不落产物。
+	if requiredFailed := requiredFailedSources(b.UsedAirports, result); len(requiredFailed) > 0 {
 		s.writeAPIError(w, r, http.StatusBadGateway,
 			fmt.Errorf("订阅来源拉取失败（机场设置为失败时报错）：%s", strings.Join(requiredFailed, "；")))
 		return
 	}
-	// 5. 流量余额透传：把上游 subscription-userinfo 按策略聚合后写进响应头，
-	//    下游 mihomo/clash 客户端据此显示余额与到期。
-	//
-	// 只统计「已成功采集过」的机场（TrafficAt > 0）：
-	// 从未采集成功的机场流量是零值，混进来会把 min/max/avg 拉偏。
-	// 读策略失败（DB 故障）时静默跳过——订阅本身仍然要能生成。
-	if strat, err := m.GetTrafficStrategy(r.Context()); err == nil {
-		usages := make([]traffic.Usage, 0, len(b.UsedAirports))
-		nodeCounts := make([]int, 0, len(b.UsedAirports))
-		for _, a := range b.UsedAirports {
-			if a.TrafficAt <= 0 {
-				continue
-			}
-			usages = append(usages, traffic.Usage{
-				Upload: a.Upload, Download: a.Download, Total: a.Total, Expire: a.Expire,
-			})
-			nodeCounts = append(nodeCounts, a.NodeCount)
-		}
-		// Aggregate 在「无可聚合数据」或「策略为不透传（全 none）」时返回 ok=false。
-		if u, ok := traffic.Aggregate(usages, nodeCounts, strat); ok {
-			if header := traffic.FormatWithStrategy(u, strat); header != "" {
-				w.Header().Set("Subscription-Userinfo", header)
-			}
-		}
+
+	// 惰性回填：200 等价结果 + 默认组合 + 开关开启时，把本次实时编译的原始 body
+	// 按 cur（engine.Run 之前读到的版本号）落库，后续同版本拉取直接命中。
+	// 保存成功才给本次响应带 ETag——保存失败时下次拉取会重新编译，body 的
+	// 时间戳行不保证一致，不能让客户端按该 ETag 缓存。
+	backfilled := false
+	if artifactsOn {
+		backfilled = s.backfillSubArtifact(ctx, m, token, cur, b, result.Body)
 	}
-	w.Header().Set("profile-title", profileTitleHeader(b.Name))
-	w.Header().Set("Content-Disposition", subscriptionContentDisposition(b.Name))
+
+	// 流量余额透传 + 展示名/下载名响应头：实时路径与命中路径共用同一组现算逻辑。
+	s.setSubscribeHeaders(w, ctx, b)
+	if backfilled {
+		w.Header().Set("ETag", computeArtifactETag(cur, token))
+	}
 	s.writeText(w, http.StatusOK, "text/plain; charset=utf-8", string(result.Body))
 }
 
