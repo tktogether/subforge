@@ -15,6 +15,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -803,5 +805,84 @@ func TestRebuildArtifacts_ReadErrorSkipLogThrottledAndPruned(t *testing.T) {
 	}
 	if got := countLogLines(lb, recoverPhrase); got != 0 {
 		t.Fatalf("令牌已删除，不应出现恢复行，got %d", got)
+	}
+}
+
+// TestRebuildOneToken_ShutdownCancelKeepsArtifact 停机取消不是上游失败（评审
+// 相邻守卫）：serve 关闭取消整轮 ctx 时 engine.Run 必然报错，但这不该被误读成
+// 上游故障——旧产物不得删除（下个预热轮自愈），日志按「停机取消，不动产物」记。
+// 旧实现在这里记「引擎执行失败…删除旧产物」并徒劳尝试删除（ctx 已死，删除必报错）。
+func TestRebuildOneToken_ShutdownCancelKeepsArtifact(t *testing.T) {
+	_, srv, mgr := profileServer(t)
+	ctx := context.Background()
+
+	// 慢上游：handler 先睡 300ms 再吐 fixture——保证取消（取消机场 handler 一进
+	// 就取消 ctx）先于任何来源完成，全部来源随 ctx 一起失败 → engine.Run 必然
+	// 报错，守卫的前置条件确定。
+	buf, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "mixed-subscription.txt"))
+	if err != nil {
+		t.Fatalf("读取 fixture: %v", err)
+	}
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = w.Write(buf)
+	}))
+	t.Cleanup(slow.Close)
+
+	// 预热一轮（健康 ctx）：两个令牌都有产物。
+	if _, err := mgr.AddAirport(ctx, "慢机场", slow.URL+"/sub", "", true); err != nil {
+		t.Fatalf("插入慢机场: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "tok-a", "甲", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入令牌甲: %v", err)
+	}
+	if err := mgr.CreateSubToken(ctx, "tok-b", "乙", "", "", "", "", ""); err != nil {
+		t.Fatalf("插入令牌乙: %v", err)
+	}
+	srv.rebuildArtifacts(ctx)
+	old, err := mgr.GetSubArtifact(ctx, "tok-a")
+	if err != nil || old == nil {
+		t.Fatalf("预热后 tok-a 应有产物: %v", err)
+	}
+	staleCur := old.Version
+
+	// 拨老源缓存：第二轮的拉取必须真出网，慢机场不能靠缓存躲过取消。
+	rawExec(t, mgr, "UPDATE source_cache SET fetched_at = fetched_at - 7200")
+
+	// 取消触发器机场：真实写路径（AddAirport 自动 bump 版本号，两个令牌的产物
+	// 都过期），handler 一被拉取就取消本轮 ctx 再挂住。
+	loopCtx, cancelLoop := context.WithCancel(context.Background())
+	block := make(chan struct{})
+	cancelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cancelLoop()
+		<-block
+	}))
+	t.Cleanup(func() { close(block); cancelSrv.Close() })
+	if _, err := mgr.AddAirport(ctx, "取消机场", cancelSrv.URL+"/sub", "", true); err != nil {
+		t.Fatalf("插入取消机场: %v", err)
+	}
+
+	lb := NewLogBuffer(0)
+	srv.logger = log.New(lb, "", 0)
+
+	srv.rebuildArtifacts(loopCtx)
+
+	// tok-a 走到 engine.Run 且因停机取消报错：旧产物原样保留。
+	kept, err := mgr.GetSubArtifact(ctx, "tok-a")
+	if err != nil {
+		t.Fatalf("读产物: %v", err)
+	}
+	if kept == nil || kept.Version != staleCur {
+		t.Fatalf("停机取消不应删除旧产物（应保持 version=%d），got %+v", staleCur, kept)
+	}
+	// 日志口径：恰好一条「停机取消」，没有任何「引擎执行失败 / 删除旧产物」。
+	if got := countLogLines(lb, "停机取消"); got != 1 {
+		t.Fatalf("应恰好一条停机取消日志，got %d:\n%v", got, lb.All())
+	}
+	if got := countLogLines(lb, "删除旧产物"); got != 0 {
+		t.Fatalf("停机取消不应触发删除（含徒劳的失败删除），got %d 条相关日志:\n%v", got, lb.All())
+	}
+	if got := countLogLines(lb, "引擎执行失败"); got != 0 {
+		t.Fatalf("停机取消不应记为引擎执行失败，got %d", got)
 	}
 }

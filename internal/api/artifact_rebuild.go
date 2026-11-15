@@ -219,6 +219,14 @@ func (s *Server) rebuildOneToken(ctx context.Context, cur int64, subTok subforge
 	defer cancel()
 	result, rerr := s.engine.Run(fetchCtx, b.Params)
 	if rerr != nil {
+		// 停机取消不是上游失败（评审相邻守卫）：serve 关闭会取消整轮 ctx，
+		// engine.Run 随 fetchCtx 一起报错。此刻删旧产物毫无意义（ctx 已死，删除
+		// 必然失败；下个预热轮自愈），只会把停机误读成上游故障——只有 ctx 仍然
+		// 健康才按上游失败处理、删旧产物。
+		if ctx.Err() != nil {
+			s.logger.Printf("[subscribe] 停机取消，令牌 “%s” 本轮重建中止，不动产物: %v", dash(subTok.Name), rerr)
+			return
+		}
 		s.logger.Printf("[subscribe] 后台重建令牌 “%s” 引擎执行失败: %v，删除旧产物", dash(subTok.Name), rerr)
 		if derr := m.DeleteSubArtifact(ctx, token); derr != nil {
 			s.logger.Printf("[subscribe] 删除令牌 “%s” 旧产物失败: %v", dash(subTok.Name), derr)
