@@ -63,6 +63,9 @@ type Server struct {
 	historyBuf *HistoryBuffer
 	subManager *subforge.Manager
 	scheduler  *scheduler.Scheduler
+	// artifactPoll 是订阅产物后台重建器的轮询间隔（任务 7）；零值按 5s 兜底。
+	// 由 StartArtifactRebuilder 读取，测试可设短。
+	artifactPoll time.Duration
 }
 
 // 默认请求超时：上游订阅偶尔很慢，但一个请求不该挂住连接池。

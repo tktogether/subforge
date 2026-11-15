@@ -191,6 +191,11 @@ func cmdServe(args []string) error {
 		HTTPClient: safeClient,
 	})
 
+	// serve 生命周期 context：订阅产物后台重建与配置热重载都挂在它下面，
+	// 服务退出（返回或收到停止信号）时统一取消。
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	if dataDir != "" {
 		// 首次运行时目录可能还不存在（裸机 `-data-dir ./data`、容器里挂载点刚建好等）。
 		// 这里主动建出来，用户不必先手工 mkdir 才能启动。
@@ -276,6 +281,11 @@ func cmdServe(args []string) error {
 		sch.Start()
 		// defer 后进先出：sch.Stop 先于 mgr.Close 执行，确保调度器在 manager 关闭前停止。
 		defer sch.Stop()
+
+		// 订阅产物后台重建：SetSubManager 与调度器装配之后启动。预热一轮 + 按
+		// artifactPoll 轮询，让每个令牌的预生成产物保持新鲜，/subscribe 拉取
+		// 直接回产物。
+		srv.StartArtifactRebuilder(ctx)
 	} else {
 		fmt.Fprintln(os.Stderr, "订阅管理未启用：-data-dir 与 SUBFORGE_DATA_DIR 都为空，"+
 			"控制台的订阅、规则、令牌、任务等接口会返回 503。加 -data-dir ./data 即可启用。")
@@ -290,8 +300,8 @@ func cmdServe(args []string) error {
 		WriteTimeout: timeout * 2,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// 收到停止信号时（下方 select 分支）在优雅关闭完成后显式 cancel：后台重建
+	// goroutine 先于 defer 的 sch.Stop / mgr.Close 停止。
 	if configFile != "" {
 		go watchConfig(ctx, configFile, config.Settings{Token: token, MixedPort: mixedPort}, snap)
 	}
