@@ -1382,21 +1382,28 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, r, http.StatusBadRequest, errors.New("缺少 token 参数"))
 		return
 	}
+	ctx := r.Context()
+
+	// 不变量：产物版本号必须先于任何输入读取——写入若发生在版本读取之后，产物
+	// 只会被盖上过期版本（下次拉取 miss 重编译），绝不会反向。反过来（先构建再读
+	// 版本）时，构建期间提交的写入会被回填进盖着新版本号的产物，陈旧 body 照样
+	// 通过版本校验，最长存活一个 TTL，违反「改动后下一次拉取即生效」。因此先读
+	// 版本号再进 buildSubscription；代价是每次拉取多一次配置 SELECT（SQLite 本地，
+	// 可接受）。版本号读失败按关闭处理，静默走实时路径。
+	cur, curErr := m.ArtifactVersion(ctx)
+
 	// 构建前段：令牌查找 → 方案校验 → 参数归并 → 来源/分组/规则收集 → Params 组装。
 	// cleanup 关闭自建节点临时目录，临时文件要活到引擎跑完，因此先于任何错误返回 defer。
-	b, cleanup, status, err := s.buildSubscription(r.Context(), token, r.URL.Query())
+	b, cleanup, status, err := s.buildSubscription(ctx, token, r.URL.Query())
 	defer cleanup()
 	if status != 0 {
 		s.writeAPIError(w, r, status, err)
 		return
 	}
-	ctx := r.Context()
 
 	// 产物命中：默认组合 + 开关开启 + 产物存在 + 产物版本 == 全局版本号 → 直接回
 	// 预生成产物，跳过上游拉取与编译。响应头与实时路径现算同一套（流量/展示名/
 	// 下载名），ETag 按（版本, 令牌）派生；If-None-Match 命中回 304（不带 body）。
-	// 版本号读失败按关闭处理，静默走实时路径。
-	cur, curErr := m.ArtifactVersion(ctx)
 	artifactsOn := curErr == nil && b.DefaultCombo && m.ArtifactsEnabled(ctx)
 	if artifactsOn {
 		if art, aerr := m.GetSubArtifact(ctx, token); aerr == nil && art != nil && art.Version == cur {
@@ -1445,12 +1452,12 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 惰性回填：200 等价结果 + 默认组合 + 开关开启时，把本次实时编译的原始 body
-	// 按 cur（engine.Run 之前读到的版本号）落库，后续同版本拉取直接命中。
+	// 按 cur（buildSubscription 之前读到的版本号）落库，后续同版本拉取直接命中。
 	// 保存成功才给本次响应带 ETag——保存失败时下次拉取会重新编译，body 的
 	// 时间戳行不保证一致，不能让客户端按该 ETag 缓存。
 	backfilled := false
 	if artifactsOn {
-		backfilled = s.backfillSubArtifact(ctx, m, token, cur, b, result.Body)
+		backfilled = s.backfillSubArtifact(ctx, m, token, cur, result.Body)
 	}
 
 	// 流量余额透传 + 展示名/下载名响应头：实时路径与命中路径共用同一组现算逻辑。

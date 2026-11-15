@@ -107,12 +107,12 @@ func (s *Server) setSubscribeHeaders(w http.ResponseWriter, ctx context.Context,
 // backfillSubArtifact 惰性回填：把本次实时编译的原始 body（含时间戳行）按当前
 // 版本号 cur 落 sub_artifacts 表，供后续同版本拉取直接命中。只应在 200 等价结果
 // （engine.Run 成功且 requiredFailedSources 为空）且默认组合时调用；Version 取
-// engine.Run 之前读到的 cur，保存的版本守卫会丢弃并发的过期渲染结果。
+// buildSubscription 之前读到的 cur，保存的版本守卫会丢弃并发的过期渲染结果。
 // 写失败只记日志不阻断响应：缓存只是加速，最迟下个请求重新回填自愈。
 //
 // 返回是否落库成功（调用方据此决定是否给响应带 ETag——保存失败时下一次拉取
 // 会重新编译，body 不保证逐字节一致，不能让客户端按该 ETag 缓存）。
-func (s *Server) backfillSubArtifact(ctx context.Context, m *subforge.Manager, token string, cur int64, b *subBuild, body []byte) bool {
+func (s *Server) backfillSubArtifact(ctx context.Context, m *subforge.Manager, token string, cur int64, body []byte) bool {
 	// ProfileID 取令牌绑定的方案：buildSubscription 不透出方案内部状态，
 	// 这里按令牌补读一次（读失败视为未绑定，产物照存，只丢归属信息）。
 	var profileID int64
