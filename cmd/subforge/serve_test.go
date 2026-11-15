@@ -1,10 +1,16 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/tktogether/subforge/internal/config"
+	"github.com/tktogether/subforge/internal/runtime"
 )
 
 func TestEnvOr(t *testing.T) {
@@ -106,4 +112,79 @@ func TestEnsureDataDir(t *testing.T) {
 	if !strings.Contains(err.Error(), "创建数据目录") {
 		t.Errorf("错误信息应说明是创建数据目录失败，实际: %v", err)
 	}
+}
+
+// waitFor 轮询等待 cond 成立，超过 timeout 报失败。watchConfig 里的
+// runtime.Watch 轮询间隔固定 1 秒且要连续两轮读到相同摘要才交付，
+// 所以不能用精确时序，只能这样等到条件满足。
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// INI 热重载成功后必须回调注入的 onReload（serve 用它联动推进产物版本）。
+// runtime.Watch 启动时会先拍一次基线回调，文件可解析时同样走 Store，因此
+// onReload 会被提前触发一次——这次预热 bump 无害（产物版本只是缓存失效
+// 计数，后台重建器本来启动时就要预热一轮），所以断言放宽为「至少一次」：
+// 先等预热那一拍落稳记下基线，再改文件，断言基线之后又触发了新的回调。
+func TestWatchConfigReloadCallsOnReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "subforge.ini")
+	initial := "[subforge]\ntoken = abc\nmixed_port = 1080\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var calls atomic.Int32
+	bump := func() { calls.Add(1) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	base := config.Settings{Token: "abc", MixedPort: 1080}
+	snap := runtime.NewSnapshot(liveSettings{Settings: base})
+	go watchConfig(ctx, path, base, snap, bump)
+
+	// 预热那一拍（启动基线回调）先落稳，之后的回调才对应真实的文件改动。
+	waitFor(t, 5*time.Second, func() bool { return calls.Load() >= 1 },
+		"启动基线回调未触发 onReload（5 秒超时）")
+	baseline := calls.Load()
+
+	// 改动配置（token 变长顺带改变了文件大小，避免文件系统 mtime 粒度粗时漏检）。
+	changed := "[subforge]\ntoken = abcdef\nmixed_port = 1080\n"
+	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+		t.Fatalf("改写配置: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, func() bool { return calls.Load() > baseline },
+		"热重载成功后未触发 onReload（10 秒超时）")
+
+	// onReload 在 snap.Store 之后调用，此刻快照必须已是新配置。
+	if got := snap.Load().Token; got != "abcdef" {
+		t.Errorf("重载后快照 token = %q, want %q", got, "abcdef")
+	}
+}
+
+// onReload 允许为 nil（没有 -data-dir 时 serve 没有产物可 bump，传空即可）。
+// 借已取消的 context 让 Watch 在首拍回调后立即退出，同步调用即可完成，
+// 不需要等轮询 tick。
+func TestWatchConfigNilOnReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "subforge.ini")
+	if err := os.WriteFile(path, []byte("[subforge]\ntoken = abc\nmixed_port = 1080\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	snap := runtime.NewSnapshot(liveSettings{})
+	// 首拍回调会走到 onReload 判断处；为 nil 时不得 panic。
+	watchConfig(ctx, path, config.Settings{}, snap, nil)
 }

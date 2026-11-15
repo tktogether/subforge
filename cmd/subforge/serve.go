@@ -303,7 +303,19 @@ func cmdServe(args []string) error {
 	// 收到停止信号时（下方 select 分支）在优雅关闭完成后显式 cancel：后台重建
 	// goroutine 先于 defer 的 sch.Stop / mgr.Close 停止。
 	if configFile != "" {
-		go watchConfig(ctx, configFile, config.Settings{Token: token, MixedPort: mixedPort}, snap)
+		// 热重载联动产物版本：基础模板与 mixed-port 都烤进产物正文，配置一变
+		// 就得推进版本号，让后台重建器把产物推到新版本，兑现"改配置文件能
+		// 立即影响后续请求的产物"。mgr 在未启用 -data-dir 时为 nil（没有订阅
+		// 管理就没有产物可 bump）；闭包在回调时才读当前值，不假设启动顺序。
+		bump := func() {
+			if mgr == nil {
+				return
+			}
+			if err := mgr.BumpArtifactVersion(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "配置重载后推进产物版本失败（惰性重建会自愈）: %v\n", err)
+			}
+		}
+		go watchConfig(ctx, configFile, config.Settings{Token: token, MixedPort: mixedPort}, snap, bump)
 	}
 
 	errCh := make(chan error, 1)
@@ -369,7 +381,12 @@ func loadSettings(path string, base config.Settings) (*runtime.Snapshot[liveSett
 // watchConfig 轮询配置文件，改动后重新解析并整体替换设置快照。
 //
 // 解析失败保留旧设置并继续轮询：配置写错不应该把正在跑的服务打挂。
-func watchConfig(ctx context.Context, path string, base config.Settings, snap *runtime.Snapshot[liveSettings]) {
+//
+// onReload 在一次成功重载（快照已整体替换）后回调，serve 用它联动推进产物
+// 版本；允许为 nil。runtime.Watch 启动时会先拍一次基线回调，文件可解析时
+// 同样走 Store，因此 onReload 在启动阶段也会被触发一次——调用方需容忍这次
+// 预热（对产物版本而言预热 bump 无害）。
+func watchConfig(ctx context.Context, path string, base config.Settings, snap *runtime.Snapshot[liveSettings], onReload func()) {
 	if err := runtime.Watch(ctx, path, time.Second, func(body []byte) error {
 		if body == nil {
 			// 文件暂时读不到（被编辑器移走重建等），沿用当前设置。
@@ -392,6 +409,10 @@ func watchConfig(ctx context.Context, path string, base config.Settings, snap *r
 		}
 		if prev.Template == nil && next.Template != nil || prev.Template != nil && next.Template != nil {
 			fmt.Fprintf(os.Stderr, "配置模板已重载: %s\n", path)
+		}
+		// 快照已整体替换，才算一次真重载；解析失败的路径在上面提前返回，不会走到这里。
+		if onReload != nil {
+			onReload()
 		}
 		return nil
 	}); err != nil {
