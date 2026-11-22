@@ -352,6 +352,21 @@ func (s *Server) handleAPIAirport(w http.ResponseWriter, r *http.Request) {
 
 // --- /api/groups ---
 
+// cleanMembers 去掉空白成员并去重，保持输入顺序。
+func cleanMembers(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, raw := range in {
+		name := strings.TrimSpace(raw)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
 func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 	m, ok := s.subManagerOr503(w, r)
 	if !ok {
@@ -385,6 +400,9 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			IncludeSelf bool   `json:"include_self"`
 			// IncludeAllSources 把方案里所有机场的节点并入该组。
 			IncludeAllSources bool `json:"include_all_sources"`
+			// Members 是显式成员：自定义分组可填 DIRECT / REJECT 等内置出站或节点/子组名。
+			// 与 Regex 的结果合并；机场导入的分组由导入流程维护。
+			Members []string `json:"members"`
 			// v2 起分组是全局库，只按来源分层；profile_id 已下线，出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
@@ -400,7 +418,7 @@ func (s *Server) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		g, err := m.AddProxyGroupWithMembersAndFlags(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder, strings.TrimSpace(req.Source), nil, req.IncludeSelf, req.IncludeAllSources)
+		g, err := m.AddProxyGroupWithMembersAndFlags(r.Context(), req.Name, gtype, req.Regex, req.URL, req.Interval, req.SortOrder, strings.TrimSpace(req.Source), cleanMembers(req.Members), req.IncludeSelf, req.IncludeAllSources)
 		if err != nil {
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
@@ -439,6 +457,8 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 			IncludeSelf *bool  `json:"include_self"`
 			// IncludeAllSources 省略时保持原值。
 			IncludeAllSources *bool `json:"include_all_sources"`
+			// Members 省略时保持原值；显式传入空数组表示清空附加成员。
+			Members *[]string `json:"members"`
 			// v2 起分组不再归属方案，profile_id 出现即 400。
 			ProfileID *int64 `json:"profile_id"`
 		}
@@ -472,6 +492,12 @@ func (s *Server) handleAPIGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.IncludeAllSources != nil {
 			if err := m.SetProxyGroupIncludeAllSources(r.Context(), id, *req.IncludeAllSources); err != nil {
+				s.writeAPIError(w, r, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if req.Members != nil {
+			if err := m.SetProxyGroupMembers(r.Context(), id, cleanMembers(*req.Members)); err != nil {
 				s.writeAPIError(w, r, http.StatusInternalServerError, err)
 				return
 			}
@@ -1118,9 +1144,14 @@ func (s *Server) buildSubscription(ctx context.Context, token string, query url.
 			IncludeAllSources: g.IncludeAllSources,
 			Source:            g.Source,
 		}
-		// 机场自带分组按成员原样渲染；成员可能是节点名，也可能是子组名，
-		// ResolveGroups 会保留已知组名、展开正则/节点名。手工分组仍走 Regex。
-		if len(g.Members) > 0 {
+		// 自定义分组：正则与显式成员合并，附加成员可补 DIRECT / REJECT 等内置出站。
+		// 机场自带分组仍按导入的成员原样渲染（成员优先于正则）。
+		if g.Source == "" {
+			if re := strings.TrimSpace(g.Regex); re != "" {
+				rg.Proxies = append(rg.Proxies, re)
+			}
+			rg.Proxies = append(rg.Proxies, g.Members...)
+		} else if len(g.Members) > 0 {
 			rg.Proxies = append([]string{}, g.Members...)
 		} else if re := strings.TrimSpace(g.Regex); re != "" {
 			rg.Proxies = []string{re}

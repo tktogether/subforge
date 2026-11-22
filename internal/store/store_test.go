@@ -1788,3 +1788,36 @@ func TestSourcePipelineCRUD(t *testing.T) {
 		t.Fatalf("清空后应返回空串, got %q err=%v", v, err)
 	}
 }
+
+// TestProxyGroupMembersUpdate 自定义分组的附加成员应能保存、读回并清空。
+func TestProxyGroupMembersUpdate(t *testing.T) {
+	d, ctx := newTestDB(t)
+	g, err := d.AddProxyGroupWithMembersAndFlags(ctx, "出口", "select", "^HK", "", 0, 0, "", nil, false, false)
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembersAndFlags: %v", err)
+	}
+	if err := d.SetProxyGroupMembers(ctx, g.ID, []string{"DIRECT", "REJECT"}); err != nil {
+		t.Fatalf("SetProxyGroupMembers: %v", err)
+	}
+	got, err := d.GetProxyGroup(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if strings.Join(got.Members, ",") != "DIRECT,REJECT" {
+		t.Fatalf("成员未落库: %+v", got)
+	}
+	list, err := d.ListProxyGroupsFiltered(ctx, SourceFilter{All: true})
+	if err != nil || len(list) != 1 || strings.Join(list[0].Members, ",") != "DIRECT,REJECT" {
+		t.Fatalf("列表成员不符: %+v err=%v", list, err)
+	}
+	if err := d.SetProxyGroupMembers(ctx, g.ID, []string{}); err != nil {
+		t.Fatalf("清空成员: %v", err)
+	}
+	got, err = d.GetProxyGroup(ctx, g.ID)
+	if err != nil || len(got.Members) != 0 {
+		t.Fatalf("清空后成员 = %v err=%v", got.Members, err)
+	}
+	if err := d.SetProxyGroupMembers(ctx, 99999, []string{"DIRECT"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+}

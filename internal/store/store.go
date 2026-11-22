@@ -524,6 +524,29 @@ func (d *DB) UpdateProxyGroup(ctx context.Context, id int64, name, gtype, regex,
 	return nil
 }
 
+// SetProxyGroupMembers 保存分组的显式成员列表（自定义分组的附加成员 / 机场导入的成员）。
+func (d *DB) SetProxyGroupMembers(ctx context.Context, id int64, members []string) error {
+	membersJSON, err := marshalLayerList(members)
+	if err != nil {
+		return err
+	}
+	res, err := d.db.ExecContext(ctx,
+		"UPDATE proxy_groups SET members = ?, updated_at = ? WHERE id = ?",
+		membersJSON, time.Now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	d.touchArtifacts(ctx)
+	return nil
+}
+
 // SetProxyGroupIncludeSelf 保存分组是否在订阅里追加自建节点。
 func (d *DB) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf bool) error {
 	res, err := d.db.ExecContext(ctx,

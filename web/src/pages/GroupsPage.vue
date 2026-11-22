@@ -53,11 +53,36 @@ function expandText(g: ProxyGroup): string {
   return '—'
 }
 
+// 「附加成员」输入框用逗号、分号或换行分隔；提交前转成数组。
+function parseMembersInput(raw: unknown): string[] {
+  if (typeof raw !== 'string') return []
+  const names = raw.split(/[,，;；\n]/).map((v) => v.trim()).filter((v) => v !== '')
+  return [...new Set(names)]
+}
+
+function isCustomGroup(item: Record<string, unknown>): boolean {
+  return String(item['source'] ?? '') === ''
+}
+
+function withMembers(item: Record<string, unknown>): Record<string, unknown> {
+  // 机场导入分组的成员由导入流程维护，不随表单提交覆盖。
+  if (!isCustomGroup(item)) return item
+  return { ...item, members: parseMembersInput(item['members_input']) }
+}
+
 // v2：表单不再有「方案」下拉；新建分组的 source 恒为 ''（自定义），由后端默认。
 const groupFields = [
   { key: 'name', label: '名称', type: 'text', hint: '客户端中显示的策略组名称；规则通过该名称选择目标分组。', example: '香港' },
   { key: 'type', label: '类型', type: 'text', hint: 'select 手动选择；url-test 自动选择延迟最低；fallback 按顺序故障切换；load-balance 负载均衡。', example: 'select' },
   { key: 'regex', label: '匹配正则', type: 'text', hint: '按节点名称匹配成员；留空时不按正则选择成员。', example: '香港|HK' },
+  {
+    key: 'members_input',
+    label: '附加成员',
+    type: 'text',
+    when: isCustomGroup,
+    hint: '逗号或换行分隔；可填 DIRECT、REJECT 等内置出站，也可填节点名或子组名，与匹配正则的结果合并。',
+    example: 'DIRECT, REJECT',
+  },
   { key: 'url', label: '检测地址', type: 'text', hint: '自动测速使用的检测地址；仅 url-test 与 fallback 需要。', example: 'http://www.gstatic.com/generate_204' },
   { key: 'interval', label: '检测间隔（秒）', type: 'number', hint: '自动测速间隔，单位秒。', example: '300' },
   {
@@ -86,11 +111,12 @@ const resource = {
       include_all_sources: !!g.include_all_sources,
       source_text: sourceText(g.source),
       members_text: membersText(g.members),
+      members_input: (g.members ?? []).join(', '),
       expand_text: expandText(g),
     })) as (ProxyGroup & Record<string, unknown>)[]
   },
-  create: (item: Record<string, unknown>) => endpoints.createGroup(item as unknown as Parameters<typeof endpoints.createGroup>[0]),
-  update: (item: Record<string, unknown>) => endpoints.updateGroup(item['id'] as number, item as unknown as Parameters<typeof endpoints.updateGroup>[1]),
+  create: (item: Record<string, unknown>) => endpoints.createGroup(withMembers(item) as unknown as Parameters<typeof endpoints.createGroup>[0]),
+  update: (item: Record<string, unknown>) => endpoints.updateGroup(item['id'] as number, withMembers(item) as unknown as Parameters<typeof endpoints.updateGroup>[1]),
   remove: (item: Record<string, unknown>) => endpoints.deleteGroup(item['id'] as number),
 }
 

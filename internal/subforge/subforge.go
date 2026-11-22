@@ -360,6 +360,17 @@ func (m *Manager) AddProxyGroupWithMembersAndFlags(ctx context.Context, name, ty
 	return &g, nil
 }
 
+// SetProxyGroupMembers 保存分组的显式成员列表。
+func (m *Manager) SetProxyGroupMembers(ctx context.Context, id int64, members []string) error {
+	if err := m.db.SetProxyGroupMembers(ctx, id, members); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("代理分组 %d 不存在", id)
+		}
+		return err
+	}
+	return nil
+}
+
 // SetProxyGroupIncludeSelf 保存分组是否在订阅里追加自建节点。
 func (m *Manager) SetProxyGroupIncludeSelf(ctx context.Context, id int64, includeSelf bool) error {
 	if err := m.db.SetProxyGroupIncludeSelf(ctx, id, includeSelf); err != nil {

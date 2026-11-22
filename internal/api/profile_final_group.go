@@ -86,7 +86,14 @@ func (s *Server) finalGroupPreviewInputs(ctx context.Context, m *subforge.Manage
 			IncludeAllSources: g.IncludeAllSources,
 			Source:            g.Source,
 		}
-		if len(g.Members) > 0 {
+		// 与订阅渲染口径一致：自定义分组合并正则与显式成员；
+		// 机场导入分组仍按成员优先。
+		if g.Source == "" {
+			if re := strings.TrimSpace(g.Regex); re != "" {
+				rg.Proxies = append(rg.Proxies, re)
+			}
+			rg.Proxies = append(rg.Proxies, g.Members...)
+		} else if len(g.Members) > 0 {
 			rg.Proxies = append([]string{}, g.Members...)
 		} else if re := strings.TrimSpace(g.Regex); re != "" {
 			rg.Proxies = []string{re}

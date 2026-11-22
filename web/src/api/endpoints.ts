@@ -241,6 +241,8 @@ export interface GroupInput {
   regex: string
   url: string
   interval: number
+  // 显式成员：DIRECT / REJECT 等内置出站、节点名或子组名；与 regex 结果合并。
+  members?: string[]
   include_self?: boolean
   include_all_sources?: boolean
 }

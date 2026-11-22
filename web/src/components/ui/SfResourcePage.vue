@@ -23,6 +23,8 @@ export interface ResourceField {
   example?: string
   options?: { title: string; value: number | string }[]
   default?: boolean | number | string
+  // 可选：按当前编辑行决定是否显示该字段（例如机场导入分组的成员由导入维护）。
+  when?: (row: Record<string, unknown>) => boolean
 }
 
 export interface ResourceColumn {
@@ -69,6 +71,9 @@ const pagedItems = computed(() => {
   const start = (page.value - 1) * itemsPerPage.value
   return items.value.slice(start, start + itemsPerPage.value)
 })
+
+// 表单字段可按当前行隐藏；blank() 仍为全部字段写入默认值，提交不受影响。
+const formFields = computed(() => props.fields.filter((field) => field.when === undefined || field.when(draft.value)))
 
 watch([items, itemsPerPage], () => {
   page.value = Math.min(page.value, pageCount.value)
@@ -252,7 +257,7 @@ reload()
 
     <SfDialog :open="dialog" :label="editing === null ? 'CREATE' : 'EDIT'" :title="editing === null ? '新增' : '编辑'" @close="dialog = false">
       <form class="sf-form" @submit.prevent="submit">
-        <SfField v-for="field in props.fields" :key="field.key" :hint="fieldHint(field)">
+        <SfField v-for="field in formFields" :key="field.key" :hint="fieldHint(field)">
           <template #label>
             <span class="sf-field__label">{{ field.label }} <SfInfoTip v-if="fieldHint(field) !== ''" :text="fieldHint(field)" /></span>
           </template>

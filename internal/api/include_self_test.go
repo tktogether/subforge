@@ -232,3 +232,93 @@ func TestSubscribeAllSourcesGroupSpansProfile(t *testing.T) {
 		t.Fatalf("子集组不应扩展: %v", only.Proxies)
 	}
 }
+
+// TestSubscribeGroupExplicitMembers 自定义分组的附加成员要与正则展开结果合并，
+// 内置出站 DIRECT / REJECT 按字面量保留。
+func TestSubscribeGroupExplicitMembers(t *testing.T) {
+	ts, _, mgr := profileServer(t)
+	ctx := t.Context()
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("proxies:\n  - {name: AIR-1, type: ss, server: 127.0.0.1, port: 30003, cipher: aes-256-gcm, password: pass}\n"))
+	}))
+	t.Cleanup(up.Close)
+	if _, err := mgr.AddAirport(ctx, "fx", up.URL, "", true); err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	g, err := mgr.AddProxyGroupWithMembersAndFlags(ctx, "出口", "select", "^AIR", "", 0, 0, "", []string{"DIRECT", "REJECT"}, false, false)
+	if err != nil {
+		t.Fatalf("AddProxyGroupWithMembersAndFlags: %v", err)
+	}
+	if _, err := mgr.AddRuleWithSource(ctx, subforge.Rule{
+		RuleType: "DOMAIN-SUFFIX", RuleParam: "exit.test", RuleConfig: g.ID, Enabled: true,
+	}); err != nil {
+		t.Fatalf("AddRuleWithSource: %v", err)
+	}
+	mustToken(t, ts, "t-members", 0)
+	st, body := subscribe(t, ts, "t-members")
+	if st != http.StatusOK {
+		t.Fatalf("订阅状态 = %d，应为 200；body=%s", st, body)
+	}
+	group, ok := parseRenderedGroups(t, body)["出口"]
+	if !ok {
+		t.Fatalf("产物缺少出口分组: %s", body)
+	}
+	for _, want := range []string{"AIR-1", "DIRECT", "REJECT"} {
+		if !containsName(group.Proxies, want) {
+			t.Fatalf("出口成员 = %v，应包含 %s", group.Proxies, want)
+		}
+	}
+}
+
+// TestAPIGroupMembersCreateUpdate 分组 CRUD 要能保存显式成员；
+// PUT 省略 members 时保持原值，显式空数组才清空。
+func TestAPIGroupMembersCreateUpdate(t *testing.T) {
+	ts, _, _ := profileServer(t)
+	status, _, body := uiPostJSON(t, ts, "/api/groups",
+		`{"name":"出口","type":"select","regex":"^HK","members":[" DIRECT ","REJECT","DIRECT",""]}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST 状态 = %d，应为 201；body=%s", status, body)
+	}
+	var created struct {
+		Group struct {
+			ID      int64    `json:"id"`
+			Members []string `json:"members"`
+		} `json:"group"`
+	}
+	mustDecode(t, body, &created)
+	if len(created.Group.Members) != 2 || created.Group.Members[0] != "DIRECT" || created.Group.Members[1] != "REJECT" {
+		t.Fatalf("POST 未保存成员或未去重: %s", body)
+	}
+	id := created.Group.ID
+
+	status, _, body = uiDoJSON(t, ts, "PUT", fmt.Sprintf("/api/groups/%d", id),
+		`{"name":"出口","type":"select","regex":"^HK"}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT(省略) 状态 = %d，应为 200；body=%s", status, body)
+	}
+	var afterOmit struct {
+		Group struct {
+			Members []string `json:"members"`
+		} `json:"group"`
+	}
+	mustDecode(t, body, &afterOmit)
+	if len(afterOmit.Group.Members) != 2 {
+		t.Fatalf("PUT 省略 members 后应保持原值: %s", body)
+	}
+
+	status, _, body = uiDoJSON(t, ts, "PUT", fmt.Sprintf("/api/groups/%d", id),
+		`{"name":"出口","type":"select","regex":"^HK","members":[]}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT(清空) 状态 = %d，应为 200；body=%s", status, body)
+	}
+	var afterClear struct {
+		Group struct {
+			Members []string `json:"members"`
+		} `json:"group"`
+	}
+	mustDecode(t, body, &afterClear)
+	if len(afterClear.Group.Members) != 0 {
+		t.Fatalf("PUT 空数组后成员应清空: %s", body)
+	}
+}
