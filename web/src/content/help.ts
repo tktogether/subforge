@@ -214,7 +214,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     oneLiner: '管理输出到客户端的策略组，以及每个组的成员范围。',
     whenToUse: '调整客户端中节点如何分组时使用。',
     steps: [
-      { title: '新增分组', detail: '填写名称与类型；手工分组可用匹配正则选择成员。' },
+      { title: '新增分组', detail: '填写名称与类型；手工分组可用匹配正则选择成员，也可在附加成员里填 DIRECT、REJECT 等内置出站或指定名称。' },
       { title: '设置成员扩展', detail: '机场的「全部节点」组可扩展到方案中的所有机场；自建节点单独控制。' },
       { title: '查看成员', detail: '点击成员列的摘要打开完整列表，成员较多时可搜索。' },
     ],
@@ -225,6 +225,7 @@ export const PAGE_HELP: Record<string, PageHelp> = {
     faq: [
       { q: '分组顺序如何决定？', a: '按创建或导入的先后输出，页面不提供手动排序。' },
       { q: '机场分组的成员可以修改吗？', a: '成员由机场导入维护；可以在分组页调整类型、检测地址与成员扩展开关。' },
+      { q: '自定义分组如何包含 DIRECT 或 REJECT？', a: '在「附加成员」里填写 DIRECT、REJECT 等内置出站，也可以填节点名或子组名；这些名称会和匹配正则的结果合并。' },
     ],
     emptyState: { title: '暂无分组', detail: '点击新增，添加第一个分组。', action: { label: '新增分组', to: '/groups' } },
     links: [
