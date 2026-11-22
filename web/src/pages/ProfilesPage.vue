@@ -196,6 +196,11 @@ function overrideOptions(source: string): { title: string; value: string }[] {
   const groups = finalGroupGroupOptions.value
     .filter((g) => g.source === source)
     .map((g) => ({ title: g.title, value: g.value }))
+  // 已保存的覆盖值可能暂时不在分组清单里（清单异步加载或分组已删除），仍要能回显。
+  const current = overrideValue(source)
+  if (current !== '' && current !== 'none' && !groups.some((g) => g.value === current)) {
+    groups.unshift({ title: current, value: current })
+  }
   return [
     { title: '自动识别', value: '' },
     { title: '不处理该来源', value: 'none' },
@@ -203,14 +208,22 @@ function overrideOptions(source: string): { title: string; value: string }[] {
   ]
 }
 
+// 后端把 source 为空串的自定义分组归为 custom；分组清单里同样归一化后再匹配。
+function sourceLabel(source: string): string {
+  return source === 'custom' ? '自定义分组' : source
+}
+
 async function loadFinalGroupOptions(): Promise<void> {
   try {
     const groups = await endpoints.listGroups()
-    finalGroupGroupOptions.value = groups.map((g) => ({
-      title: g.name,
-      value: g.name,
-      source: g.source ?? '',
-    }))
+    finalGroupGroupOptions.value = groups.map((g) => {
+      const source = (g.source ?? '').trim()
+      return {
+        title: g.name,
+        value: g.name,
+        source: source === '' ? 'custom' : source,
+      }
+    })
   } catch {
     finalGroupGroupOptions.value = []
   }
@@ -965,10 +978,13 @@ void loadPipelineOptions()
               <tr><th>来源</th><th>识别到的最终组</th><th>依据</th><th style="min-width: 180px">来源覆盖</th></tr>
             </thead>
             <tbody>
-              <tr v-for="t in finalGroupPreview.report.terminals" :key="t.source + t.group">
-                <td class="sf-faint" style="font-size: 12px">{{ t.source }}</td>
-                <td>{{ t.group }}</td>
-                <td class="sf-faint" style="font-size: 12px">{{ t.evidence }}</td>
+              <tr v-for="t in finalGroupPreview.report.sources" :key="t.source + (t.group ?? '')">
+                <td class="sf-faint" style="font-size: 12px">{{ sourceLabel(t.source) }}</td>
+                <td>
+                  <span v-if="t.skipped" class="sf-faint">已忽略</span>
+                  <span v-else>{{ t.group || '未识别' }}</span>
+                </td>
+                <td class="sf-faint" style="font-size: 12px">{{ t.skipped ? '手动忽略' : (t.evidence || '—') }}</td>
                 <td>
                   <span class="sf-select-wrap">
                     <select
@@ -983,8 +999,8 @@ void loadPipelineOptions()
                   </span>
                 </td>
               </tr>
-              <tr v-if="finalGroupPreview.report.terminals.length === 0">
-                <td colspan="4" class="sf-faint" style="text-align: center">未识别到来源最终组；保存后仍会把 MATCH 指向统一组。</td>
+              <tr v-if="finalGroupPreview.report.sources.length === 0">
+                <td colspan="4" class="sf-faint" style="text-align: center">没有可识别的来源分组；保存后仍会把 MATCH 指向统一组。</td>
               </tr>
             </tbody>
           </table>

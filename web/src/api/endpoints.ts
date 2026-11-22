@@ -491,6 +491,16 @@ export interface FinalGroupTerminal {
   score?: number
 }
 
+// FinalGroupSource 是预览里每个来源的识别状态：未识别、已忽略（skipped）与手动指定（manual）。
+export interface FinalGroupSource {
+  source: string
+  group?: string
+  evidence?: string
+  score?: number
+  manual?: boolean
+  skipped?: boolean
+}
+
 export interface FinalGroupRuleSource {
   name: string
   final_target?: string
@@ -503,6 +513,7 @@ export interface FinalGroupReport {
   mode: string
   generated: boolean
   terminals: FinalGroupTerminal[]
+  sources: FinalGroupSource[]
   rule_sources: FinalGroupRuleSource[]
   groups_before: number
   groups_after: number

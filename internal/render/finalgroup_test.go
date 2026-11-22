@@ -284,6 +284,39 @@ func TestSelectionNameScore(t *testing.T) {
 	}
 }
 
+// 自定义来源（source 为空串）在预览里归为 custom；忽略后仍保留来源行，才能改回。
+func TestUnifyFinalGroupCustomSourceOverrideRoundTrip(t *testing.T) {
+	groups := []Group{
+		{Name: "出口", Type: "select", Source: "", Proxies: []string{"n1", "DIRECT"}},
+		{Name: "流媒体", Type: "select", Source: "", Proxies: []string{"出口", "n1"}},
+	}
+	rules := []string{"MATCH,出口"}
+
+	cfg := enabledConfig()
+	_, _, report, _ := UnifyFinalGroup(groups, rules, []string{"n1"}, cfg, nil)
+	if len(report.Sources) != 1 || report.Sources[0].Source != "custom" || report.Sources[0].Group != "出口" {
+		t.Fatalf("Sources = %+v，期望识别到 custom:出口", report.Sources)
+	}
+	if len(report.Terminals) != 1 {
+		t.Fatalf("Terminals = %+v，期望识别到 1 个最终组", report.Terminals)
+	}
+
+	cfg.Overrides = map[string][]string{"group:custom": {"none"}}
+	_, _, report, _ = UnifyFinalGroup(groups, rules, []string{"n1"}, cfg, nil)
+	if len(report.Terminals) != 0 {
+		t.Fatalf("忽略后不应再有 Terminals: %+v", report.Terminals)
+	}
+	if len(report.Sources) != 1 || !report.Sources[0].Skipped || report.Sources[0].Source != "custom" {
+		t.Fatalf("忽略后 Sources 应保留 custom 行: %+v", report.Sources)
+	}
+
+	cfg.Overrides = map[string][]string{"group:custom": {"流媒体"}}
+	_, _, report, _ = UnifyFinalGroup(groups, rules, []string{"n1"}, cfg, nil)
+	if len(report.Sources) != 1 || report.Sources[0].Group != "流媒体" || !report.Sources[0].Manual {
+		t.Fatalf("手动覆盖未回显: %+v", report.Sources)
+	}
+}
+
 func finalGroupNames(groups []Group) []string {
 	out := make([]string, 0, len(groups))
 	for _, g := range groups {

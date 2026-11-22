@@ -16,6 +16,18 @@ type TerminalHit struct {
 	Score    float64 `json:"score"`
 }
 
+// SourceHit 是预览里某个来源的识别状态，包含未识别与被覆盖跳过的来源。
+// Terminals 只列出命中项，供改写与告警使用；Sources 让界面能对每个来源显示
+// 「自动识别 / 不处理 / 手动指定」的当前状态，覆盖后仍可改回。
+type SourceHit struct {
+	Source   string  `json:"source"`
+	Group    string  `json:"group,omitempty"`
+	Evidence string  `json:"evidence,omitempty"`
+	Score    float64 `json:"score,omitempty"`
+	Manual   bool    `json:"manual,omitempty"`
+	Skipped  bool    `json:"skipped,omitempty"`
+}
+
 // RuleSourceHit 是规则源产物里识别到的选择目标。
 type RuleSourceHit struct {
 	Name             string   `json:"name"`
@@ -30,6 +42,7 @@ type FinalGroupReport struct {
 	Mode               string          `json:"mode"`
 	Generated          bool            `json:"generated"`
 	Terminals          []TerminalHit   `json:"terminals"`
+	Sources            []SourceHit     `json:"sources"`
 	RuleSources        []RuleSourceHit `json:"rule_sources"`
 	GroupsBefore       int             `json:"groups_before"`
 	GroupsAfter        int             `json:"groups_after"`
@@ -121,6 +134,7 @@ func UnifyFinalGroup(groups []Group, rules []string, nodeNames []string, cfg sub
 
 	terminals := map[string]bool{}
 	terminalNamesBySource := map[string][]string{}
+	report.Sources = make([]SourceHit, 0, len(sourceOrder))
 	var warnings []string
 	for _, src := range sourceOrder {
 		info := sources[src]
@@ -129,6 +143,8 @@ func UnifyFinalGroup(groups []Group, rules []string, nodeNames []string, cfg sub
 		}
 		if names, ok := cfg.OverrideFor("group:" + src); ok {
 			if subcfg.IsNoneOverride(names) {
+				// 跳过也要留一行：预览里改回「自动识别」需要这一行的下拉框。
+				report.Sources = append(report.Sources, SourceHit{Source: src, Skipped: true})
 				continue
 			}
 			valid := make([]string, 0, len(names))
@@ -143,11 +159,16 @@ func UnifyFinalGroup(groups []Group, rules []string, nodeNames []string, cfg sub
 				terminals[name] = true
 				terminalNamesBySource[src] = append(terminalNamesBySource[src], name)
 				report.Terminals = append(report.Terminals, TerminalHit{Source: src, Group: name, Evidence: "手动覆盖"})
+				report.Sources = append(report.Sources, SourceHit{Source: src, Group: name, Evidence: "手动覆盖", Manual: true})
+			}
+			if len(valid) == 0 {
+				report.Sources = append(report.Sources, SourceHit{Source: src})
 			}
 			continue
 		}
 		best, hit, candidates := detectTerminal(info, nodeSet)
 		if best == "" {
+			report.Sources = append(report.Sources, SourceHit{Source: src})
 			continue
 		}
 		if len(candidates) > 1 {
@@ -158,6 +179,9 @@ func UnifyFinalGroup(groups []Group, rules []string, nodeNames []string, cfg sub
 		terminals[best] = true
 		terminalNamesBySource[src] = []string{best}
 		report.Terminals = append(report.Terminals, TerminalHit{
+			Source: src, Group: best, Evidence: hit.evidence, Score: hit.score,
+		})
+		report.Sources = append(report.Sources, SourceHit{
 			Source: src, Group: best, Evidence: hit.evidence, Score: hit.score,
 		})
 	}
@@ -376,6 +400,13 @@ func UnifyFinalGroup(groups []Group, rules []string, nodeNames []string, cfg sub
 			names = append(names, rs.Name)
 		}
 		warnings = append(warnings, fmt.Sprintf("规则源选择目标已检查：%s", strings.Join(names, "、")))
+	}
+	// 空切片序列化成 []，避免前端把 null 当数组读。
+	if report.Terminals == nil {
+		report.Terminals = []TerminalHit{}
+	}
+	if report.RuleSources == nil {
+		report.RuleSources = []RuleSourceHit{}
 	}
 	return outGroups, outRules, report, warnings
 }
