@@ -1018,6 +1018,52 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* 正文溢出时显示细滚动条：全局隐藏滚动条会让弹窗内容看起来被截断 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--sf-border-strong) transparent;
+}
+
+.sf-dialog__body::-webkit-scrollbar {
+  width: 8px;
+  display: block;
+}
+
+.sf-dialog__body::-webkit-scrollbar-thumb {
+  background: var(--sf-border-strong);
+  border-radius: 999px;
+}
+
+.sf-dialog__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 对话框内的悬浮提示改为右侧展开：向上展开会被 body 的 overflow 裁剪 */
+.sf-dialog__body .sf-tip::after {
+  bottom: auto;
+  top: calc(50% + 4px);
+  left: calc(100% + 9px);
+  transform: translateY(-50%) translateX(-2px);
+}
+
+.sf-dialog__body .sf-tip::before {
+  bottom: auto;
+  top: calc(50% + 4px);
+  left: calc(100% + 4px);
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 1px solid var(--sf-tooltip-border);
+  border-top: 1px solid var(--sf-tooltip-border);
+  transform: translateY(-50%) rotate(-45deg);
+}
+
+.sf-dialog__body .sf-tip:hover::after,
+.sf-dialog__body .sf-tip:focus-within::after {
+  transform: translateY(-50%) translateX(0);
+}
+
+.sf-dialog__body .sf-tip:hover::before,
+.sf-dialog__body .sf-tip:focus-within::before {
+  transform: translateY(-50%) rotate(-45deg);
 }
 
 .sf-dialog__foot {

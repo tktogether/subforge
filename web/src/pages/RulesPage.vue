@@ -173,7 +173,8 @@ function blankRule(): RuleRow {
 }
 
 function fieldHint(key: string): string {
-  const h = fieldHelp(key)
+  // FIELD_HELP 的键统一带页面前缀（rule.*），此处补齐前缀再查表
+  const h = fieldHelp(`rule.${key}`)
   return h !== undefined && h.hint !== undefined ? h.hint : ''
 }
 

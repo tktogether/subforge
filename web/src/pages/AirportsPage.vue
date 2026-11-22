@@ -657,14 +657,13 @@ async function restoreLastCheck(): Promise<void> {
           </select>
         </span>
       </SfField>
-      <div class="ap-dialog-row">
+      <SfSwitch v-model="draft.enabled" label="启用" data-testid="airport-enabled-new" />
+      <template #foot>
+        <!-- 预览处理固定在页脚：正文是可滚动区域，窄屏下放在正文里会被挤出可视区 -->
         <button class="sf-btn sf-btn--ghost sf-btn--sm" type="button" data-testid="airport-preview-process" :disabled="editing === null" @click="previewProcess">
           预览处理
         </button>
-        <span class="sf-field__hint">{{ editing === null ? '保存机场后可预览处理结果' : '按当前选择的管线预览该机场的节点' }}</span>
-      </div>
-      <SfSwitch v-model="draft.enabled" label="启用" data-testid="airport-enabled-new" />
-      <template #foot>
+        <span class="sf-field__hint ap-dialog-foot-hint">{{ editing === null ? '保存机场后可预览处理结果' : '按当前选择的管线预览该机场的节点' }}</span>
         <button class="sf-btn sf-btn--subtle" type="button" @click="dialog = false">取消</button>
         <button class="sf-btn sf-btn--primary" type="button" data-testid="airport-save" @click="submit">保存</button>
       </template>
@@ -856,11 +855,14 @@ async function restoreLastCheck(): Promise<void> {
   overflow-wrap: anywhere;
 }
 
-.ap-dialog-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+.ap-dialog-foot-hint {
+  margin-right: auto;
+}
+
+@media (max-width: 560px) {
+  .ap-dialog-foot-hint {
+    display: none;
+  }
 }
 
 .ap-check-row {
