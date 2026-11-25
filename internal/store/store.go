@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -1205,25 +1206,112 @@ func (d *DB) CreateScript(ctx context.Context, s Script) (*Script, error) {
 	return &got, nil
 }
 
+// isScriptOp 报告步骤类型是否引用脚本库；只有这两类的 args.ref 指向脚本名。
+func isScriptOp(op string) bool {
+	return op == "filter.script" || op == "op.script"
+}
+
+// rewriteScriptRefs 把一条管线 steps_json 里 ref=<oldName> 的脚本引用改成 newName。
+//
+// 用 map[string]json.RawMessage 只动 args.ref：其它参数与未知步骤字段原样保留
+// （代价是对象键顺序会被重排，JSON 语义不受影响）。JSON 非法或结构不认识时
+// 原样返回 false，让脚本改名不因一行脏数据整体失败。
+func rewriteScriptRefs(raw, oldName, newName string) (string, bool) {
+	var steps []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &steps); err != nil {
+		return raw, false
+	}
+	changed := false
+	for _, step := range steps {
+		var op string
+		if err := json.Unmarshal(step["op"], &op); err != nil || !isScriptOp(op) {
+			continue
+		}
+		var args map[string]json.RawMessage
+		if err := json.Unmarshal(step["args"], &args); err != nil {
+			continue
+		}
+		var ref string
+		if err := json.Unmarshal(args["ref"], &ref); err != nil || ref != oldName {
+			continue
+		}
+		// 字符串与已解析 RawMessage 的编码不会失败，这里不必再分支。
+		encoded, _ := json.Marshal(newName)
+		args["ref"] = encoded
+		encodedArgs, _ := json.Marshal(args)
+		step["args"] = encodedArgs
+		changed = true
+	}
+	if !changed {
+		return raw, false
+	}
+	out, _ := json.Marshal(steps)
+	return string(out), true
+}
+
 // UpdateScript 按 id 更新脚本；RowsAffected==0 返回 sql.ErrNoRows。
+//
+// 改名时在同一事务里迁移控制台管线步骤里的 ref=<旧名>：步骤解析按脚本名查库，
+// 只改脚本行会让引用它的管线在下次转换时报「脚本不存在」。模板 INI 里的 ref
+// 是外部文件，无法在这里迁移（与管线改名的边界一致）。
 func (d *DB) UpdateScript(ctx context.Context, s Script) error {
 	now := time.Now().UTC()
 	updated := s.UpdatedAt
 	if updated.IsZero() {
 		updated = now
 	}
-	res, err := d.db.ExecContext(ctx,
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var oldName string
+	if err := tx.QueryRowContext(ctx, "SELECT name FROM scripts WHERE id = ?", s.ID).Scan(&oldName); err != nil {
+		return err
+	}
+	// 存在性已由上面的 SELECT 在同一事务里确认，UPDATE 不可能 0 行，无需再看 RowsAffected。
+	if _, err := tx.ExecContext(ctx,
 		"UPDATE scripts SET name = ?, description = ?, kind = ?, code = ?, enabled = ?, updated_at = ? WHERE id = ?",
-		s.Name, s.Description, s.Kind, s.Code, s.Enabled, updated.Unix(), s.ID)
-	if err != nil {
+		s.Name, s.Description, s.Kind, s.Code, s.Enabled, updated.Unix(), s.ID); err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
+	// oldName 为空说明是脏数据行：步骤里的空 ref 不是合法脚本名，不能当成
+	// 同名引用一起迁走。
+	if oldName != "" && oldName != s.Name {
+		rows, err := tx.QueryContext(ctx, "SELECT id, steps_json FROM pipelines")
+		if err != nil {
+			return err
+		}
+		type pipelineUpdate struct {
+			id    int64
+			steps string
+		}
+		var updates []pipelineUpdate
+		for rows.Next() {
+			var id int64
+			var raw string
+			if err := rows.Scan(&id, &raw); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if next, ok := rewriteScriptRefs(raw, oldName, s.Name); ok {
+				updates = append(updates, pipelineUpdate{id: id, steps: next})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		_ = rows.Close()
+		for _, u := range updates {
+			if _, err := tx.ExecContext(ctx,
+				"UPDATE pipelines SET steps_json = ?, updated_at = ? WHERE id = ?", u.steps, now.Unix(), u.id); err != nil {
+				return fmt.Errorf("脚本改名迁移管线引用: %w", err)
+			}
+		}
 	}
-	if n == 0 {
-		return sql.ErrNoRows
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	d.touchArtifacts(ctx)
 	return nil
@@ -1345,6 +1433,11 @@ func (d *DB) CreatePipeline(ctx context.Context, p Pipeline) (*Pipeline, error) 
 }
 
 // UpdatePipeline 按 id 更新管线；RowsAffected==0 返回 sql.ErrNoRows。
+//
+// 改名时在同一事务里把引用方（source_pipelines / profiles / sub_tokens）的
+// 管线名迁移到新名：这三张表存的都是名字而不是 pipelines.id，只改定义行会让
+// 来源、方案与令牌留下指向旧名的悬空绑定，订阅在下次转换时报「未找到命名管线」。
+// 删除不迁移——界面在删除前已提示引用方会失效，保留该语义。
 func (d *DB) UpdatePipeline(ctx context.Context, p Pipeline) error {
 	now := time.Now().UTC()
 	updated := p.UpdatedAt
@@ -1359,18 +1452,39 @@ func (d *DB) UpdatePipeline(ctx context.Context, p Pipeline) error {
 	if src == "" {
 		src = "ui"
 	}
-	res, err := d.db.ExecContext(ctx,
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var oldName string
+	if err := tx.QueryRowContext(ctx, "SELECT name FROM pipelines WHERE id = ?", p.ID).Scan(&oldName); err != nil {
+		return err
+	}
+	// 存在性已由上面的 SELECT 在同一事务里确认，UPDATE 不可能 0 行，无需再看 RowsAffected。
+	if _, err := tx.ExecContext(ctx,
 		"UPDATE pipelines SET name = ?, description = ?, steps_json = ?, enabled = ?, sort_order = ?, source = ?, updated_at = ? WHERE id = ?",
-		p.Name, p.Description, steps, p.Enabled, p.SortOrder, src, updated.Unix(), p.ID)
-	if err != nil {
+		p.Name, p.Description, steps, p.Enabled, p.SortOrder, src, updated.Unix(), p.ID); err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
+	// oldName 为空说明这行是手工改库/历史脏数据：引用方里的空串表示「不处理」，
+	// 不能当成同名绑定一起迁走，否则会把所有不处理管线的来源误绑到新名字。
+	if oldName != "" && oldName != p.Name {
+		for _, ref := range []struct {
+			query string
+			args  []any
+		}{
+			{"UPDATE source_pipelines SET pipeline = ?, updated_at = CURRENT_TIMESTAMP WHERE pipeline = ?", []any{p.Name, oldName}},
+			{"UPDATE profiles SET pipeline = ?, updated_at = CURRENT_TIMESTAMP WHERE pipeline = ?", []any{p.Name, oldName}},
+			{"UPDATE sub_tokens SET pipeline = ? WHERE pipeline = ?", []any{p.Name, oldName}},
+		} {
+			if _, err := tx.ExecContext(ctx, ref.query, ref.args...); err != nil {
+				return fmt.Errorf("管线改名迁移引用: %w", err)
+			}
+		}
 	}
-	if n == 0 {
-		return sql.ErrNoRows
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	d.touchArtifacts(ctx)
 	return nil

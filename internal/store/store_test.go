@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -864,6 +865,190 @@ func TestScriptsCRUD(t *testing.T) {
 	}
 }
 
+// TestScriptRenameMigratesPipelineRefs 覆盖脚本改名时管线步骤的 ref= 跟随新名：
+// 只改 filter.script/op.script 的 args.ref，其它步骤、其它参数与未知字段原样保留；
+// steps_json 非法的行跳过，不连累改名本身。
+func TestScriptRenameMigratesPipelineRefs(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	sc, err := d.CreateScript(ctx, Script{Name: "旧脚本", Code: "return 1", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateScript: %v", err)
+	}
+	steps := `[{"op":"filter.script","args":{"ref":"旧脚本","timeout":"5s"}},` +
+		`{"op":"op.script","args":{"ref":"旧脚本"}},` +
+		`{"op":"op.script","args":{"ref":"别的脚本"}},` +
+		`{"op":"op.rename","args":{"ref":"旧脚本"},"extra":{"keep":true}},` +
+		`{"args":{"ref":"旧脚本"}},` +
+		`{"op":"filter.script","args":{"ref":123}},` +
+		`{"op":"filter.script"}]`
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "既有管线", StepsJSON: steps, Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+	plain := `[{"op":"op.dedupe"}]`
+	plainP, err := d.CreatePipeline(ctx, Pipeline{Name: "无引用管线", StepsJSON: plain, Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline(无引用): %v", err)
+	}
+	bad, err := d.CreatePipeline(ctx, Pipeline{Name: "脏管线", StepsJSON: `[{"op":`, Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline(脏): %v", err)
+	}
+
+	sc.Name = "新脚本"
+	if err := d.UpdateScript(ctx, *sc); err != nil {
+		t.Fatalf("UpdateScript(改名): %v", err)
+	}
+
+	got, err := d.GetPipeline(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetPipeline: %v", err)
+	}
+	var arr []struct {
+		Op    string         `json:"op"`
+		Args  map[string]any `json:"args"`
+		Extra map[string]any `json:"extra"`
+	}
+	if err := json.Unmarshal([]byte(got.StepsJSON), &arr); err != nil {
+		t.Fatalf("改名后 steps_json 非法: %v (%s)", err, got.StepsJSON)
+	}
+	if len(arr) != 7 {
+		t.Fatalf("步骤数 = %d，期望 7: %s", len(arr), got.StepsJSON)
+	}
+	if arr[0].Args["ref"] != "新脚本" || arr[0].Args["timeout"] != "5s" {
+		t.Errorf("filter.script 未迁移或丢了其它参数: %+v", arr[0].Args)
+	}
+	if arr[1].Args["ref"] != "新脚本" {
+		t.Errorf("op.script 未迁移: %+v", arr[1].Args)
+	}
+	if arr[2].Args["ref"] != "别的脚本" {
+		t.Errorf("其它脚本引用被误改: %+v", arr[2].Args)
+	}
+	if arr[3].Args["ref"] != "旧脚本" {
+		t.Errorf("非脚本步骤的 ref 参数不应迁移: %+v", arr[3].Args)
+	}
+	if arr[3].Extra["keep"] != true {
+		t.Errorf("未知步骤字段被丢弃: %s", got.StepsJSON)
+	}
+	if arr[4].Args["ref"] != "旧脚本" {
+		t.Errorf("缺少 op 的步骤不应迁移: %+v", arr[4].Args)
+	}
+	if arr[5].Args["ref"] != float64(123) {
+		t.Errorf("非字符串 ref 不应迁移: %+v", arr[5].Args)
+	}
+	if arr[6].Args != nil {
+		t.Errorf("缺少 args 的脚本步骤不应被改写: %+v", arr[6].Args)
+	}
+	plainGot, err := d.GetPipeline(ctx, plainP.ID)
+	if err != nil {
+		t.Fatalf("GetPipeline(无引用): %v", err)
+	}
+	if plainGot.StepsJSON != plain {
+		t.Errorf("无匹配引用的管线不应被改写: %q", plainGot.StepsJSON)
+	}
+	badGot, err := d.GetPipeline(ctx, bad.ID)
+	if err != nil {
+		t.Fatalf("GetPipeline(脏): %v", err)
+	}
+	if badGot.StepsJSON != `[{"op":` {
+		t.Errorf("非法 steps_json 不应被改写: %q", badGot.StepsJSON)
+	}
+}
+
+// TestScriptRenameEmptyOldNameKeepsEmptyRefs 防止脏数据行（name 为空）改名时
+// 把 ref="" 的步骤误改到新脚本名。
+func TestScriptRenameEmptyOldNameKeepsEmptyRefs(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	sc, err := d.CreateScript(ctx, Script{Name: "", Code: "var x = 1;", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateScript(空名): %v", err)
+	}
+	steps := `[{"op":"filter.script","args":{"ref":""}}]`
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "空引用管线", StepsJSON: steps, Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+
+	sc.Name = "新脚本"
+	if err := d.UpdateScript(ctx, *sc); err != nil {
+		t.Fatalf("UpdateScript(空名改名): %v", err)
+	}
+	got, err := d.GetPipeline(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetPipeline: %v", err)
+	}
+	if got.StepsJSON != steps {
+		t.Errorf("空 ref 绑定被误迁: %q", got.StepsJSON)
+	}
+}
+
+// TestScriptRenameRollsBackOnDefinitionError 脚本定义行更新失败时直接返回，
+// 不进入引用迁移。
+func TestScriptRenameRollsBackOnDefinitionError(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	sc, err := d.CreateScript(ctx, Script{Name: "旧脚本", Code: "var x = 1;", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateScript: %v", err)
+	}
+	if _, err := d.Raw().ExecContext(ctx,
+		`CREATE TRIGGER block_script_update BEFORE UPDATE ON scripts BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("创建触发器: %v", err)
+	}
+	sc.Name = "新脚本"
+	if err := d.UpdateScript(ctx, *sc); err == nil {
+		t.Fatalf("触发器拦截后 UpdateScript 应失败")
+	}
+	got, err := d.GetScript(ctx, sc.ID)
+	if err != nil {
+		t.Fatalf("GetScript: %v", err)
+	}
+	if got.Name != "旧脚本" {
+		t.Errorf("改名未回滚，name = %q", got.Name)
+	}
+}
+
+// TestScriptRenameRollsBackOnPipelineError 迁移管线引用失败时整个改名回滚，
+// 脚本名与管线步骤都保持原值。
+func TestScriptRenameRollsBackOnPipelineError(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	sc, err := d.CreateScript(ctx, Script{Name: "旧脚本", Code: "var x = 1;", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateScript: %v", err)
+	}
+	steps := `[{"op":"filter.script","args":{"ref":"旧脚本"}}]`
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "管线", StepsJSON: steps, Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+	if _, err := d.Raw().ExecContext(ctx,
+		`CREATE TRIGGER block_pipeline_update BEFORE UPDATE ON pipelines BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("创建触发器: %v", err)
+	}
+	sc.Name = "新脚本"
+	err = d.UpdateScript(ctx, *sc)
+	if err == nil || !strings.Contains(err.Error(), "迁移管线引用") {
+		t.Fatalf("迁移失败应返回包装错误，实际 %v", err)
+	}
+	gotSc, err := d.GetScript(ctx, sc.ID)
+	if err != nil {
+		t.Fatalf("GetScript: %v", err)
+	}
+	if gotSc.Name != "旧脚本" {
+		t.Errorf("脚本改名未回滚，name = %q", gotSc.Name)
+	}
+	gotP, err := d.GetPipeline(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetPipeline: %v", err)
+	}
+	if gotP.StepsJSON != steps {
+		t.Errorf("管线步骤被部分改写: %q", gotP.StepsJSON)
+	}
+}
+
 // TestScriptsListOrder 覆盖 ListScripts 排序与空库返回非 nil 空切片。
 func TestScriptsListOrder(t *testing.T) {
 	d, ctx := newTestDB(t)
@@ -1136,6 +1321,157 @@ func TestPipelinesCRUD(t *testing.T) {
 	}
 	if list[0].Name != "a" || list[1].Name != "c" || list[2].Name != "b" || list[3].Name != "p-default" {
 		t.Errorf("ListPipelines 排序错误: %s,%s,%s,%s", list[0].Name, list[1].Name, list[2].Name, list[3].Name)
+	}
+}
+
+// TestPipelineRenameMigratesBindings 覆盖改名时引用方同步：来源级管线、方案的
+// 最终管线与令牌的定制管线都跟着新名字走，不留下指向旧名的悬空绑定
+// （否则改名后订阅会突然报「未找到命名管线」/「处理管线无法使用」）。
+func TestPipelineRenameMigratesBindings(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "旧管线", StepsJSON: "[]", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+	if err := d.SetSourcePipeline(ctx, "airport:7", "旧管线"); err != nil {
+		t.Fatalf("SetSourcePipeline(airport): %v", err)
+	}
+	if err := d.SetSourcePipeline(ctx, "self", "旧管线"); err != nil {
+		t.Fatalf("SetSourcePipeline(self): %v", err)
+	}
+	prof, err := d.AddProfile(ctx, "方案", "", "", "旧管线", true, 0)
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if err := d.CreateSubTokenWithProfile(ctx, "tk", "令牌", "", "旧管线", "", "", "", 0); err != nil {
+		t.Fatalf("CreateSubTokenWithProfile: %v", err)
+	}
+	// 干扰项：未被引用的另一个管线名不能被误改。
+	if err := d.SetSourcePipeline(ctx, "airport:8", "别的管线"); err != nil {
+		t.Fatalf("SetSourcePipeline(airport:8): %v", err)
+	}
+
+	p.Name = "新管线"
+	if err := d.UpdatePipeline(ctx, *p); err != nil {
+		t.Fatalf("UpdatePipeline(改名): %v", err)
+	}
+
+	if got, err := d.GetSourcePipeline(ctx, "airport:7"); err != nil || got != "新管线" {
+		t.Errorf("机场来源管线 = %q, err=%v，期望 %q", got, err, "新管线")
+	}
+	if got, err := d.GetSourcePipeline(ctx, "self"); err != nil || got != "新管线" {
+		t.Errorf("自建节点来源管线 = %q, err=%v，期望 %q", got, err, "新管线")
+	}
+	gotProf, err := d.GetProfile(ctx, prof.ID)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if gotProf.Pipeline != "新管线" {
+		t.Errorf("方案最终管线 = %q，期望 %q", gotProf.Pipeline, "新管线")
+	}
+	toks, err := d.ListSubTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListSubTokens: %v", err)
+	}
+	if len(toks) != 1 || toks[0].Pipeline != "新管线" {
+		t.Errorf("令牌定制管线 = %+v，期望 %q", toks, "新管线")
+	}
+	if got, err := d.GetSourcePipeline(ctx, "airport:8"); err != nil || got != "别的管线" {
+		t.Errorf("无关来源管线被误改 = %q, err=%v，期望 %q", got, err, "别的管线")
+	}
+}
+
+// TestPipelineRenameEmptyOldNameKeepsEmptyBindings 防止脏数据行（name 为空）
+// 改名时把「不处理」的空串绑定误迁成新名字。
+func TestPipelineRenameEmptyOldNameKeepsEmptyBindings(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "", StepsJSON: "[]", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline(空名): %v", err)
+	}
+	if err := d.SetSourcePipeline(ctx, "self", ""); err != nil {
+		t.Fatalf("SetSourcePipeline(self, 空): %v", err)
+	}
+
+	p.Name = "新管线"
+	if err := d.UpdatePipeline(ctx, *p); err != nil {
+		t.Fatalf("UpdatePipeline(空名改名): %v", err)
+	}
+	if got, err := d.GetSourcePipeline(ctx, "self"); err != nil || got != "" {
+		t.Errorf("空串绑定被误迁 = %q, err=%v，期望保持空串", got, err)
+	}
+}
+
+// TestPipelineRenameRollsBackOnDefinitionError 定义行更新失败时直接返回，
+// 不进入引用迁移。
+func TestPipelineRenameRollsBackOnDefinitionError(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "旧管线", StepsJSON: "[]", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+	if err := d.SetSourcePipeline(ctx, "self", "旧管线"); err != nil {
+		t.Fatalf("SetSourcePipeline: %v", err)
+	}
+	if _, err := d.Raw().ExecContext(ctx,
+		`CREATE TRIGGER block_pipeline_update BEFORE UPDATE ON pipelines BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("创建触发器: %v", err)
+	}
+	p.Name = "新管线"
+	if err := d.UpdatePipeline(ctx, *p); err == nil {
+		t.Fatalf("触发器拦截后 UpdatePipeline 应失败")
+	}
+	if got, err := d.GetSourcePipeline(ctx, "self"); err != nil || got != "旧管线" {
+		t.Errorf("引用被部分迁移 = %q, err=%v", got, err)
+	}
+}
+
+// TestPipelineRenameRollsBackOnReferenceError 引用迁移中途失败时整笔回滚：
+// 管线名与已经改过的来源绑定都要回到旧值。
+func TestPipelineRenameRollsBackOnReferenceError(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "旧管线", StepsJSON: "[]", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+	if err := d.SetSourcePipeline(ctx, "airport:7", "旧管线"); err != nil {
+		t.Fatalf("SetSourcePipeline: %v", err)
+	}
+	prof, err := d.AddProfile(ctx, "方案", "", "", "旧管线", true, 0)
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	// 引用迁移按 source_pipelines → profiles → sub_tokens 顺序执行：
+	// 让 profiles 更新失败，验证前面成功的 source_pipelines 也一起回滚。
+	if _, err := d.Raw().ExecContext(ctx,
+		`CREATE TRIGGER block_profile_update BEFORE UPDATE ON profiles BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatalf("创建触发器: %v", err)
+	}
+	p.Name = "新管线"
+	err = d.UpdatePipeline(ctx, *p)
+	if err == nil || !strings.Contains(err.Error(), "迁移引用") {
+		t.Fatalf("迁移失败应返回包装错误，实际 %v", err)
+	}
+	gotP, err := d.GetPipeline(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetPipeline: %v", err)
+	}
+	if gotP.Name != "旧管线" {
+		t.Errorf("管线改名未回滚，name = %q", gotP.Name)
+	}
+	if got, err := d.GetSourcePipeline(ctx, "airport:7"); err != nil || got != "旧管线" {
+		t.Errorf("来源绑定被部分迁移 = %q, err=%v", got, err)
+	}
+	gotProf, err := d.GetProfile(ctx, prof.ID)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if gotProf.Pipeline != "旧管线" {
+		t.Errorf("方案绑定被部分迁移 = %q", gotProf.Pipeline)
 	}
 }
 
