@@ -22,6 +22,29 @@ func newTestManager(t *testing.T) *Manager {
 	return m
 }
 
+// TestManagerSetProxyGroupMembers 覆盖分组显式成员门面的保存与「不存在」分支。
+func TestManagerSetProxyGroupMembers(t *testing.T) {
+	ctx := context.Background()
+	m := newTestManager(t)
+	g, err := m.AddProxyGroup(ctx, "G", "select", ".*", "", 0, 0)
+	if err != nil {
+		t.Fatalf("AddProxyGroup: %v", err)
+	}
+	if err := m.SetProxyGroupMembers(ctx, g.ID, []string{"DIRECT"}); err != nil {
+		t.Fatalf("SetProxyGroupMembers: %v", err)
+	}
+	got, err := m.GetProxyGroup(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("GetProxyGroup: %v", err)
+	}
+	if len(got.Members) != 1 || got.Members[0] != "DIRECT" {
+		t.Errorf("Members = %v", got.Members)
+	}
+	if err := m.SetProxyGroupMembers(ctx, 999999, []string{"DIRECT"}); err == nil {
+		t.Errorf("不存在的分组应返回错误")
+	}
+}
+
 // TestAirportFailurePolicyAndOutbound 机场失败策略与出网节点字段的写入/校验。
 func TestAirportFailurePolicyAndOutbound(t *testing.T) {
 	ctx := context.Background()
