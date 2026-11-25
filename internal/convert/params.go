@@ -45,6 +45,10 @@ type SourceCache interface {
 type Params struct {
 	// Target 输出格式（clash.meta / surge / v2ray …）。
 	Target string
+	// TargetSpecified 表示 Target 由调用方显式指定（query/令牌/方案），
+	// 而不是服务端套用的默认值。ApplyTemplate 用它决定是否覆盖模板的 target：
+	// 显式设置应优先于模板，默认值不应把模板的 target 压掉。
+	TargetSpecified bool
 	// URLs 订阅地址列表（无来源级处理时使用）。
 	URLs []string
 	// Files 本地订阅或配置文件（CLI 入口使用，HTTP API 不填）。
@@ -165,6 +169,7 @@ func ParseMulti(m map[string][]string) (Params, error) {
 	target := single(p.Raw, "target")
 	if target != "" {
 		p.Target = strings.ToLower(strings.TrimSpace(target))
+		p.TargetSpecified = true
 	}
 	// url 的取值本身是 URL，`?` 是 URL 的一部分，不能当分隔符——
 	// 按 `?` 拆会把 "?token=..." 丢掉，上游收不到 token 就 404，

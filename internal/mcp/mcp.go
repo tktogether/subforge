@@ -83,11 +83,12 @@ func (s *Server) callConvert(ctx context.Context, args json.RawMessage) (*ToolRe
 	}
 
 	result, err := s.engine.Run(ctx, convert.Params{
-		URLs:    params.URLs,
-		Target:  params.Target,
-		Include: params.Include,
-		Exclude: params.Exclude,
-		Sort:    params.Sort,
+		URLs:            params.URLs,
+		Target:          params.Target,
+		TargetSpecified: params.Target != "",
+		Include:         params.Include,
+		Exclude:         params.Exclude,
+		Sort:            params.Sort,
 	})
 	if err != nil {
 		return &ToolResult{

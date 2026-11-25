@@ -1005,6 +1005,7 @@ func (s *Server) buildSubscription(ctx context.Context, token string, query url.
 
 	// 五个定制字段的取值优先级：query 显式参数 > 令牌字段 > 原回落链。
 	// 令牌字段为空串（未定制）时逐字节等价于改动前的行为。
+	// targetSpecified 区分「显式指定」与「服务端默认」：默认值不能覆盖模板的 target。
 	target := strings.TrimSpace(query.Get("target"))
 	if target == "" {
 		target = strings.TrimSpace(subTok.Target)
@@ -1012,6 +1013,7 @@ func (s *Server) buildSubscription(ctx context.Context, token string, query url.
 	if target == "" && profile != nil {
 		target = strings.TrimSpace(profile.Target)
 	}
+	targetSpecified := target != ""
 	if target == "" {
 		target = "clash.meta"
 	}
@@ -1235,18 +1237,19 @@ func (s *Server) buildSubscription(ctx context.Context, token string, query url.
 
 	// 4. 交给与 CLI /api/convert 同一条执行路径，避免两处漂移。
 	params := convert.Params{
-		Target:         target,
-		Sources:        sources,
-		Groups:         renderGroups,
-		Rules:          renderRules,
-		RuleProviders:  uniqueProviders,
-		FinalGroup:     finalGroupConfig(profile),
-		RuleSourceMeta: ruleSourceMetas,
-		ProfileName:    subscriptionName,
-		Pipeline:       pipeline,
-		Config:         configName,
-		Include:        includeList,
-		Exclude:        excludeList,
+		Target:          target,
+		TargetSpecified: targetSpecified,
+		Sources:         sources,
+		Groups:          renderGroups,
+		Rules:           renderRules,
+		RuleProviders:   uniqueProviders,
+		FinalGroup:      finalGroupConfig(profile),
+		RuleSourceMeta:  ruleSourceMetas,
+		ProfileName:     subscriptionName,
+		Pipeline:        pipeline,
+		Config:          configName,
+		Include:         includeList,
+		Exclude:         excludeList,
 		// 模板层不在层数组里 = 该方案不用 INI 模板的规则/分组。
 		// 规则源产物注入后模板规则必须整层停用，否则产物规则排在模板 MATCH 之后全成死规则。
 		DisableTemplateRules:  !hasLayer(ruleLayers, "template") || len(sourceRules) > 0,

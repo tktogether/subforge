@@ -181,3 +181,103 @@ func TestProfileFinalGroupPreview(t *testing.T) {
 		t.Errorf("GroupsAfter = %d，期望 unified+Netflix+Apple=3", resp.Report.GroupsAfter)
 	}
 }
+
+// TestSubscribeUnifiesFinalGroupsIncludesSelfNodes 统一最终组要包含方案中的自建节点。
+func TestSubscribeUnifiesFinalGroupsIncludesSelfNodes(t *testing.T) {
+	ts, _, mgr := profileServer(t)
+	if _, err := mgr.AddAirport(t.Context(), "fx", finalGroupFixtureAirport(t, "N1", 30003), "", true); err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	if _, err := mgr.AddSelfNode(t.Context(), "trojan://pass@127.0.0.1:30001?allowInsecure=1#orig", "SELF-A", true, 1); err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+	term := addFinalGroup(t, mgr, "airport:fx", "🔰 选择节点", []string{"N1", "DIRECT"})
+	addKeepRule(t, mgr, term, "keep.example")
+
+	body := map[string]any{
+		"name":         "自建节点统一组",
+		"rule_layers":  []string{"custom"},
+		"group_layers": []string{"airport"},
+		"final_group": map[string]any{
+			"enabled":        true,
+			"mode":           "custom",
+			"name":           "🚀 节点选择",
+			"include_direct": true,
+		},
+	}
+	st, respBody := postAPIJSON(t, ts, "/api/profiles", body)
+	if st != http.StatusCreated {
+		t.Fatalf("创建方案状态 = %d；body=%s", st, respBody)
+	}
+	var resp struct {
+		Profile *subforge.Profile `json:"profile"`
+	}
+	mustDecode(t, respBody, &resp)
+	mustToken(t, ts, "t-self-final", resp.Profile.ID)
+	st, subBody := subscribe(t, ts, "t-self-final")
+	if st != http.StatusOK {
+		t.Fatalf("订阅状态 = %d；body=%s", st, subBody)
+	}
+	unified, ok := parseRenderedGroups(t, subBody)["🚀 节点选择"]
+	if !ok {
+		t.Fatalf("产物缺少统一组：%s", subBody)
+	}
+	for _, want := range []string{"N1", "SELF-A", "DIRECT"} {
+		if !containsName(unified.Proxies, want) {
+			t.Errorf("统一组成员缺少 %s：%v", want, unified.Proxies)
+		}
+	}
+}
+
+// TestSubscribeUnifiesFinalGroupsIncludesSelfNodesWithTemplate 模板路径下统一组同样生效，
+// 且包含自建节点：ApplyTemplate 曾把 FinalGroup 结构化字段静默丢掉。
+func TestSubscribeUnifiesFinalGroupsIncludesSelfNodesWithTemplate(t *testing.T) {
+	ts, _, mgr := profileServer(t)
+	if _, err := mgr.AddAirport(t.Context(), "fx", finalGroupFixtureAirport(t, "N1", 30003), "", true); err != nil {
+		t.Fatalf("AddAirport: %v", err)
+	}
+	if _, err := mgr.AddSelfNode(t.Context(), "trojan://pass@127.0.0.1:30001?allowInsecure=1#orig", "SELF-A", true, 1); err != nil {
+		t.Fatalf("AddSelfNode: %v", err)
+	}
+	const ini = "[custom]\n" +
+		"custom_proxy_group=🔰 选择节点`select`.*\n" +
+		"custom_proxy_group=Netflix`select`[]🔰 选择节点`.*\n" +
+		"rules=DOMAIN-SUFFIX,netflix.test,Netflix\n" +
+		"ruleset=🔰 选择节点,[]FINAL\n"
+	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(ini))
+	}))
+	t.Cleanup(tpl.Close)
+
+	body := map[string]any{
+		"name":   "模板统一组自建",
+		"config": tpl.URL + "/tpl.ini",
+		"final_group": map[string]any{
+			"enabled":        true,
+			"mode":           "auto",
+			"include_direct": true,
+		},
+	}
+	st, respBody := postAPIJSON(t, ts, "/api/profiles", body)
+	if st != http.StatusCreated {
+		t.Fatalf("创建方案状态 = %d；body=%s", st, respBody)
+	}
+	var resp struct {
+		Profile *subforge.Profile `json:"profile"`
+	}
+	mustDecode(t, respBody, &resp)
+	mustToken(t, ts, "t-self-tpl", resp.Profile.ID)
+	st, subBody := subscribe(t, ts, "t-self-tpl")
+	if st != http.StatusOK {
+		t.Fatalf("订阅状态 = %d；body=%s", st, subBody)
+	}
+	unified, ok := parseRenderedGroups(t, subBody)["🚀 节点选择"]
+	if !ok {
+		t.Fatalf("模板路径产物缺少统一组：%s", subBody)
+	}
+	for _, want := range []string{"N1", "SELF-A", "DIRECT"} {
+		if !containsName(unified.Proxies, want) {
+			t.Errorf("模板路径统一组成员缺少 %s：%v", want, unified.Proxies)
+		}
+	}
+}

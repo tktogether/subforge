@@ -35,6 +35,45 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	// Raw 里没有的字段需要手工带过来：请求头从不进 query，文件列表只有 CLI 入口会填。
 	p.Headers = base.Headers
 	p.Files = base.Files
+	// 请求侧的结构化字段不在 Raw 里：模板解析只看到模板值，必须把调用方
+	// 已经解析好的字段覆盖回去，否则方案/令牌的 target、pipeline、include、
+	// exclude 与统一最终选择组会被模板路径静默丢掉（表现为设置不生效）。
+	if base.TargetSpecified && base.Target != "" {
+		p.Target = base.Target
+	}
+	p.TargetSpecified = base.TargetSpecified
+	if base.Pipeline != "" {
+		p.Pipeline = base.Pipeline
+	}
+	if base.Config != "" {
+		p.Config = base.Config
+	}
+	if len(base.Include) > 0 {
+		p.Include = base.Include
+	}
+	if len(base.Exclude) > 0 {
+		p.Exclude = base.Exclude
+	}
+	if len(base.Types) > 0 {
+		p.Types = base.Types
+	}
+	if len(base.Rename) > 0 {
+		p.Rename = base.Rename
+	}
+	if len(base.Emoji) > 0 {
+		p.Emoji = base.Emoji
+	}
+	if base.Sort != "" {
+		p.Sort = base.Sort
+	}
+	p.Sources = base.Sources
+	p.SourceCache = base.SourceCache
+	p.SourceCacheTTL = base.SourceCacheTTL
+	p.PruneUnusedGroups = base.PruneUnusedGroups
+	p.FinalGroup = base.FinalGroup
+	p.RuleSourceMeta = base.RuleSourceMeta
+	p.ProfileName = base.ProfileName
+	p.Override = base.Override
 	// 模板层开关是调用方（API/CLI）直接赋值的结构化字段，同样不在 Raw 里。
 	p.DisableTemplateRules = base.DisableTemplateRules
 	p.DisableTemplateGroups = base.DisableTemplateGroups
