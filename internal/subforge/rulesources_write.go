@@ -320,6 +320,15 @@ func (m *Manager) RenameRuleSource(ctx context.Context, oldName, newName string)
 				return path, fmt.Errorf("更新方案 %q 的规则源绑定: %w", p.Name, err)
 			}
 		}
+		// final_group 的规则源覆盖键同样是名字（rule:<规则源名>），
+		// 改名后不迁移会让界面里的覆盖配置指向已不存在的旧源。
+		if names, ok := p.FinalGroup.Overrides["rule:"+oldName]; ok {
+			delete(p.FinalGroup.Overrides, "rule:"+oldName)
+			p.FinalGroup.Overrides["rule:"+newName] = names
+			if err := m.SetProfileFinalGroup(ctx, p.ID, p.FinalGroup); err != nil {
+				return path, fmt.Errorf("更新方案 %q 的最终组覆盖: %w", p.Name, err)
+			}
+		}
 	}
 	return path, nil
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tktogether/subforge/internal/manifest"
+	"github.com/tktogether/subforge/internal/subcfg"
 )
 
 func TestManagerRenameRuleSource(t *testing.T) {
@@ -39,6 +40,20 @@ func TestManagerRenameRuleSource(t *testing.T) {
 	if err := m.SetProfileRuleSources(ctx, p.ID, []string{"base"}); err != nil {
 		t.Fatalf("SetProfileRuleSources: %v", err)
 	}
+	fg := subcfg.DefaultFinalGroupConfig()
+	fg.Enabled = true
+	fg.Overrides = map[string][]string{
+		"rule:base":  {"出口"},
+		"group:self": {"自建出口"},
+		"rule:other": {"其它"},
+	}
+	if err := m.SetProfileFinalGroup(ctx, p.ID, fg); err != nil {
+		t.Fatalf("SetProfileFinalGroup: %v", err)
+	}
+	// 第二个方案没有任何覆盖配置：改名循环要能跳过它（ok=false 分支）。
+	if _, err := m.AddProfile(ctx, "方案二", "", "", "", true, 0); err != nil {
+		t.Fatalf("AddProfile(方案二): %v", err)
+	}
 
 	if _, err := m.RenameRuleSource(ctx, "base", "renamed"); err != nil {
 		t.Fatalf("RenameRuleSource: %v", err)
@@ -47,8 +62,27 @@ func TestManagerRenameRuleSource(t *testing.T) {
 		t.Fatalf("new version missing: %v", err)
 	}
 	profiles, _ := m.ListProfiles(ctx)
-	if len(profiles) != 1 || profiles[0].RuleSources[0] != "renamed" {
+	var got Profile
+	for _, item := range profiles {
+		if item.ID == p.ID {
+			got = item
+		}
+	}
+	if len(got.RuleSources) != 1 || got.RuleSources[0] != "renamed" {
 		t.Fatalf("profile binding not renamed: %+v", profiles)
+	}
+	overrides := got.FinalGroup.Overrides
+	if got := overrides["rule:renamed"]; len(got) != 1 || got[0] != "出口" {
+		t.Fatalf("最终组覆盖键未迁移: %+v", overrides)
+	}
+	if _, ok := overrides["rule:base"]; ok {
+		t.Fatalf("旧覆盖键仍存在: %+v", overrides)
+	}
+	if got := overrides["group:self"]; len(got) != 1 || got[0] != "自建出口" {
+		t.Fatalf("来源覆盖键被误改: %+v", overrides)
+	}
+	if got := overrides["rule:other"]; len(got) != 1 || got[0] != "其它" {
+		t.Fatalf("其它规则源覆盖键被误改: %+v", overrides)
 	}
 	cur, _ := os.ReadFile(filepath.Join(out, ".current-versions.json"))
 	if !strings.Contains(string(cur), "renamed") {
