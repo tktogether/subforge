@@ -67,6 +67,7 @@ func (s *Server) handleAPIScripts(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
+		req.Name = strings.TrimSpace(req.Name)
 		if req.Name == "" {
 			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("name 不能为空"))
 			return
@@ -93,6 +94,10 @@ func (s *Server) handleAPIScripts(w http.ResponseWriter, r *http.Request) {
 			Enabled:     req.Enabled,
 		})
 		if err != nil {
+			if isUniqueConflict(err) {
+				s.writeAPIError(w, r, http.StatusConflict, errors.New("脚本名称已存在"))
+				return
+			}
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)
 			return
 		}
@@ -134,6 +139,7 @@ func (s *Server) handleAPIScript(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeBody(w, r, &req) {
 			return
 		}
+		req.Name = strings.TrimSpace(req.Name)
 		if req.Name == "" {
 			s.writeAPIError(w, r, http.StatusBadRequest, errors.New("name 不能为空"))
 			return
@@ -171,6 +177,10 @@ func (s *Server) handleAPIScript(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				s.writeAPIError(w, r, http.StatusNotFound, err)
+				return
+			}
+			if isUniqueConflict(err) {
+				s.writeAPIError(w, r, http.StatusConflict, errors.New("脚本名称已存在"))
 				return
 			}
 			s.writeAPIError(w, r, http.StatusInternalServerError, err)

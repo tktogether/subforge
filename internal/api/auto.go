@@ -36,16 +36,24 @@ var uaRules = []uaRule{
 	{"FoXray", "foxray"},
 }
 
-// guessTarget 从 User-Agent 推断目标格式，推不出来时返回 clash.meta。
-func guessTarget(userAgent string) string {
+// guessTargetWithMatch 从 User-Agent 推断目标格式，并报告是否命中规则。
+// 只有命中规则的结果才应视同“客户端显式指定”；兜底值 clash.meta 是服务端默认，
+// 不能覆盖模板里配置的 target。
+func guessTargetWithMatch(userAgent string) (string, bool) {
 	ua := strings.ToLower(userAgent)
 	if ua == "" {
-		return defaultTarget
+		return defaultTarget, false
 	}
 	for _, rule := range uaRules {
 		if strings.Contains(ua, strings.ToLower(rule.keyword)) {
-			return rule.target
+			return rule.target, true
 		}
 	}
-	return defaultTarget
+	return defaultTarget, false
+}
+
+// guessTarget 从 User-Agent 推断目标格式，推不出来时返回 clash.meta。
+func guessTarget(userAgent string) string {
+	target, _ := guessTargetWithMatch(userAgent)
+	return target
 }

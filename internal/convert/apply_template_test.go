@@ -23,7 +23,6 @@ func TestApplyTemplateKeepsRequestStructuredFields(t *testing.T) {
 		FinalGroup:        subcfg.FinalGroupConfig{Enabled: true, Mode: subcfg.FinalGroupModeAuto, Name: subcfg.DefaultFinalGroupName, IncludeDirect: true},
 		RuleSourceMeta:    []subcfg.RuleSourceMeta{{Name: "src"}},
 		ProfileName:       "pname",
-		PruneUnusedGroups: true,
 	}
 	p, err := ApplyTemplate(config.Semantics{}, base)
 	if err != nil {
@@ -44,8 +43,20 @@ func TestApplyTemplateKeepsRequestStructuredFields(t *testing.T) {
 	if !p.FinalGroup.Enabled || p.FinalGroup.ResolvedName() != subcfg.DefaultFinalGroupName {
 		t.Errorf("final_group 丢失: %+v", p.FinalGroup)
 	}
-	if len(p.RuleSourceMeta) != 1 || p.ProfileName != "pname" || !p.PruneUnusedGroups {
-		t.Errorf("rule meta/profile/prune 丢失: %+v %q %v", p.RuleSourceMeta, p.ProfileName, p.PruneUnusedGroups)
+	if len(p.RuleSourceMeta) != 1 || p.ProfileName != "pname" {
+		t.Errorf("rule meta/profile 丢失: %+v %q", p.RuleSourceMeta, p.ProfileName)
+	}
+}
+
+// 模板分组是用户手写内容，不随订阅剪枝：ApplyTemplate 不把 PruneUnusedGroups
+// 带进模板路径，避免未被规则引用的手动选择组消失（v0.8.0 行为）。
+func TestApplyTemplateDoesNotForcePruneUnusedGroups(t *testing.T) {
+	p, err := ApplyTemplate(config.Semantics{}, Params{PruneUnusedGroups: true})
+	if err != nil {
+		t.Fatalf("ApplyTemplate: %v", err)
+	}
+	if p.PruneUnusedGroups {
+		t.Fatal("模板路径不应强制剪枝分组")
 	}
 }
 

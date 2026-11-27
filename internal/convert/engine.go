@@ -283,7 +283,7 @@ func (e *Engine) Run(ctx context.Context, p Params) (Result, error) {
 		Nodes:             nodes,
 		Groups:            groups,
 		Rules:             eff.Rules,
-		PruneUnusedGroups: p.PruneUnusedGroups,
+		PruneUnusedGroups: eff.PruneUnusedGroups,
 		Providers:         providers,
 		RuleProviders:     p.RuleProviders,
 		Profile:           profile,

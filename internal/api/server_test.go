@@ -1414,3 +1414,80 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// TestConvert_UATargetBeatsTemplateDefault 未带 target 时，UA 推断结果视同显式指定：
+// 模板没有 target 时按客户端能力出对应格式，而不是固定回落到 Clash。
+func TestConvert_UATargetBeatsTemplateDefault(t *testing.T) {
+	sub := fixtureURL(t)
+	tpl := writeTpl(t, tplINI)
+	ts := newTestServer(t, func(c *Config) {
+		c.Engine.BaseTemplate = func() *config.Template { return tpl }
+	})
+	status, hdr, body := doGet(t, ts.URL+"/sub?url="+url.QueryEscape(sub), "SFI/1.0", "")
+	if status != http.StatusOK {
+		t.Fatalf("状态 = %d，body=%s", status, body)
+	}
+	if got := hdr.Get("X-Convert-Format"); got != "sing-box" {
+		t.Errorf("X-Convert-Format = %q，期望 sing-box（UA 推断应压过模板默认）", got)
+	}
+}
+
+// TestSubscribeTemplateKeepsUnreferencedGroup 模板分组是用户手写内容：
+// 未被规则引用的手动选择组也必须保留，不随订阅剪枝（v0.8.0 行为）。
+func TestSubscribeTemplateKeepsUnreferencedGroup(t *testing.T) {
+	ts, _, mgr := profileServer(t)
+	ctx := context.Background()
+	if _, err := mgr.AddAirport(ctx, "a", fixtureURL(t), "", true); err != nil {
+		t.Fatalf("插入机场: %v", err)
+	}
+	const ini = "[common]\n" +
+		"rules = MATCH,主组\n" +
+		"\n[clash_proxy_group]\n" +
+		"name = 主组\n" +
+		"type = select\n" +
+		"proxies = .*\n" +
+		"---\n" +
+		"name = 手动\n" +
+		"type = select\n" +
+		"proxies = .*\n"
+	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(ini))
+	}))
+	t.Cleanup(tpl.Close)
+	status, body := postAPIJSON(t, ts, "/api/profiles", map[string]any{
+		"name":   "模板分组保留",
+		"config": tpl.URL + "/tpl.ini",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("创建方案状态 = %d；body=%s", status, body)
+	}
+	var resp struct {
+		Profile *subforge.Profile `json:"profile"`
+	}
+	mustDecode(t, body, &resp)
+	mustToken(t, ts, "tok-tpl-keep", resp.Profile.ID)
+	status, subBody := subscribe(t, ts, "tok-tpl-keep")
+	if status != http.StatusOK {
+		t.Fatalf("订阅状态 = %d；body=%s", status, subBody)
+	}
+	if !strings.Contains(subBody, "name: 主组") || !strings.Contains(subBody, "name: 手动") {
+		t.Fatalf("模板分组应保留（含未被规则引用的手动组）:\n%s", subBody)
+	}
+}
+
+// TestConvert_UnknownUAKeepsTemplateTarget 未知 UA 的兜底 target 不能被当作显式指定：
+// 模板配置的 target 仍然生效。
+func TestConvert_UnknownUAKeepsTemplateTarget(t *testing.T) {
+	sub := fixtureURL(t)
+	tpl := writeTpl(t, "[common]\ntarget = sing-box\n")
+	ts := newTestServer(t, func(c *Config) {
+		c.Engine.BaseTemplate = func() *config.Template { return tpl }
+	})
+	status, hdr, body := doGet(t, ts.URL+"/sub?url="+url.QueryEscape(sub), "curl/8.14.1", "")
+	if status != http.StatusOK {
+		t.Fatalf("状态 = %d，body=%s", status, body)
+	}
+	if got := hdr.Get("X-Convert-Format"); got != "sing-box" {
+		t.Errorf("X-Convert-Format = %q，期望模板 target sing-box（未知 UA 不应覆盖）", got)
+	}
+}

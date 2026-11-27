@@ -56,9 +56,10 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// target 缺省时按 User-Agent 推断，这是客户端订阅地址的通行做法；
-	// 推断不出就退回 clash.meta。
+	// 推断不出就退回 clash.meta。只有真正命中客户端规则才算显式指定：
+	// 兜底值不能压掉模板里配置的 target。
 	if params.Target == "" {
-		params.Target = guessTarget(r.UserAgent())
+		params.Target, params.TargetSpecified = guessTargetWithMatch(r.UserAgent())
 	}
 
 	// list 模式走同一条 Engine 路径（target=list 的分享链接渲染器），不需要特殊处理。

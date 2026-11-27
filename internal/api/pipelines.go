@@ -170,10 +170,16 @@ func isPipelineNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "不存在")
 }
 
-// isPipelineConflict 判断 name 唯一索引冲突：modernc.org/sqlite 的报错文本是
-// "constraint failed: UNIQUE constraint failed: pipelines.name (2067)"。
-func isPipelineConflict(err error) bool {
+// isUniqueConflict 判断名称唯一索引冲突：modernc.org/sqlite 的报错文本是
+// "constraint failed: UNIQUE constraint failed: <table>.<column> (2067)"。
+// 管线与脚本的创建/改名共用这一判定，避免同一类冲突在不同入口返回不同状态码。
+func isUniqueConflict(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
+// isPipelineConflict 判断管线 name 唯一索引冲突。
+func isPipelineConflict(err error) bool {
+	return isUniqueConflict(err)
 }
 
 // writePipelineErr 把 Manager 错误映射成 404（不存在）或 500（真故障）。
@@ -269,6 +275,10 @@ func (s *Server) handleAPIPipeline(w http.ResponseWriter, r *http.Request) {
 			upd.Enabled = *req.Enabled
 		}
 		if err := m.UpdatePipeline(r.Context(), upd); err != nil {
+			if isPipelineConflict(err) {
+				s.writeAPIError(w, r, http.StatusConflict, errors.New("流水线名称已存在"))
+				return
+			}
 			s.writePipelineErr(w, r, err)
 			return
 		}

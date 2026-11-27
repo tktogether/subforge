@@ -69,7 +69,9 @@ func ApplyTemplate(sem config.Semantics, base Params) (Params, error) {
 	p.Sources = base.Sources
 	p.SourceCache = base.SourceCache
 	p.SourceCacheTTL = base.SourceCacheTTL
-	p.PruneUnusedGroups = base.PruneUnusedGroups
+	// PruneUnusedGroups 刻意不带到模板路径：模板分组是用户手写内容，
+	// 未被规则引用的手动选择组也要保留（v0.8.0 行为）。非模板订阅路径
+	// 仍由 subscription 显式设置该标志，行为不变。
 	p.FinalGroup = base.FinalGroup
 	p.RuleSourceMeta = base.RuleSourceMeta
 	p.ProfileName = base.ProfileName

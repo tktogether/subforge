@@ -189,3 +189,20 @@ func TestAPIPipelines_WrongMethod_405(t *testing.T) {
 		t.Fatalf("DELETE /api/pipelines should not be 200, got %d (GET=%d)", status2, status)
 	}
 }
+
+func TestAPIPipelineUpdate_Conflict_409(t *testing.T) {
+	ts, mgr := uiSubServer(t)
+	ctx := t.Context()
+	if _, err := mgr.CreatePipeline(ctx, "p1", "", "[]", true); err != nil {
+		t.Fatalf("CreatePipeline(p1): %v", err)
+	}
+	p2, err := mgr.CreatePipeline(ctx, "p2", "", "[]", true)
+	if err != nil {
+		t.Fatalf("CreatePipeline(p2): %v", err)
+	}
+	status, _, body := uiDoJSON(t, ts, http.MethodPut,
+		fmt.Sprintf("/api/pipelines/%d", p2.ID), `{"name":"p1"}`)
+	if status != http.StatusConflict {
+		t.Fatalf("重名改名状态 = %d，期望 409；body=%s", status, body)
+	}
+}
