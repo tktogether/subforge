@@ -24,7 +24,7 @@ func seedManifest(t *testing.T, mgr *subforge.Manager) (string, string) {
 		t.Fatal(err)
 	}
 	// 内容必须是合法的 Clash 规则集（payload 为规则列表），否则生成 MRS 时会解析失败。
-	if err := os.WriteFile(filepath.Join(ruleDir, "foo-20240101.yaml"), []byte(clashRuleSetYAML), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ruleDir, "foo-20240101-000000.yaml"), []byte(clashRuleSetYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mf := filepath.Join(dir, "manifest.yaml")
@@ -139,7 +139,7 @@ func TestHandleAPIRuleSourcesGetOK(t *testing.T) {
 	if src["name"] != "foo" {
 		t.Fatalf("name = %v", src["name"])
 	}
-	if src["latest"] != "foo-20240101.yaml" {
+	if src["latest"] != "foo-20240101-000000.yaml" {
 		t.Fatalf("latest = %v", src["latest"])
 	}
 }
@@ -370,7 +370,7 @@ func TestRuleSourceMRSFormat(t *testing.T) {
 // TestHandleAPIRuleSourcesMRSOK 覆盖 .yaml Clash 规则集在 format 缺省时能生成 MRS。
 func TestHandleAPIRuleSourcesMRSOK(t *testing.T) {
 	srv, mgr := newCfgTestServer(t)
-	ruleDir := seedRuleVersions(t, mgr, "clash-meta", map[string]string{"foo-20240101.yaml": clashRuleSetYAML})
+	ruleDir := seedRuleVersions(t, mgr, "clash-meta", map[string]string{"foo-20240101-000000.yaml": clashRuleSetYAML})
 	rec := httptest.NewRecorder()
 	req := mustJSONReq(t, http.MethodPost, map[string]any{"name": "foo", "behavior": "domain"})
 	srv.handleAPIRuleSourcesMRS(rec, req)
@@ -382,7 +382,7 @@ func TestHandleAPIRuleSourcesMRSOK(t *testing.T) {
 		t.Fatal(err)
 	}
 	path, _ := body["path"].(string)
-	if filepath.Base(path) != "foo-20240101.mrs" {
+	if filepath.Base(path) != "foo-20240101-000000.mrs" {
 		t.Fatalf("path = %q, want 目标文件名为当前版本去扩展名 + .mrs", path)
 	}
 	if !strings.HasPrefix(filepath.ToSlash(path), filepath.ToSlash(ruleDir)+"/") {
@@ -403,7 +403,7 @@ func TestHandleAPIRuleSourcesMRSOK(t *testing.T) {
 // TestHandleAPIRuleSourcesMRSPlainTextOK 覆盖 .txt 源按扩展名推导成 text 格式后仍可生成 MRS。
 func TestHandleAPIRuleSourcesMRSPlainTextOK(t *testing.T) {
 	srv, mgr := newCfgTestServer(t)
-	seedRuleVersions(t, mgr, "text", map[string]string{"foo-20240101.txt": "DOMAIN-SUFFIX,example.com\n"})
+	seedRuleVersions(t, mgr, "text", map[string]string{"foo-20240101-000000.txt": "DOMAIN-SUFFIX,example.com\n"})
 	rec := httptest.NewRecorder()
 	req := mustJSONReq(t, http.MethodPost, map[string]any{"name": "foo", "behavior": "domain"})
 	srv.handleAPIRuleSourcesMRS(rec, req)
@@ -414,15 +414,15 @@ func TestHandleAPIRuleSourcesMRSPlainTextOK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(body["path"].(string)) != "foo-20240101.mrs" {
-		t.Fatalf("path = %v, want foo-20240101.mrs", body["path"])
+	if filepath.Base(body["path"].(string)) != "foo-20240101-000000.mrs" {
+		t.Fatalf("path = %v, want foo-20240101-000000.mrs", body["path"])
 	}
 }
 
 // TestHandleAPIRuleSourcesMRSUnsupportedExt400 覆盖无法推导源格式的扩展名返回 400 而不是 500。
 func TestHandleAPIRuleSourcesMRSUnsupportedExt400(t *testing.T) {
 	srv, mgr := newCfgTestServer(t)
-	seedRuleVersions(t, mgr, "clash-json", map[string]string{"foo-20240101.json": "{\"payload\":[\"DOMAIN-SUFFIX,example.com\"]}"})
+	seedRuleVersions(t, mgr, "clash-json", map[string]string{"foo-20240101-000000.json": "{\"payload\":[\"DOMAIN-SUFFIX,example.com\"]}"})
 	rec := httptest.NewRecorder()
 	req := mustJSONReq(t, http.MethodPost, map[string]any{"name": "foo"})
 	srv.handleAPIRuleSourcesMRS(rec, req)
@@ -438,10 +438,10 @@ func TestHandleAPIRuleSourcesMRSUnsupportedExt400(t *testing.T) {
 func TestHandleAPIRuleSourcesMRSUsesCurrentVersion(t *testing.T) {
 	srv, mgr := newCfgTestServer(t)
 	ruleDir := seedRuleVersions(t, mgr, "clash-meta", map[string]string{
-		"foo-20240101.yaml": clashRuleSetYAML,
-		"foo-20240102.yaml": clashRuleSetYAML,
+		"foo-20240101-000000.yaml": clashRuleSetYAML,
+		"foo-20240102-000000.yaml": clashRuleSetYAML,
 	})
-	if err := os.WriteFile(filepath.Join(ruleDir, subforge.CurrentVersionsFile), []byte("{\"foo\":\"foo-20240101.yaml\"}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ruleDir, subforge.CurrentVersionsFile), []byte("{\"foo\":\"foo-20240101-000000.yaml\"}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -454,15 +454,15 @@ func TestHandleAPIRuleSourcesMRSUsesCurrentVersion(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(body["path"].(string)) != "foo-20240101.mrs" {
-		t.Fatalf("path = %v, want 以当前版本 foo-20240101 为源", body["path"])
+	if filepath.Base(body["path"].(string)) != "foo-20240101-000000.mrs" {
+		t.Fatalf("path = %v, want 以当前版本 foo-20240101-000000 为源", body["path"])
 	}
 }
 
 // TestHandleAPIRuleSourcesRollbackSingleVersion400 覆盖只有 1 个版本时回滚返回 400 + 可回滚版本不足。
 func TestHandleAPIRuleSourcesRollbackSingleVersion400(t *testing.T) {
 	srv, mgr := newCfgTestServer(t)
-	seedRuleVersions(t, mgr, "clash-meta", map[string]string{"foo-20240101.yaml": clashRuleSetYAML})
+	seedRuleVersions(t, mgr, "clash-meta", map[string]string{"foo-20240101-000000.yaml": clashRuleSetYAML})
 	rec := httptest.NewRecorder()
 	req := mustJSONReq(t, http.MethodPost, map[string]any{"name": "foo"})
 	srv.handleAPIRuleSourcesRollback(rec, req)
@@ -478,10 +478,10 @@ func TestHandleAPIRuleSourcesRollbackSingleVersion400(t *testing.T) {
 func TestHandleAPIRuleSourcesGetUsesCurrentVersion(t *testing.T) {
 	srv, mgr := newCfgTestServer(t)
 	ruleDir := seedRuleVersions(t, mgr, "clash-meta", map[string]string{
-		"foo-20240101.yaml": clashRuleSetYAML,
-		"foo-20240102.yaml": clashRuleSetYAML,
+		"foo-20240101-000000.yaml": clashRuleSetYAML,
+		"foo-20240102-000000.yaml": clashRuleSetYAML,
 	})
-	if err := os.WriteFile(filepath.Join(ruleDir, subforge.CurrentVersionsFile), []byte("{\"foo\":\"foo-20240101.yaml\"}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ruleDir, subforge.CurrentVersionsFile), []byte("{\"foo\":\"foo-20240101-000000.yaml\"}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -502,7 +502,7 @@ func TestHandleAPIRuleSourcesGetUsesCurrentVersion(t *testing.T) {
 	if len(body.Sources) != 1 {
 		t.Fatalf("sources = %d, want 1", len(body.Sources))
 	}
-	if body.Sources[0].Latest != "foo-20240101.yaml" {
-		t.Fatalf("latest = %q, want 状态文件指针 foo-20240101.yaml", body.Sources[0].Latest)
+	if body.Sources[0].Latest != "foo-20240101-000000.yaml" {
+		t.Fatalf("latest = %q, want 状态文件指针 foo-20240101-000000.yaml", body.Sources[0].Latest)
 	}
 }

@@ -735,6 +735,11 @@ func (s *Server) handleAPIRuleSourceRename(w http.ResponseWriter, r *http.Reques
 	}
 	path, err := m.RenameRuleSource(r.Context(), req.Name, req.NewName)
 	if err != nil {
+		// 参数/名称冲突是 400；文件、清单或数据库失败是服务端问题，不能伪装成参数错误。
+		if errors.Is(err, subforge.ErrRuleSourceRenameInternal) {
+			s.writeAPIError(w, r, http.StatusInternalServerError, err)
+			return
+		}
 		s.writeAPIError(w, r, http.StatusBadRequest, err)
 		return
 	}

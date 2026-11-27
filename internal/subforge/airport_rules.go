@@ -163,7 +163,8 @@ func (m *Manager) UnbindAirportRuleSource(ctx context.Context, airportID int64) 
 		next := make([]string, 0, len(p.RuleSources))
 		changed := false
 		for _, used := range p.RuleSources {
-			if used == name {
+			// 与运行期解析口径一致：绑定可能带首尾空白，精确比较会漏解绑。
+			if strings.TrimSpace(used) == name {
 				changed = true
 				continue
 			}

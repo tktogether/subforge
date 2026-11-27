@@ -70,8 +70,8 @@ func TestRuleSourceRulesYAML(t *testing.T) {
 	outDir := filepath.Join(t.TempDir(), "out")
 	writeMultiSourceManifest(t, m, outDir, "clash-meta", "a")
 
-	oldName := "a-20240101-000000.yaml"
-	newName := "a-20240102-000000.yaml"
+	oldName := "a-20240101-000000.000000000.yaml"
+	newName := "a-20240102-000000.000000000.yaml"
 	seedProduct(t, outDir, oldName, "rules:\n"+
 		"  - \"DOMAIN-SUFFIX,old.example,DIRECT\"\n"+
 		"  - \"MATCH,🎯 兜底\"\n"+
@@ -85,7 +85,7 @@ func TestRuleSourceRulesYAML(t *testing.T) {
 	equalStrings(t, warnings, []string{"规则源 a 含 1 条 FINAL/MATCH 兜底规则，已忽略"}, "warnings")
 
 	// 指针缺失/损坏时回退最新版本：新版本的规则进订阅。
-	writeCurrentVersions(t, outDir, map[string]string{"a": "a-20990101-000000.yaml"})
+	writeCurrentVersions(t, outDir, map[string]string{"a": "a-20990101-000000.000000000.yaml"})
 	rules, warnings = m.RuleSourceRules(ctx, []string{"a"})
 	equalStrings(t, rules, []string{"DOMAIN-SUFFIX,new.example,DIRECT"}, "rules(回退最新)")
 	equalStrings(t, warnings, nil, "warnings(回退最新)")
@@ -96,7 +96,7 @@ func TestRuleSourceRulesWithMeta(t *testing.T) {
 	m := newTestManager(t)
 	outDir := filepath.Join(t.TempDir(), "out")
 	writeMultiSourceManifest(t, m, outDir, "clash-meta", "a")
-	seedProduct(t, outDir, "a-20240101-000000.yaml", "rules:\n"+
+	seedProduct(t, outDir, "a-20240101-000000.000000000.yaml", "rules:\n"+
 		"  - \"DOMAIN,a.example,🚀 手动选择\"\n"+
 		"  - \"DOMAIN,b.example,DIRECT\"\n"+
 		"  - \"DOMAIN,c.example,🚀 手动选择\"\n"+
@@ -133,7 +133,7 @@ func TestRuleSourceRulesText(t *testing.T) {
 	outDir := filepath.Join(t.TempDir(), "out")
 	writeMultiSourceManifest(t, m, outDir, "text", "a")
 
-	seedProduct(t, outDir, "a-20240101-000000.txt",
+	seedProduct(t, outDir, "a-20240101-000000.000000000.txt",
 		"# 注释行\n\nDOMAIN-SUFFIX,example.com,DIRECT\nFINAL,DIRECT\nMATCH,PROXY\n  DOMAIN,trim.example,PROXY  \n")
 
 	rules, warnings := m.RuleSourceRules(ctx, []string{"a"})
@@ -200,7 +200,7 @@ func TestRuleSourceRulesSkips(t *testing.T) {
 			outDir := filepath.Join(t.TempDir(), "out")
 			writeMultiSourceManifest(t, m, outDir, tc.format, "a")
 			if tc.product != "" {
-				seedProduct(t, outDir, "a-20240101-000000."+extForRuleSourceFormat(tc.format), tc.product)
+				seedProduct(t, outDir, "a-20240101-000000.000000000."+extForRuleSourceFormat(tc.format), tc.product)
 			}
 			rules, warnings := m.RuleSourceRules(context.Background(), tc.names)
 			equalStrings(t, warnings, tc.wantWarn, "warnings")
@@ -217,9 +217,9 @@ func TestRuleSourceRulesDedupeAndOrder(t *testing.T) {
 	m := newTestManager(t)
 	outDir := filepath.Join(t.TempDir(), "out")
 	writeMultiSourceManifest(t, m, outDir, "clash-meta", "a", "b")
-	seedProduct(t, outDir, "a-20240101-000000.yaml",
+	seedProduct(t, outDir, "a-20240101-000000.000000000.yaml",
 		"rules:\n  - \"DOMAIN-SUFFIX,a1.example,DIRECT\"\n  - \"DOMAIN,a2.example,PROXY\"\n")
-	seedProduct(t, outDir, "b-20240101-000000.yaml",
+	seedProduct(t, outDir, "b-20240101-000000.000000000.yaml",
 		"rules:\n  - \"DOMAIN-SUFFIX,b1.example,DIRECT\"\n")
 
 	rules, warnings := m.RuleSourceRules(ctx, []string{"b", " a ", "b", ""})
@@ -274,11 +274,11 @@ func TestRuleSourceRulesProductReadFailure(t *testing.T) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	broken := filepath.Join(outDir, "a-20240101-000000.yaml")
+	broken := filepath.Join(outDir, "a-20240101-000000.000000000.yaml")
 	if err := os.Symlink(filepath.Join(outDir, "no-such-target"), broken); err != nil {
 		t.Skipf("当前平台不允许创建符号链接，跳过读失败分支：%v", err)
 	}
-	writeCurrentVersions(t, outDir, map[string]string{"a": "a-20240101-000000.yaml"})
+	writeCurrentVersions(t, outDir, map[string]string{"a": "a-20240101-000000.000000000.yaml"})
 
 	rules, warnings := m.RuleSourceRules(ctx, []string{"a"})
 	if len(rules) != 0 {

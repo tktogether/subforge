@@ -229,6 +229,38 @@ func loadCurrentVersions(dir string) map[string]string {
 	return out
 }
 
+// loadCurrentVersionsStrict 与 loadCurrentVersions 语义相同，但把读取/解析失败
+// 当作错误返回。规则源改名必须据此判断指针能否迁移：损坏的状态文件不能静默跳过，
+// 否则版本文件已改名、指针仍指向旧名，新名会显示为「没有版本」。
+func loadCurrentVersionsStrict(dir string) (map[string]string, error) {
+	out := map[string]string{}
+	if strings.TrimSpace(dir) == "" {
+		return out, nil
+	}
+	path := currentVersionsPath(dir)
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取当前版本状态 %s: %w", path, err)
+	}
+	var raw map[string]string
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, fmt.Errorf("解析当前版本状态 %s: %w", path, err)
+	}
+	if raw == nil {
+		return out, nil
+	}
+	for k, v := range raw {
+		if strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
 // saveCurrentVersions 原子地写状态文件（先写临时文件再改名），避免读到半截 JSON。
 func saveCurrentVersions(dir string, versions map[string]string) error {
 	if strings.TrimSpace(dir) == "" {

@@ -40,6 +40,15 @@ func writeRuleManifest(t *testing.T, m *Manager, url, format, outDir string) str
 	return path
 }
 
+// canonStamp 把测试里的短时间戳补成带纳秒段的格式；短格式本身由
+// manifest.IsVersionFileName 兼容识别，另见 manifest 包测试。
+func canonStamp(v string) string {
+	if strings.Contains(v, ".") {
+		return v
+	}
+	return v + ".000000000"
+}
+
 // seedVersions 在输出目录造两个版本文件。
 func seedVersions(t *testing.T, dir, name, ext string) []string {
 	t.Helper()
@@ -48,7 +57,7 @@ func seedVersions(t *testing.T, dir, name, ext string) []string {
 	}
 	var names []string
 	for _, v := range []string{"20240101-000000", "20240102-000000"} {
-		n := name + "-" + v + "." + ext
+		n := name + "-" + canonStamp(v) + "." + ext
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
 			t.Fatalf("写版本文件: %v", err)
 		}
@@ -782,7 +791,7 @@ func seedVersionFiles(t *testing.T, dir, name, ext string, stamps ...string) []s
 	}
 	names := make([]string, 0, len(stamps))
 	for _, v := range stamps {
-		n := name + "-" + v + "." + ext
+		n := name + "-" + canonStamp(v) + "." + ext
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
 			t.Fatalf("写版本文件: %v", err)
 		}
@@ -838,7 +847,7 @@ func TestListRuleSourcesCurrentVersionFallback(t *testing.T) {
 		{
 			name: "指向已删除版本",
 			write: func(t *testing.T, dir string) {
-				writeCurrentVersions(t, dir, map[string]string{"a": "a-20990101-000000.txt"})
+				writeCurrentVersions(t, dir, map[string]string{"a": "a-20990101-000000.000000000.txt"})
 			},
 		},
 	}

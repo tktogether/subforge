@@ -51,7 +51,7 @@ func ruleSourceFixture(t *testing.T, mgr *subforge.Manager, name, format string)
 // 回退到升序列表的最后一个（= 最新版），这正是「刚更新完」的常见状态。
 func ruleSourceProduct(t *testing.T, outDir, name, content string) {
 	t.Helper()
-	path := filepath.Join(outDir, name+"-20240101-000000.yaml")
+	path := filepath.Join(outDir, name+"-20240101-000000.000000000.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("写产物 %s: %v", path, err)
 	}

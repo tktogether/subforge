@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tktogether/subforge/internal/convert"
+	"github.com/tktogether/subforge/internal/manifest"
 	"github.com/tktogether/subforge/internal/subforge"
 )
 
@@ -235,5 +236,35 @@ func TestRuleSourceRenameGuards(t *testing.T) {
 	rec = postJSON(t, srv, "/api/rule-sources/rename", `{"name":"base","new_name":"bad/name"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unsafe name = %d", rec.Code)
+	}
+}
+
+// TestAPIRuleSourceRenameInternalIs500 规则源改名的服务端失败返回 500，
+// 原始报文进 detail，供界面展开排障。
+func TestAPIRuleSourceRenameInternalIs500(t *testing.T) {
+	ts, mgr := uiSubServer(t)
+	ctx := t.Context()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.yaml")
+	if err := mgr.SetRuleManifestPath(ctx, path); err != nil {
+		t.Fatalf("SetRuleManifestPath: %v", err)
+	}
+	if err := manifest.SaveManifest(path, &manifest.Manifest{
+		Sources: []manifest.Source{{Name: "base", URL: "http://example.com/base.yaml"}},
+		Output:  manifest.Output{Format: "clash-meta", Path: "./rules"},
+	}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	badDir := filepath.Join(dir, strings.Repeat("a", 300))
+	if _, err := mgr.DB().Raw().ExecContext(ctx,
+		"INSERT INTO config (key, value) VALUES ('rules.output_dir', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", badDir); err != nil {
+		t.Fatalf("写 rules.output_dir: %v", err)
+	}
+	status, _, body := uiPostJSON(t, ts, "/api/rule-sources/rename", `{"name":"base","new_name":"renamed"}`)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("状态 = %d，期望 500；body=%s", status, body)
+	}
+	if !strings.Contains(body, `"detail"`) || !strings.Contains(body, "版本目录") {
+		t.Fatalf("detail 应包含失败阶段: %s", body)
 	}
 }

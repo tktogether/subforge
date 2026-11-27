@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { endpoints, type RuleSource, type RuleSourceUpdateResult, type RuleSourcesResponse, type SelfNode } from '../api/endpoints'
-import { errorMessage } from '../composables/useAsync'
+import { errorDetail, errorMessage } from '../composables/useAsync'
 import { notify } from '../composables/useNotify'
 import { confirmAction } from '../composables/useConfirm'
 import { fieldHelp } from '../content/help'
@@ -58,6 +58,9 @@ const renameDialog = ref(false)
 const renameName = ref('')
 const renameValue = ref('')
 const renameSaving = ref(false)
+// 改名失败可能是跨文件的中间状态：主文案给一句话，原始报文进可展开的详情。
+const renameError = ref('')
+const renameErrorDetail = ref('')
 const updatingOne = ref('')
 // updating 表示「有一条会改动版本状态的请求正在飞」：全部更新、单源更新、回滚、生成 MRS。
 // 请求期间把所有会再次发请求的按钮一起 disable —— 之前没有这个状态，双击「全部更新」
@@ -209,6 +212,8 @@ function openRename(source: RuleSource): void {
   if (source.origin === 'airport') return
   renameName.value = source.name
   renameValue.value = source.name
+  renameError.value = ''
+  renameErrorDetail.value = ''
   renameDialog.value = true
 }
 
@@ -217,12 +222,16 @@ async function confirmRename(): Promise<void> {
   const next = renameValue.value.trim()
   if (next === '' || next === renameName.value) return
   renameSaving.value = true
+  renameError.value = ''
+  renameErrorDetail.value = ''
   try {
     await endpoints.renameRuleSource(renameName.value, next)
     renameDialog.value = false
     notify('已改名为 ' + next, 'ok')
     await load()
   } catch (err) {
+    renameError.value = errorMessage(err)
+    renameErrorDetail.value = errorDetail(err)
     notify(errorMessage(err), 'error')
   } finally {
     renameSaving.value = false
@@ -676,6 +685,11 @@ onMounted(() => {
       <SfField hint="引用该规则源的方案会自动更新绑定" label="新名称">
         <input v-model="renameValue" class="sf-input" data-testid="source-rename-input" spellcheck="false" />
       </SfField>
+      <div v-if="renameError !== ''" class="sf-field__error" data-testid="source-rename-error">{{ renameError }}</div>
+      <details v-if="renameErrorDetail !== ''" data-testid="source-rename-error-detail" class="rs-detail">
+        <summary>查看错误详情</summary>
+        <pre>{{ renameErrorDetail }}</pre>
+      </details>
       <template #foot>
         <button class="sf-btn sf-btn--subtle" type="button" data-testid="source-rename-cancel" @click="renameDialog = false">取消</button>
         <button class="sf-btn sf-btn--primary" type="button" :disabled="renameValue.trim() === '' || renameValue.trim() === renameName || renameSaving" data-testid="source-rename-confirm" @click="confirmRename">保存</button>
@@ -848,5 +862,18 @@ onMounted(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.rs-detail {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--sf-text-muted);
+}
+
+.rs-detail pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--sf-font-mono, monospace);
 }
 </style>
