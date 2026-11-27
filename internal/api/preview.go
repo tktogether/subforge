@@ -101,6 +101,16 @@ func (s *Server) previewPipelineSpec(ctx context.Context, name string) (config.P
 	return spec, nil
 }
 
+// warningsArray 保证预览响应的 warnings 永远是 JSON 数组。
+// nil 切片会编码成 null，前端按数组读取（.length / v-for）会抛 TypeError，
+// 表现为预览弹窗加载完成后内容消失。
+func warningsArray(warnings []string) []string {
+	if warnings == nil {
+		return []string{}
+	}
+	return warnings
+}
+
 // handleAPIPipelineTest 试运行一组管线步骤（可来自编辑中的草稿）。
 func (s *Server) handleAPIPipelineTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -140,7 +150,7 @@ func (s *Server) handleAPIPipelineTest(w http.ResponseWriter, r *http.Request) {
 		"after_count":  res.Nodes.Len(),
 		"before":       summarizePreviewNodes(list, 50),
 		"after":        summarizePreviewNodes(res.Nodes, 50),
-		"warnings":     res.Warnings,
+		"warnings":     warningsArray(res.Warnings),
 	})
 }
 
@@ -277,6 +287,6 @@ func (s *Server) writeSourcePreview(w http.ResponseWriter, r *http.Request, name
 		"after_count":  list.Len(),
 		"before":       summarizePreviewNodes(before, limit),
 		"after":        summarizePreviewNodes(list, limit),
-		"warnings":     warnings,
+		"warnings":     warningsArray(warnings),
 	})
 }

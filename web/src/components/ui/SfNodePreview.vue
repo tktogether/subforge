@@ -66,7 +66,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
           </div>
         </div>
       </div>
-      <div v-if="result.warnings !== undefined && result.warnings.length > 0" class="sf-note sf-note--warn" data-testid="preview-warnings">
+      <div v-if="result.warnings && result.warnings.length > 0" class="sf-note sf-note--warn" data-testid="preview-warnings">
         <span class="sf-note__body">
           <div v-for="(w, i) in result.warnings" :key="i">{{ w }}</div>
         </span>

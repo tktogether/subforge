@@ -537,7 +537,7 @@ onMounted(() => {
             </tbody>
           </table>
         </div>
-        <SfNote v-if="testResult.warnings !== undefined && testResult.warnings.length > 0" tone="warn" data-testid="pipeline-test-warnings">
+        <SfNote v-if="testResult.warnings && testResult.warnings.length > 0" tone="warn" data-testid="pipeline-test-warnings">
           <span v-for="(w, i) in testResult.warnings" :key="i" style="display: block">{{ w }}</span>
         </SfNote>
       </template>

@@ -19,8 +19,9 @@ func TestAPIPipelineTestRun(t *testing.T) {
 		t.Fatalf("status=%d body=%s", st, resp)
 	}
 	var got struct {
-		BeforeCount int `json:"before_count"`
-		AfterCount  int `json:"after_count"`
+		BeforeCount int      `json:"before_count"`
+		AfterCount  int      `json:"after_count"`
+		Warnings    []string `json:"warnings"`
 		After       []struct {
 			Name string `json:"name"`
 		} `json:"after"`
@@ -30,6 +31,10 @@ func TestAPIPipelineTestRun(t *testing.T) {
 	}
 	if got.BeforeCount != 1 || got.AfterCount != 1 || len(got.After) != 1 || got.After[0].Name != "T-HK-01" {
 		t.Fatalf("试运行结果不符: %+v body=%s", got, resp)
+	}
+	// nil 切片会编码成 null，前端按数组读取会抛 TypeError；空结果必须是 []。
+	if got.Warnings == nil {
+		t.Fatalf("warnings 应为空数组而不是 null: body=%s", resp)
 	}
 }
 
@@ -64,9 +69,10 @@ func TestAPIAirportPreviewProcess(t *testing.T) {
 		t.Fatalf("status=%d body=%s", st, resp)
 	}
 	var got struct {
-		BeforeCount int    `json:"before_count"`
-		AfterCount  int    `json:"after_count"`
-		Pipeline    string `json:"pipeline"`
+		BeforeCount int      `json:"before_count"`
+		AfterCount  int      `json:"after_count"`
+		Pipeline    string   `json:"pipeline"`
+		Warnings    []string `json:"warnings"`
 		After       []struct {
 			Name string `json:"name"`
 		} `json:"after"`
@@ -76,6 +82,9 @@ func TestAPIAirportPreviewProcess(t *testing.T) {
 	}
 	if got.BeforeCount != 1 || got.AfterCount != 1 || got.Pipeline != "preview-rename" {
 		t.Fatalf("机场预览计数不符: %+v", got)
+	}
+	if got.Warnings == nil {
+		t.Fatalf("warnings 应为空数组而不是 null: body=%s", resp)
 	}
 	if len(got.After) != 1 || got.After[0].Name != "P-HK-01" {
 		t.Fatalf("机场预览节点不符: %+v", got)
@@ -99,6 +108,10 @@ func TestAPISelfNodesPreviewProcess(t *testing.T) {
 	}
 	if !strings.Contains(resp, `"name":"S-SELF-01"`) || !strings.Contains(resp, `"pipeline":"self-preview"`) {
 		t.Fatalf("自建节点预览不符: %s", resp)
+	}
+	// 没有告警时也必须回空数组：null 会让前端 warnings.length 抛 TypeError。
+	if !strings.Contains(resp, `"warnings":[]`) {
+		t.Fatalf("warnings 应为空数组: %s", resp)
 	}
 }
 
