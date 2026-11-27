@@ -205,7 +205,9 @@ func (d *DB) fillProfileCounts(ctx context.Context, p *Profile) error {
 
 // AddProfile 新增订阅方案，返回带计数的新行。name 允许空串（由 API 层拒绝）。
 // sortOrder>0 用用户值，<=0 表示未指定，落库时回退纳秒时间戳（与分组/规则一致）。
+// pipeline 入库前去首尾空白：运行期按 TrimSpace 后的名字解析管线。
 func (d *DB) AddProfile(ctx context.Context, name, description, configName, pipeline string, enabled bool, sortOrder int) (*Profile, error) {
+	pipeline = strings.TrimSpace(pipeline)
 	res, err := d.db.ExecContext(ctx,
 		"INSERT INTO profiles (name, description, config, pipeline, enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
 		name, description, configName, pipeline, enabled, resolveSortOrder(sortOrder))
@@ -221,8 +223,9 @@ func (d *DB) AddProfile(ctx context.Context, name, description, configName, pipe
 }
 
 // UpdateProfile 全量覆盖方案的 name/description/config/pipeline/enabled/sort_order；
-// 目标不存在时返回 sql.ErrNoRows。
+// 目标不存在时返回 sql.ErrNoRows。pipeline 入库前去首尾空白（同 AddProfile）。
 func (d *DB) UpdateProfile(ctx context.Context, id int64, name, description, configName, pipeline string, enabled bool, sortOrder int) error {
+	pipeline = strings.TrimSpace(pipeline)
 	res, err := d.db.ExecContext(ctx,
 		"UPDATE profiles SET name = ?, description = ?, config = ?, pipeline = ?, enabled = ?, "+
 			"sort_order = CASE WHEN ? > 0 THEN ? ELSE sort_order END, updated_at = ? WHERE id = ?",
@@ -296,6 +299,7 @@ func scanProxyGroup(row interface {
 // CreateSubTokenWithProfile 新增绑定指定方案的订阅令牌。
 // profileID=0 即「未绑定方案」，与旧行为完全一致（v2 仍保留令牌→方案的绑定）。
 func (d *DB) CreateSubTokenWithProfile(ctx context.Context, token, name, target, pipeline, configName, include, exclude string, profileID int64) error {
+	pipeline = strings.TrimSpace(pipeline)
 	_, err := d.db.ExecContext(ctx,
 		"INSERT INTO sub_tokens (token, name, target, pipeline, config, include, exclude, profile_id) "+
 			"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -399,6 +403,57 @@ func (d *DB) SetProfileFinalGroup(ctx context.Context, id int64, cfg subcfg.Fina
 	}
 	if n == 0 {
 		return sql.ErrNoRows
+	}
+	d.touchArtifacts(ctx)
+	return nil
+}
+
+// ProfileBindingUpdate 是跨方案迁移（如规则源改名）要落库的一组绑定：
+// 规则源名列表与统一最终选择组配置一起写，保证同一方案的两列不会只改一半。
+type ProfileBindingUpdate struct {
+	ID          int64
+	RuleSources []string
+	FinalGroup  subcfg.FinalGroupConfig
+}
+
+// UpdateProfileBindings 在同一事务里更新多个方案的规则源绑定与最终组配置。
+// 任一方案写入失败时全部回滚，避免跨方案迁移留下部分方案已改、部分未改的状态。
+func (d *DB) UpdateProfileBindings(ctx context.Context, updates []ProfileBindingUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	type prepared struct {
+		id      int64
+		sources string
+		final   string
+	}
+	rows := make([]prepared, 0, len(updates))
+	for _, u := range updates {
+		sources, err := marshalLayerList(u.RuleSources)
+		if err != nil {
+			return err
+		}
+		final, err := u.FinalGroup.Marshal()
+		if err != nil {
+			return err
+		}
+		rows = append(rows, prepared{id: u.ID, sources: sources, final: final})
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now()
+	for _, row := range rows {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE profiles SET rule_sources = ?, final_group = ?, updated_at = ? WHERE id = ?",
+			row.sources, row.final, now, row.id); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	d.touchArtifacts(ctx)
 	return nil

@@ -9,10 +9,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tktogether/subforge/internal/subcfg"
 )
 
 // newTestDB 打开一个临时文件数据库，返回 *DB 与 context。
@@ -871,9 +874,12 @@ func TestScriptsCRUD(t *testing.T) {
 func TestScriptRenameMigratesPipelineRefs(t *testing.T) {
 	d, ctx := newTestDB(t)
 
-	sc, err := d.CreateScript(ctx, Script{Name: "旧脚本", Code: "return 1", Enabled: true})
+	sc, err := d.CreateScript(ctx, Script{Name: " 旧脚本 ", Code: "return 1", Enabled: true})
 	if err != nil {
 		t.Fatalf("CreateScript: %v", err)
+	}
+	if sc.Name != "旧脚本" {
+		t.Fatalf("CreateScript 未去空白: %q", sc.Name)
 	}
 	steps := `[{"op":"filter.script","args":{"ref":"旧脚本","timeout":"5s"}},` +
 		`{"op":"op.script","args":{"ref":"旧脚本"}},` +
@@ -881,7 +887,8 @@ func TestScriptRenameMigratesPipelineRefs(t *testing.T) {
 		`{"op":"op.rename","args":{"ref":"旧脚本"},"extra":{"keep":true}},` +
 		`{"args":{"ref":"旧脚本"}},` +
 		`{"op":"filter.script","args":{"ref":123}},` +
-		`{"op":"filter.script"}]`
+		`{"op":"filter.script"},` +
+		`{"op":"op.script","args":{"ref":" 旧脚本 "}}]`
 	p, err := d.CreatePipeline(ctx, Pipeline{Name: "既有管线", StepsJSON: steps, Enabled: true})
 	if err != nil {
 		t.Fatalf("CreatePipeline: %v", err)
@@ -896,7 +903,7 @@ func TestScriptRenameMigratesPipelineRefs(t *testing.T) {
 		t.Fatalf("CreatePipeline(脏): %v", err)
 	}
 
-	sc.Name = "新脚本"
+	sc.Name = " 新脚本 "
 	if err := d.UpdateScript(ctx, *sc); err != nil {
 		t.Fatalf("UpdateScript(改名): %v", err)
 	}
@@ -913,8 +920,8 @@ func TestScriptRenameMigratesPipelineRefs(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.StepsJSON), &arr); err != nil {
 		t.Fatalf("改名后 steps_json 非法: %v (%s)", err, got.StepsJSON)
 	}
-	if len(arr) != 7 {
-		t.Fatalf("步骤数 = %d，期望 7: %s", len(arr), got.StepsJSON)
+	if len(arr) != 8 {
+		t.Fatalf("步骤数 = %d，期望 8: %s", len(arr), got.StepsJSON)
 	}
 	if arr[0].Args["ref"] != "新脚本" || arr[0].Args["timeout"] != "5s" {
 		t.Errorf("filter.script 未迁移或丢了其它参数: %+v", arr[0].Args)
@@ -939,6 +946,16 @@ func TestScriptRenameMigratesPipelineRefs(t *testing.T) {
 	}
 	if arr[6].Args != nil {
 		t.Errorf("缺少 args 的脚本步骤不应被改写: %+v", arr[6].Args)
+	}
+	if arr[7].Args["ref"] != "新脚本" {
+		t.Errorf("带首尾空白的 ref 未按 TrimSpace 口径迁移: %+v", arr[7].Args)
+	}
+	gotSc, err := d.GetScript(ctx, sc.ID)
+	if err != nil {
+		t.Fatalf("GetScript: %v", err)
+	}
+	if gotSc.Name != "新脚本" {
+		t.Errorf("脚本名未去空白: %q", gotSc.Name)
 	}
 	plainGot, err := d.GetPipeline(ctx, plainP.ID)
 	if err != nil {
@@ -1379,6 +1396,62 @@ func TestPipelineRenameMigratesBindings(t *testing.T) {
 	}
 	if got, err := d.GetSourcePipeline(ctx, "airport:8"); err != nil || got != "别的管线" {
 		t.Errorf("无关来源管线被误改 = %q, err=%v，期望 %q", got, err, "别的管线")
+	}
+}
+
+// TestPipelineRenameMigratesGlobalDefaultAndPaddedBindings 全局默认管线与带首尾
+// 空白的历史绑定都按运行期 TrimSpace 口径迁移；无关键保持不变。
+func TestPipelineRenameMigratesGlobalDefaultAndPaddedBindings(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	p, err := d.CreatePipeline(ctx, Pipeline{Name: "旧管线", StepsJSON: "[]", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+	// 直接写库模拟历史数据：运行期会 TrimSpace，这些绑定实际有效。
+	for _, stmt := range []string{
+		`INSERT INTO config (key, value) VALUES ('subscribe.pipeline', ' 旧管线 ') ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		`INSERT INTO source_pipelines (source_key, pipeline) VALUES ('self', ' 旧管线 ') ON CONFLICT(source_key) DO UPDATE SET pipeline = excluded.pipeline`,
+		`INSERT INTO profiles (name, pipeline) VALUES ('旧方案', ' 旧管线 ')`,
+		`INSERT INTO sub_tokens (token, name, pipeline) VALUES ('tk', '令牌', ' 旧管线 ')`,
+		`INSERT INTO source_pipelines (source_key, pipeline) VALUES ('airport:9', ' 别的管线 ') ON CONFLICT(source_key) DO UPDATE SET pipeline = excluded.pipeline`,
+	} {
+		if _, err := d.Raw().ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("准备历史数据: %v", err)
+		}
+	}
+
+	p.Name = "新管线"
+	if err := d.UpdatePipeline(ctx, *p); err != nil {
+		t.Fatalf("UpdatePipeline(改名): %v", err)
+	}
+
+	var global string
+	if err := d.Raw().QueryRowContext(ctx, "SELECT value FROM config WHERE key = 'subscribe.pipeline'").Scan(&global); err != nil {
+		t.Fatalf("读取全局默认管线: %v", err)
+	}
+	if global != "新管线" {
+		t.Errorf("全局默认管线 = %q，期望 %q", global, "新管线")
+	}
+	if got, err := d.GetSourcePipeline(ctx, "self"); err != nil || got != "新管线" {
+		t.Errorf("命中空白来源绑定 = %q, err=%v，期望 %q", got, err, "新管线")
+	}
+	profs, err := d.ListProfiles(ctx)
+	if err != nil {
+		t.Fatalf("ListProfiles: %v", err)
+	}
+	if len(profs) != 1 || profs[0].Pipeline != "新管线" {
+		t.Errorf("命中空白方案绑定 = %+v", profs)
+	}
+	toks, err := d.ListSubTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListSubTokens: %v", err)
+	}
+	if len(toks) != 1 || toks[0].Pipeline != "新管线" {
+		t.Errorf("命中空白令牌绑定 = %+v", toks)
+	}
+	if got, err := d.GetSourcePipeline(ctx, "airport:9"); err != nil || got != " 别的管线 " {
+		t.Errorf("无关绑定被误改 = %q, err=%v", got, err)
 	}
 }
 
@@ -2155,5 +2228,70 @@ func TestProxyGroupMembersUpdate(t *testing.T) {
 	}
 	if err := d.SetProxyGroupMembers(ctx, 99999, []string{"DIRECT"}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("不存在分组错误 = %v，期望 sql.ErrNoRows", err)
+	}
+}
+
+// TestUpdateProfileBindingsAllOrNothing 跨方案绑定更新要么全部生效、要么全部回滚。
+func TestUpdateProfileBindingsAllOrNothing(t *testing.T) {
+	d, ctx := newTestDB(t)
+
+	p1, err := d.AddProfile(ctx, "p1", "", "", "", true, 0)
+	if err != nil {
+		t.Fatalf("AddProfile(p1): %v", err)
+	}
+	if err := d.SetProfileRuleSources(ctx, p1.ID, []string{"old"}); err != nil {
+		t.Fatalf("SetProfileRuleSources: %v", err)
+	}
+	oldCfg := subcfg.DefaultFinalGroupConfig()
+	oldCfg.Enabled = true
+	oldCfg.Overrides = map[string][]string{"rule:old": {"出口"}}
+	if err := d.SetProfileFinalGroup(ctx, p1.ID, oldCfg); err != nil {
+		t.Fatalf("SetProfileFinalGroup: %v", err)
+	}
+	p2, err := d.AddProfile(ctx, "p2", "", "", "", true, 0)
+	if err != nil {
+		t.Fatalf("AddProfile(p2): %v", err)
+	}
+	newCfg := subcfg.DefaultFinalGroupConfig()
+	newCfg.Enabled = true
+	newCfg.Overrides = map[string][]string{"rule:new": {"出口"}}
+
+	// 空更新是合法的 no-op。
+	if err := d.UpdateProfileBindings(ctx, nil); err != nil {
+		t.Fatalf("空更新应成功: %v", err)
+	}
+	// 让第二个方案的 UPDATE 失败：第一个方案必须随事务回滚。
+	if _, err := d.Raw().ExecContext(ctx, fmt.Sprintf(
+		`CREATE TRIGGER block_p2_update BEFORE UPDATE ON profiles WHEN OLD.id = %d BEGIN SELECT RAISE(ABORT, 'blocked'); END`, p2.ID)); err != nil {
+		t.Fatalf("创建触发器: %v", err)
+	}
+	err = d.UpdateProfileBindings(ctx, []ProfileBindingUpdate{
+		{ID: p1.ID, RuleSources: []string{"new"}, FinalGroup: newCfg},
+		{ID: p2.ID, RuleSources: []string{"new"}, FinalGroup: newCfg},
+	})
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("第二个方案失败应返回触发器错误，实际 %v", err)
+	}
+	got, err := d.GetProfile(ctx, p1.ID)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if len(got.RuleSources) != 1 || got.RuleSources[0] != "old" {
+		t.Errorf("事务未回滚，规则源 = %v", got.RuleSources)
+	}
+	if _, ok := got.FinalGroup.Overrides["rule:old"]; !ok {
+		t.Errorf("事务未回滚，覆盖键 = %v", got.FinalGroup.Overrides)
+	}
+	if _, ok := got.FinalGroup.Overrides["rule:new"]; ok {
+		t.Errorf("新覆盖键不应落库: %v", got.FinalGroup.Overrides)
+	}
+
+	// 最终组配置非法时在开事务前失败，已有数据不受影响。
+	badCfg := subcfg.DefaultFinalGroupConfig()
+	badCfg.Name = "DIRECT"
+	if err := d.UpdateProfileBindings(ctx, []ProfileBindingUpdate{
+		{ID: p1.ID, RuleSources: []string{"new"}, FinalGroup: badCfg},
+	}); err == nil {
+		t.Fatal("非法最终组配置应返回错误")
 	}
 }

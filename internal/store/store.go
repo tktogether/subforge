@@ -378,8 +378,9 @@ func (d *DB) UpdateSubToken(ctx context.Context, token string, u SubTokenUpdate)
 		args = append(args, *u.Target)
 	}
 	if u.Pipeline != nil {
+		trimmed := strings.TrimSpace(*u.Pipeline)
 		sets = append(sets, "pipeline = ?")
-		args = append(args, *u.Pipeline)
+		args = append(args, trimmed)
 	}
 	if u.Config != nil {
 		sets = append(sets, "config = ?")
@@ -1178,7 +1179,10 @@ func (d *DB) GetScriptByName(ctx context.Context, name string) (Script, error) {
 }
 
 // CreateScript 新增脚本，返回带 ID 的副本。
+// 名称入库前统一去首尾空白：运行期 ref 按 TrimSpace 后的名字查库，
+// 存入带空白的名字会永远解析不到。
 func (d *DB) CreateScript(ctx context.Context, s Script) (*Script, error) {
+	s.Name = strings.TrimSpace(s.Name)
 	now := time.Now().UTC()
 	created := s.CreatedAt
 	if created.IsZero() {
@@ -1216,6 +1220,9 @@ func isScriptOp(op string) bool {
 // 用 map[string]json.RawMessage 只动 args.ref：其它参数与未知步骤字段原样保留
 // （代价是对象键顺序会被重排，JSON 语义不受影响）。JSON 非法或结构不认识时
 // 原样返回 false，让脚本改名不因一行脏数据整体失败。
+//
+// 匹配按运行期口径 TrimSpace(ref) == oldName：脚本名入库时已统一去空白，
+// 历史 ref 带首尾空白仍能解析到旧脚本，改名必须一并迁走。
 func rewriteScriptRefs(raw, oldName, newName string) (string, bool) {
 	var steps []map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &steps); err != nil {
@@ -1232,7 +1239,7 @@ func rewriteScriptRefs(raw, oldName, newName string) (string, bool) {
 			continue
 		}
 		var ref string
-		if err := json.Unmarshal(args["ref"], &ref); err != nil || ref != oldName {
+		if err := json.Unmarshal(args["ref"], &ref); err != nil || strings.TrimSpace(ref) != oldName {
 			continue
 		}
 		// 字符串与已解析 RawMessage 的编码不会失败，这里不必再分支。
@@ -1255,6 +1262,7 @@ func rewriteScriptRefs(raw, oldName, newName string) (string, bool) {
 // 只改脚本行会让引用它的管线在下次转换时报「脚本不存在」。模板 INI 里的 ref
 // 是外部文件，无法在这里迁移（与管线改名的边界一致）。
 func (d *DB) UpdateScript(ctx context.Context, s Script) error {
+	s.Name = strings.TrimSpace(s.Name)
 	now := time.Now().UTC()
 	updated := s.UpdatedAt
 	if updated.IsZero() {
@@ -1432,13 +1440,20 @@ func (d *DB) CreatePipeline(ctx context.Context, p Pipeline) (*Pipeline, error) 
 	return &got, nil
 }
 
+// sqlTrimSpace 是与 strings.TrimSpace 近似一致的 SQLite 字符集。
+// 引用方（来源/方案/令牌/全局默认）在运行期都会 TrimSpace 后再使用，
+// 历史数据里可能带首尾空白；改名迁移必须按同一口径匹配，否则会漏改仍有效的绑定。
+const sqlTrimSpace = `char(9,10,11,12,13,133,160)||' '`
+
 // UpdatePipeline 按 id 更新管线；RowsAffected==0 返回 sql.ErrNoRows。
 //
-// 改名时在同一事务里把引用方（source_pipelines / profiles / sub_tokens）的
-// 管线名迁移到新名：这三张表存的都是名字而不是 pipelines.id，只改定义行会让
-// 来源、方案与令牌留下指向旧名的悬空绑定，订阅在下次转换时报「未找到命名管线」。
-// 删除不迁移——界面在删除前已提示引用方会失效，保留该语义。
+// 改名时在同一事务里把引用方（source_pipelines / profiles / sub_tokens /
+// config['subscribe.pipeline']）的管线名迁移到新名：这些位置存的都是名字而不是
+// pipelines.id，只改定义行会让来源、方案、令牌与全局默认留下指向旧名的悬空绑定，
+// 订阅在下次转换时报「未找到命名管线」。匹配时按运行期 TrimSpace 口径，
+// 写回统一为去空白后的新名。删除不迁移——界面在删除前已提示引用方会失效。
 func (d *DB) UpdatePipeline(ctx context.Context, p Pipeline) error {
+	p.Name = strings.TrimSpace(p.Name)
 	now := time.Now().UTC()
 	updated := p.UpdatedAt
 	if updated.IsZero() {
@@ -1474,9 +1489,10 @@ func (d *DB) UpdatePipeline(ctx context.Context, p Pipeline) error {
 			query string
 			args  []any
 		}{
-			{"UPDATE source_pipelines SET pipeline = ?, updated_at = CURRENT_TIMESTAMP WHERE pipeline = ?", []any{p.Name, oldName}},
-			{"UPDATE profiles SET pipeline = ?, updated_at = CURRENT_TIMESTAMP WHERE pipeline = ?", []any{p.Name, oldName}},
-			{"UPDATE sub_tokens SET pipeline = ? WHERE pipeline = ?", []any{p.Name, oldName}},
+			{"UPDATE source_pipelines SET pipeline = ?, updated_at = CURRENT_TIMESTAMP WHERE TRIM(pipeline, " + sqlTrimSpace + ") = ?", []any{p.Name, oldName}},
+			{"UPDATE profiles SET pipeline = ?, updated_at = CURRENT_TIMESTAMP WHERE TRIM(pipeline, " + sqlTrimSpace + ") = ?", []any{p.Name, oldName}},
+			{"UPDATE sub_tokens SET pipeline = ? WHERE TRIM(pipeline, " + sqlTrimSpace + ") = ?", []any{p.Name, oldName}},
+			{"UPDATE config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'subscribe.pipeline' AND TRIM(value, " + sqlTrimSpace + ") = ?", []any{p.Name, oldName}},
 		} {
 			if _, err := tx.ExecContext(ctx, ref.query, ref.args...); err != nil {
 				return fmt.Errorf("管线改名迁移引用: %w", err)
