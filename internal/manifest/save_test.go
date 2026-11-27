@@ -71,6 +71,16 @@ func TestSaveManifestRoundTrip(t *testing.T) {
 	if _, err := os.Stat(path + ".bak"); err != nil {
 		t.Fatalf("旧文件应备份为 .bak: %v", err)
 	}
+	// 原子写不应留下临时文件。
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("残留临时文件: %s", e.Name())
+		}
+	}
 	if err := SaveManifest(path, nil); err == nil {
 		t.Fatal("nil manifest 应报错")
 	}

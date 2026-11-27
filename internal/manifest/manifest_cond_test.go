@@ -77,9 +77,9 @@ func TestPruneVersionsDirEntry(t *testing.T) {
 	// manifest.go:242 未覆盖：e.IsDir()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
-	os.WriteFile(filepath.Join(dir, "n-1.yaml"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "n-20260101-000000.000000000.yaml"), []byte("x"), 0o644)
 	pruneVersions(dir, "n", "yaml", 1)
-	if _, err := os.Stat(filepath.Join(dir, "n-1.yaml")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "n-20260101-000000.000000000.yaml")); err == nil {
 		// retention 1, only one version -> not pruned
 	}
 }
@@ -103,7 +103,7 @@ func TestListVersionsDirEntry(t *testing.T) {
 	// manifest.go:270 未覆盖：e.IsDir()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
-	os.WriteFile(filepath.Join(dir, "n-1.yaml"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "n-20260101-000000.000000000.yaml"), []byte("x"), 0o644)
 	got, err := ListVersions(dir, "n", "yaml")
 	if err != nil {
 		t.Fatalf("err: %v", err)

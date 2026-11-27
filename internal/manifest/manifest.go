@@ -293,7 +293,36 @@ func WithClientFor(f func(ctx context.Context, outbound string) (*http.Client, e
 	}
 }
 
-// pruneVersions 保留最近 retention 个版本文件，删除其余。
+// versionWriteLayout 是 SaveProduct 写入新版本时使用的时间戳格式（带纳秒）。
+const versionWriteLayout = "20060102-150405.000000000"
+
+// versionStampLayouts 是版本文件名里可能出现的 UTC 时间戳格式：
+// Update 历史产物不带纳秒段，SaveProduct 带纳秒段，两种都要识别。
+var versionStampLayouts = []string{
+	"20060102-150405",
+	"20060102-150405.000000000",
+}
+
+// IsVersionFileName 报告 filename 是否属于 source name 的版本文件：
+// 文件名必须是 <name>-<timestamp>.<ext>，且时间戳能按已知格式解析。
+//
+// 不能只比较前缀：源名本身可以含 "-"，例如源 base 的前缀会误匹配
+// base-extra-20260101-...；把另一源的版本文件当成自己的会导致剪枝误删、
+// 改名跨源迁移、回滚选错版本。
+func IsVersionFileName(name, filename string) bool {
+	prefix := name + "-"
+	if !strings.HasPrefix(filename, prefix) {
+		return false
+	}
+	rest := strings.TrimSuffix(strings.TrimPrefix(filename, prefix), filepath.Ext(filename))
+	for _, layout := range versionStampLayouts {
+		if _, err := time.Parse(layout, rest); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // SaveProduct 把调用方已生成的内容写成 source 的一个新版本。
 // 与 Update 共用版本命名、保留策略；当前版本指针由调用方写（subforge 层负责）。
 func SaveProduct(dir, name, ext string, content []byte, retention int) (UpdateResult, error) {
@@ -303,30 +332,34 @@ func SaveProduct(dir, name, ext string, content []byte, retention int) (UpdateRe
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return UpdateResult{}, fmt.Errorf("创建规则输出目录 %s: %w", dir, err)
 	}
-	version := time.Now().UTC().Format("20060102-150405.000000000")
+	version := time.Now().UTC().Format(versionWriteLayout)
 	filename := fmt.Sprintf("%s-%s.%s", name, version, ext)
 	fullPath := filepath.Join(dir, filename)
 	if err := os.WriteFile(fullPath, content, 0o644); err != nil {
 		return UpdateResult{}, fmt.Errorf("写入 %s: %w", fullPath, err)
 	}
 	pruneVersions(dir, name, ext, retention)
+	// 剪枝按「归属该源」的精确文件名匹配；这里再校验新文件仍在，
+	// 防止任何归属判断退化导致刚写入的版本被删而调用方毫不知情。
+	if _, err := os.Stat(fullPath); err != nil {
+		return UpdateResult{}, fmt.Errorf("版本文件 %s 在保留策略清理后不存在: %w", fullPath, err)
+	}
 	return UpdateResult{Source: name, Version: version, Path: fullPath}, nil
 }
 
+// pruneVersions 保留最近 retention 个版本文件，删除其余。
 func pruneVersions(dir, name, ext string, retention int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	var versions []string
-	prefix := name + "-"
-	suffix := "." + ext
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		n := e.Name()
-		if !strings.HasPrefix(n, prefix) || !strings.HasSuffix(n, suffix) {
+		if filepath.Ext(n) != "."+ext || !IsVersionFileName(name, n) {
 			continue
 		}
 		versions = append(versions, n)
@@ -347,16 +380,15 @@ func ListVersions(dir, name, ext string) ([]string, error) {
 		return nil, err
 	}
 	var versions []string
-	prefix := name + "-"
-	suffix := "." + ext
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		n := e.Name()
-		if strings.HasPrefix(n, prefix) && strings.HasSuffix(n, suffix) {
-			versions = append(versions, n)
+		if filepath.Ext(n) != "."+ext || !IsVersionFileName(name, n) {
+			continue
 		}
+		versions = append(versions, n)
 	}
 	sort.Strings(versions)
 	return versions, nil

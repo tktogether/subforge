@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -137,15 +138,19 @@ func TestUpdate_WritesVersionedFiles(t *testing.T) {
 
 func TestPruneVersions_Retention(t *testing.T) {
 	tmp := t.TempDir()
+	// 非版本文件（时间戳不合规）不应参与剪枝。
 	for i := 0; i < 7; i++ {
-		// use timestamp-like names
 		fname := "mysrc-2026010" + string(rune('0'+i)) + ".yaml"
-		os.WriteFile(filepath.Join(tmp, fname), []byte("x"), 0o644)
+		if err := os.WriteFile(filepath.Join(tmp, fname), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// create 7 versioned files with sortable names
+	// 7 个合规版本文件，时间戳按顺序递增。
 	for i := 0; i < 7; i++ {
-		fname := "mysrc-2026010" + string(rune('0'+i)) + "0000.yaml"
-		os.WriteFile(filepath.Join(tmp, fname), []byte("x"), 0o644)
+		fname := fmt.Sprintf("mysrc-20260101-00000%d.000000000.yaml", i)
+		if err := os.WriteFile(filepath.Join(tmp, fname), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pruneVersions(tmp, "mysrc", "yaml", 3)
 	versions, _ := ListVersions(tmp, "mysrc", "yaml")
@@ -154,9 +159,60 @@ func TestPruneVersions_Retention(t *testing.T) {
 	}
 }
 
+// TestListVersionsPrefixCollision 源名互为前缀时只返回自己的版本文件。
+func TestListVersionsPrefixCollision(t *testing.T) {
+	tmp := t.TempDir()
+	for _, name := range []string{
+		"base-20260101-000000.000000000.yaml",
+		"base-extra-20260101-000000.000000000.yaml",
+	} {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ListVersions(tmp, "base", "yaml")
+	if err != nil {
+		t.Fatalf("ListVersions(base): %v", err)
+	}
+	if len(got) != 1 || got[0] != "base-20260101-000000.000000000.yaml" {
+		t.Errorf("base 版本 = %v，不应包含 base-extra", got)
+	}
+	got, err = ListVersions(tmp, "base-extra", "yaml")
+	if err != nil {
+		t.Fatalf("ListVersions(base-extra): %v", err)
+	}
+	if len(got) != 1 || got[0] != "base-extra-20260101-000000.000000000.yaml" {
+		t.Errorf("base-extra 版本 = %v", got)
+	}
+}
+
+func TestSaveProductKeepsOwnVersionWithPrefixCollision(t *testing.T) {
+	tmp := t.TempDir()
+	for i := 1; i <= 6; i++ {
+		fname := fmt.Sprintf("base-extra-2026010%d-000000.000000000.yaml", i)
+		if err := os.WriteFile(filepath.Join(tmp, fname), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := SaveProduct(tmp, "base", "yaml", []byte("new"), 2)
+	if err != nil {
+		t.Fatalf("SaveProduct: %v", err)
+	}
+	if _, err := os.Stat(res.Path); err != nil {
+		t.Fatalf("刚写入的版本被剪枝删除: %v", err)
+	}
+	extra, err := ListVersions(tmp, "base-extra", "yaml")
+	if err != nil {
+		t.Fatalf("ListVersions(base-extra): %v", err)
+	}
+	if len(extra) != 6 {
+		t.Errorf("另一源的版本被误剪枝: %d", len(extra))
+	}
+}
+
 func TestRollback_InsufficientVersions(t *testing.T) {
 	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, "mysrc-20260101.yaml"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(tmp, "mysrc-20260101-000000.000000000.yaml"), []byte("x"), 0o644)
 	_, err := Rollback(tmp, "mysrc", "yaml")
 	if err == nil {
 		t.Fatal("expected error for insufficient versions")
@@ -165,13 +221,13 @@ func TestRollback_InsufficientVersions(t *testing.T) {
 
 func TestRollback_ReturnsPrevious(t *testing.T) {
 	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, "mysrc-20260101.yaml"), []byte("v1"), 0o644)
-	os.WriteFile(filepath.Join(tmp, "mysrc-20260102.yaml"), []byte("v2"), 0o644)
+	os.WriteFile(filepath.Join(tmp, "mysrc-20260101-000000.000000000.yaml"), []byte("v1"), 0o644)
+	os.WriteFile(filepath.Join(tmp, "mysrc-20260102-000000.000000000.yaml"), []byte("v2"), 0o644)
 	p, err := Rollback(tmp, "mysrc", "yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(p, "mysrc-20260101.yaml") {
+	if !strings.HasSuffix(p, "mysrc-20260101-000000.000000000.yaml") {
 		t.Fatalf("rollback = %s, want previous version", p)
 	}
 }
@@ -246,5 +302,53 @@ func TestLoadManifest_RelativeOutputPathEndToEnd(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("版本文件数 = %d, want 1", len(entries))
+	}
+}
+
+// TestListVersionsAcceptsLegacyShortStamp Update 历史产物不带纳秒段，
+// 版本归属判断必须同时兼容两种命名格式。
+func TestListVersionsAcceptsLegacyShortStamp(t *testing.T) {
+	tmp := t.TempDir()
+	for _, name := range []string{
+		"mysrc-20240101-000000.yaml",
+		"mysrc-extra-20240102-000000.yaml",
+		"mysrc-20240101-000001.000000000.yaml",
+	} {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ListVersions(tmp, "mysrc", "yaml")
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(got) != 2 || got[0] != "mysrc-20240101-000000.yaml" || got[1] != "mysrc-20240101-000001.000000000.yaml" {
+		t.Errorf("版本列表 = %v", got)
+	}
+}
+
+// TestPruneVersionsShortStamp 短时间戳（Update 历史产物）同样参与保留策略，
+// 且不误删名字互为前缀的其它源。
+func TestPruneVersionsShortStamp(t *testing.T) {
+	tmp := t.TempDir()
+	for i := 1; i <= 6; i++ {
+		name := fmt.Sprintf("a-2024010%d-000000.yaml", i)
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "a-extra-20240101-000000.yaml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pruneVersions(tmp, "a", "yaml", 2)
+	got, err := ListVersions(tmp, "a", "yaml")
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("保留数 = %d，期望 2: %v", len(got), got)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "a-extra-20240101-000000.yaml")); err != nil {
+		t.Errorf("另一源版本被误删: %v", err)
 	}
 }
